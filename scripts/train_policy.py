@@ -199,7 +199,7 @@ def main() -> None:
             started = time.perf_counter()
             rollout = collect_rollouts(policy, config, update, pool=pool)
             total_steps += int(len(rollout["actions"]))
-            train_summary = summarize_training_episodes(rollout["episodes"], rollout["actions"])
+            train_summary = summarize_training_episodes(rollout["episodes"], rollout["actions"], rollout["masks"])
             loss_summary = update_policy(policy, optimizer, rollout, config, device)
 
             eval_summary = None

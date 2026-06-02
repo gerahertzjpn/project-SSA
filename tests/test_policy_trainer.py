@@ -57,6 +57,8 @@ def test_action_distribution_summary_exposes_argmax_collapse():
 
     assert summary["total_actions"] == 5
     assert summary["unique_actions"] == 3
+    assert summary["invalid_actions"] == 0
+    assert summary["invalid_action_rate"] == 0.0
     assert summary["dominant_action"] == "0:HOLD"
     assert summary["dominant_action_rate"] == 0.6
     assert summary["kind_counts"]["HOLD"]["count"] == 3
@@ -64,8 +66,23 @@ def test_action_distribution_summary_exposes_argmax_collapse():
     assert summary["kind_counts"]["MOVE_CAPTURE"]["count"] == 1
 
 
+def test_action_distribution_reports_invalid_masked_actions():
+    masks = np.zeros((3, ACTION_DIM), dtype=np.bool_)
+    masks[0, 0] = True
+    masks[1, 1] = True
+    masks[2, 3] = True
+
+    summary = summarize_action_distribution([0, 1, 4], masks)
+
+    assert summary["invalid_actions"] == 1
+    assert summary["invalid_action_rate"] == 0.333333
+
+
 def test_training_episode_summary_can_include_action_distribution():
-    summary = summarize_training_episodes([], [0, 0])
+    masks = np.zeros((2, ACTION_DIM), dtype=np.bool_)
+    masks[:, 0] = True
+    summary = summarize_training_episodes([], [0, 0], masks)
 
     assert summary["episodes"] == 0
     assert summary["action_distribution"]["dominant_action"] == "0:HOLD"
+    assert summary["action_distribution"]["invalid_action_rate"] == 0.0

@@ -326,13 +326,34 @@ def action_kind_label(action_index: int) -> str:
     return spec.kind
 
 
-def summarize_action_distribution(actions: list[int] | np.ndarray, top_n: int = 8) -> dict:
+def _invalid_action_count(actions: np.ndarray, masks: Optional[list[np.ndarray] | np.ndarray]) -> int:
+    if masks is None:
+        return 0
+    mask_array = np.asarray(masks, dtype=np.bool_)
+    if mask_array.shape[0] != actions.shape[0]:
+        raise ValueError("Action/mask count mismatch while summarizing actions")
+
+    invalid = 0
+    for index, action in enumerate(actions):
+        action_index = int(action)
+        if action_index < 0 or action_index >= ACTION_DIM or not bool(mask_array[index, action_index]):
+            invalid += 1
+    return invalid
+
+
+def summarize_action_distribution(
+    actions: list[int] | np.ndarray,
+    masks: Optional[list[np.ndarray] | np.ndarray] = None,
+    top_n: int = 8,
+) -> dict:
     action_array = np.asarray(actions, dtype=np.int64)
     total = int(action_array.size)
     if total <= 0:
         return {
             "total_actions": 0,
             "unique_actions": 0,
+            "invalid_actions": 0,
+            "invalid_action_rate": 0.0,
             "dominant_action": None,
             "dominant_action_rate": 0.0,
             "kind_counts": {},
@@ -356,10 +377,13 @@ def summarize_action_distribution(actions: list[int] | np.ndarray, top_n: int = 
         for index in top_indexes
     ]
     dominant = top_actions[0] if top_actions else None
+    invalid_actions = _invalid_action_count(action_array, masks)
 
     return {
         "total_actions": total,
         "unique_actions": int(nonzero.size),
+        "invalid_actions": invalid_actions,
+        "invalid_action_rate": round(float(invalid_actions) / total, 6),
         "dominant_action": dominant["action"] if dominant else None,
         "dominant_action_rate": dominant["rate"] if dominant else 0.0,
         "kind_counts": {
@@ -373,7 +397,11 @@ def summarize_action_distribution(actions: list[int] | np.ndarray, top_n: int = 
     }
 
 
-def summarize_training_episodes(episodes: list[dict], actions: Optional[list[int] | np.ndarray] = None) -> dict:
+def summarize_training_episodes(
+    episodes: list[dict],
+    actions: Optional[list[int] | np.ndarray] = None,
+    masks: Optional[list[np.ndarray] | np.ndarray] = None,
+) -> dict:
     summary = {
         "episodes": len(episodes),
         "mean_reward": round(_mean(episodes, "return"), 6),
@@ -387,7 +415,7 @@ def summarize_training_episodes(episodes: list[dict], actions: Optional[list[int
         "mean_episode_steps": round(_mean(episodes, "steps"), 3),
     }
     if actions is not None:
-        summary["action_distribution"] = summarize_action_distribution(actions)
+        summary["action_distribution"] = summarize_action_distribution(actions, masks)
     return summary
 
 
@@ -403,6 +431,7 @@ def evaluate_policy(
     policy.eval()
     summaries = []
     actions = []
+    masks = []
     for episode_index in range(episodes):
         env_seed = seed + episode_index
         env = TrainingEnv(_env_config(config, env_seed))
@@ -412,6 +441,7 @@ def evaluate_policy(
         while not done:
             mask = env.action_mask()
             step = policy.act(obs, mask, deterministic=deterministic, device=device)
+            masks.append(mask)
             actions.append(step.action)
             obs, reward, terminal, truncated, info = env.step(step.action)
             reward_components = info.get("reward_components", {}) or {}
@@ -424,7 +454,7 @@ def evaluate_policy(
         metrics.winner_type = info.get("winner_type") or "unknown"
         summaries.append(_episode_summary(metrics, config.controlled_player))
 
-    summary = summarize_training_episodes(summaries, actions)
+    summary = summarize_training_episodes(summaries, actions, masks)
     summary["mode"] = "argmax" if deterministic else "stochastic"
     summary["episodes_detail"] = summaries
     return summary
@@ -434,6 +464,7 @@ def evaluate_random_legal_policy(config: PPOConfig, episodes: int, seed: int) ->
     rng = np.random.default_rng(seed)
     summaries = []
     actions = []
+    masks = []
     for episode_index in range(episodes):
         env_seed = seed + episode_index
         env = TrainingEnv(_env_config(config, env_seed))
@@ -444,6 +475,7 @@ def evaluate_random_legal_policy(config: PPOConfig, episodes: int, seed: int) ->
             mask = env.action_mask()
             legal = np.flatnonzero(mask)
             action = int(rng.choice(legal)) if len(legal) else 0
+            masks.append(mask)
             actions.append(action)
             obs, reward, terminal, truncated, info = env.step(action)
             reward_components = info.get("reward_components", {}) or {}
@@ -456,7 +488,7 @@ def evaluate_random_legal_policy(config: PPOConfig, episodes: int, seed: int) ->
         metrics.winner_type = info.get("winner_type") or "unknown"
         summaries.append(_episode_summary(metrics, config.controlled_player))
 
-    summary = summarize_training_episodes(summaries, actions)
+    summary = summarize_training_episodes(summaries, actions, masks)
     summary["mode"] = "random_legal"
     summary["episodes_detail"] = summaries
     return summary
