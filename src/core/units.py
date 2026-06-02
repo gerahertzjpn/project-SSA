@@ -17,7 +17,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "hp": 3,
         "atk": 5,
         "range": 3.0,
-        "speed": 0.5,
+        "speed": 0.75,
         "slot": "back",
         "base_pos": 10,
     },
@@ -34,8 +34,8 @@ UNIT_STATS: dict[UnitType, dict] = {
 # Neutral unit stats (like vanguard but with configurable HP/ATK)
 NEUTRAL_UNIT_BASE = {
     "hp": 1,         # multiplied by neutral_strength
-    "atk": 1,        # neutral_atk = strength // 2 + 1 (set dynamically)
-    "range": 0.5,
+    "atk": 1,        # total neutral atk is set dynamically from guard strength
+    "range": 3.0,
     "speed": 0.0,    # neutrals don't advance
     "slot": "front",
     "base_pos": 1,

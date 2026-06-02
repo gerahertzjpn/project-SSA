@@ -16,6 +16,7 @@ from src.core.combat import (
     tick_battle_units,
 )
 from src.core.constants import TRAVEL_TIME, UnitType
+from src.core.units import UNIT_STATS
 
 
 def test_attacker_wins_overwhelming_force():
@@ -153,12 +154,14 @@ def test_baron_fight_survives():
     assert baron_killed is False
 
 
-def test_neutrals_are_centered_group_with_medium_range():
+def test_neutrals_are_centered_stationary_group_with_ranger_range():
     neutrals = build_neutral_units(5)
 
     assert len(neutrals) == 5
     assert {unit.pos for unit in neutrals} == {CENTER_SIDE}
-    assert {unit.range for unit in neutrals} == {3.0}
+    assert {unit.speed for unit in neutrals} == {0.0}
+    assert {unit.range for unit in neutrals} == {UNIT_STATS[UnitType.RANGER]["range"]}
+    assert sum(unit.atk for unit in neutrals) == 4.0
 
 
 def test_cores_are_on_team_side_with_high_range():

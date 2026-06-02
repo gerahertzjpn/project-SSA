@@ -38,7 +38,7 @@ DEFENDER_SIDE = 20.0
 CENTER_SIDE = (ATTACKER_SIDE + DEFENDER_SIDE) / 2.0
 SLOT_SPACING = 1.0
 COMBAT_MOVE_SPEED = (DEFENDER_SIDE - ATTACKER_SIDE) / TRAVEL_TIME
-NEUTRAL_RANGE = 3.0
+NEUTRAL_RANGE = float(UNIT_STATS[UnitType.RANGER]["range"])
 CORE_RANGE = 8.0
 
 _SLOT_ORDER = {
@@ -93,7 +93,7 @@ def _unit_type_enum(unit_type_val: str) -> UnitType:
 def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
     if neutral_hp <= 0:
         return []
-    total_atk = float(neutral_hp // 2 + 1)
+    total_atk = float(neutral_hp // 2 + 1 + neutral_hp // 4)
     per_unit_atk = total_atk / neutral_hp
     return [
         UnitInstance(
