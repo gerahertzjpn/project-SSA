@@ -48,6 +48,7 @@ const els = {
   nodeLayer: document.getElementById("nodeLayer"),
   routeLayer: document.getElementById("routeLayer"),
   battleLayer: document.getElementById("battleLayer"),
+  lordLayer: document.getElementById("lordLayer"),
   replayMeta: document.getElementById("replayMeta"),
   sampleSelect: document.getElementById("sampleSelect"),
   loadSampleBtn: document.getElementById("loadSampleBtn"),
@@ -268,17 +269,21 @@ function renderEmpty() {
   els.tickNow.textContent = "0";
   els.tickMax.textContent = "0";
   renderNodes(null);
+  renderLordOverlay([]);
 }
 
 function renderTick(alpha = 0) {
   const tick = currentTick();
   const nextTick = state.replay?.ticks[Math.min(state.tick + 1, state.replay.ticks.length - 1)] || tick;
+  const lordMarkers = alliedLordMarkers(tick, nextTick, alpha);
+  const lordNodeIds = new Set(lordMarkers.filter((marker) => marker.nodeId).map((marker) => marker.nodeId));
   els.tickNow.textContent = String(state.tick);
   els.tickSlider.value = String(state.tick);
 
-  renderNodes(tick);
+  renderNodes(tick, lordNodeIds);
   renderRoutes(tick, nextTick, alpha);
   renderBattles(tick);
+  renderLordOverlay(lordMarkers);
   renderDiagnostics(tick);
   renderPlayers(tick);
   renderStatePanel(tick, nextTick, alpha);
@@ -321,7 +326,7 @@ function currentTick() {
   return state.replay?.ticks[state.tick] || null;
 }
 
-function renderNodes(tick) {
+function renderNodes(tick, lordNodeIds = new Set()) {
   els.nodeLayer.innerHTML = "";
   const nodes = tick?.nodes || {};
 
@@ -335,16 +340,17 @@ function renderNodes(tick) {
       id === "Baron" ? "baron" : "",
       ownerClass(owner),
       nodeActivityClass(id, tick),
+      lordNodeIds.has(id) ? "lord-occupied" : "",
       CORE_NODES.has(id) && tick?.players?.[id]?.alive === false ? "dead" : "",
     ].filter(Boolean).join(" ");
     node.style.left = `${scaleX(x)}px`;
     node.style.top = `${scaleY(y)}px`;
     node.dataset.nodeId = id;
     node.title = nodeTitle(id, nodeState);
-    node.textContent = displayNodeLabel(id);
+    node.textContent = lordNodeIds.has(id) ? "" : displayNodeLabel(id);
 
     const total = nodeDisplayTotal(nodeState, tick, id);
-    if (total > 0) {
+    if (total > 0 && !lordNodeIds.has(id)) {
       const stack = document.createElement("span");
       stack.className = "stack";
       stack.textContent = String(total);
@@ -371,6 +377,9 @@ function renderRoutes(tick, nextTick, alpha) {
     if (!isEdgeMovement(group)) {
       continue;
     }
+    if (hasLordUnit(group.units)) {
+      continue;
+    }
     const nextGroup = findNextGroup(group, nextGroups, used);
     const nextProgress = sameMovementSegment(group, nextGroup) ? nextGroup.progress : 1;
     const progress = interpolateValue(
@@ -388,6 +397,29 @@ function renderRoutes(tick, nextTick, alpha) {
     marker.style.top = `${pos[1]}px`;
     marker.title = `${group.player}: ${routeText(group)} (${phaseLabel(group.phase)})`;
     els.routeLayer.appendChild(marker);
+  }
+}
+
+function renderLordOverlay(markers = []) {
+  els.lordLayer.innerHTML = "";
+
+  for (const markerInfo of markers) {
+    if (!markerInfo.pos) {
+      continue;
+    }
+
+    const marker = document.createElement("div");
+    marker.className = [
+      "lord-marker",
+      teamClass(markerInfo.owner),
+      markerInfo.nodeId ? "on-node" : "",
+      markerInfo.inBattle ? "in-battle" : "",
+    ].filter(Boolean).join(" ");
+    marker.style.left = `${markerInfo.pos[0]}px`;
+    marker.style.top = `${markerInfo.pos[1]}px`;
+    marker.textContent = "L";
+    marker.title = `Lord ${markerInfo.owner} | ${markerInfo.action}${markerInfo.target ? ` -> ${displayLocation(markerInfo.target)}` : ""}`;
+    els.lordLayer.appendChild(marker);
   }
 }
 
@@ -862,6 +894,124 @@ function battlePosition(battle) {
   return interpolate(src, dst, Number(battle.edge_position ?? 0.5));
 }
 
+function alliedLordMarkers(tick, nextTick, alpha = 0) {
+  if (!tick) {
+    return [];
+  }
+
+  const markers = [];
+  const nextGroups = [...(nextTick?.moving_groups || [])];
+  const used = new Set();
+
+  for (const group of tick.moving_groups || []) {
+    if (!hasLordUnit(group.units) || !isPlayerId(group.player)) {
+      continue;
+    }
+
+    const nextGroup = findNextGroup(group, nextGroups, used);
+    const nextProgress = sameMovementSegment(group, nextGroup) ? nextGroup.progress : 1;
+    const progress = interpolateValue(
+      Number(group.progress || 0),
+      Number(nextProgress ?? 0),
+      alpha,
+    );
+    const nodeId = isEdgeMovement(group) ? null : movementNodeId(group);
+    const pos = nodeId ? scalePoint(NODE_POSITIONS[nodeId]) : movingGroupPosition(group, progress);
+
+    markers.push({
+      owner: group.player,
+      pos,
+      nodeId,
+      target: group.final_dst || group.dst,
+      action: phaseLabel(group.phase),
+      inBattle: false,
+      priority: nodeId ? 2 : 1,
+    });
+  }
+
+  for (const battle of tick.active_battles || []) {
+    const owner = alliedLordBattleOwner(battle);
+    if (!owner) {
+      continue;
+    }
+
+    const nodeId = battle.location_kind === "node" ? battle.location_id : null;
+    markers.push({
+      owner,
+      pos: battlePosition(battle),
+      nodeId,
+      target: nodeId,
+      action: battle.location_kind === "node" ? "node battle" : "edge battle",
+      inBattle: true,
+      priority: 3,
+    });
+  }
+
+  for (const [nodeId, node] of Object.entries(tick.nodes || {})) {
+    const owner = nodeAlliedLordOwner(node);
+    if (!owner) {
+      continue;
+    }
+
+    markers.push({
+      owner,
+      pos: scalePoint(NODE_POSITIONS[nodeId]),
+      nodeId,
+      target: nodeId,
+      action: "holding",
+      inBattle: false,
+      priority: 2,
+    });
+  }
+
+  return dedupeLordMarkers(markers);
+}
+
+function alliedLordBattleOwner(battle = {}) {
+  for (const unit of normalizeFormation(battle.formation || [])) {
+    if (unit.type === "L" && isPlayerId(unit.team)) {
+      return unit.team;
+    }
+  }
+
+  for (const [player, info] of Object.entries(battle.sides || {})) {
+    if (isPlayerId(player) && hasLordUnit(info.units)) {
+      return player;
+    }
+  }
+
+  return null;
+}
+
+function nodeAlliedLordOwner(node = {}) {
+  if (hasLordUnit(node.units) && isPlayerId(node.owner)) {
+    return node.owner;
+  }
+
+  for (const [player, units] of Object.entries(node.visiting_units || {})) {
+    if (isPlayerId(player) && hasLordUnit(units)) {
+      return player;
+    }
+  }
+
+  return null;
+}
+
+function dedupeLordMarkers(markers = []) {
+  const bySlot = new Map();
+  for (const marker of markers) {
+    if (!marker.pos) {
+      continue;
+    }
+    const key = marker.nodeId || `${Math.round(marker.pos[0])}:${Math.round(marker.pos[1])}`;
+    const existing = bySlot.get(key);
+    if (!existing || marker.priority > existing.priority) {
+      bySlot.set(key, marker);
+    }
+  }
+  return Array.from(bySlot.values());
+}
+
 function interpolate(src, dst, progress) {
   const a = NODE_POSITIONS[src];
   const b = NODE_POSITIONS[dst];
@@ -1041,6 +1191,14 @@ function sameMovementSegment(group, candidate) {
 
 function teamClass(player) {
   return String(player).startsWith("A") ? "team-a" : "team-b";
+}
+
+function isPlayerId(id) {
+  return /^[AB]\d+$/.test(String(id || ""));
+}
+
+function hasLordUnit(units = {}) {
+  return Number(units.LORD || units.BARON || units.L || units.B || 0) > 0;
 }
 
 function interpolateValue(from, to, alpha) {

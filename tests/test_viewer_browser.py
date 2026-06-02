@@ -80,6 +80,36 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
                     };
                 }"""
             )
+            lord_check = page.evaluate(
+                """() => {
+                    const hasLord = (units = {}) => Number(units.LORD || units.BARON || units.L || units.B || 0) > 0;
+                    const battleHasLord = (battle) => (battle.formation || []).some((row) =>
+                        Array.isArray(row) && row.length >= 3 && row[2] === 'L' && /^[AB]\\d+$/.test(String(row[1] || ''))
+                    );
+                    const tickIndex = state.replay.ticks.findIndex((item) =>
+                        (item.moving_groups || []).some((group) => hasLord(group.units)) ||
+                        (item.active_battles || []).some(battleHasLord)
+                    );
+                    if (tickIndex < 0) {
+                        return null;
+                    }
+                    seekTo(tickIndex);
+                    const tick = state.replay.ticks[tickIndex];
+                    const nodeLord = (tick.moving_groups || []).find((group) => hasLord(group.units) && movementNodeId(group));
+                    const nodeId = nodeLord ? movementNodeId(nodeLord) : null;
+                    return {
+                        tick: tickIndex,
+                        markers: document.querySelectorAll('.lord-marker').length,
+                        routeDots: document.querySelectorAll('.route').length,
+                        nonLordEdgeGroups: (tick.moving_groups || []).filter((group) =>
+                            (!group.phase || group.phase === 'edge') && !hasLord(group.units)
+                        ).length,
+                        nodeId,
+                        nodeStackHidden: nodeId ? !document.querySelector(`.node[data-node-id="${nodeId}"] .stack`) : true,
+                        nodeTextHidden: nodeId ? !document.querySelector(`.node[data-node-id="${nodeId}"]`).textContent.trim() : true
+                    };
+                }"""
+            )
 
             counts = page.evaluate(
                 """() => ({
@@ -107,6 +137,11 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
         assert route_check is not None
         assert route_check["routeDots"] == route_check["edgeGroups"]
         assert int(route_check["stackText"]) == route_check["expectedStack"]
+        if lord_check is not None:
+            assert lord_check["markers"] >= 1
+            assert lord_check["routeDots"] == lord_check["nonLordEdgeGroups"]
+            assert lord_check["nodeStackHidden"]
+            assert lord_check["nodeTextHidden"]
         assert len(screenshot) > 50_000
         assert len(set(sample)) > 50
         assert sum(1 for red, green, blue in sample if red + green + blue > 90) > 1000

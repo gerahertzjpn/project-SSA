@@ -16,6 +16,7 @@ def test_viewer_assets_exist_and_are_wired():
     assert 'id="sampleSelect"' in index
     assert 'id="diagnosticsGrid"' in index
     assert 'preserveAspectRatio="none"' in index
+    assert 'id="lordLayer"' in index
     assert 'role="tablist"' in index
     assert 'data-tab="battles"' in index
     assert 'data-tab="state"' in index
@@ -40,6 +41,8 @@ def test_viewer_loads_compact_replay_schema():
     assert "forceStatus" in script
     assert "movingGroupCard" in script
     assert "movingGroupPosition" in script
+    assert "alliedLordMarkers" in script
+    assert "renderLordOverlay" in script
     assert "phaseLabel" in script
     assert "attackLinks" in script
     assert "attackSummaryMarkup" in script
@@ -56,6 +59,8 @@ def test_viewer_layout_has_arena_layers():
     assert "#nodeLayer" in styles
     assert "#routeLayer" in styles
     assert "#battleLayer" in styles
+    assert "#lordLayer" in styles
+    assert ".lord-marker" in styles
     assert ".formation" in styles
     assert ".formation-stack" in styles
     assert ".attack-layer" in styles

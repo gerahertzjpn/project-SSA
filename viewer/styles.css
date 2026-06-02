@@ -180,9 +180,31 @@ select {
 .edges,
 #nodeLayer,
 #routeLayer,
-#battleLayer {
+#battleLayer,
+#lordLayer {
   position: absolute;
   inset: 0;
+}
+
+.edges {
+  z-index: 0;
+}
+
+#nodeLayer {
+  z-index: 1;
+}
+
+#routeLayer {
+  z-index: 2;
+}
+
+#battleLayer {
+  z-index: 3;
+}
+
+#lordLayer {
+  z-index: 4;
+  pointer-events: none;
 }
 
 .edges line {
@@ -246,6 +268,12 @@ select {
     0 0 0 5px rgba(213, 156, 66, 0.35);
 }
 
+.node.lord-occupied {
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.25),
+    0 0 0 6px rgba(213, 156, 66, 0.45);
+}
+
 .node .stack {
   position: absolute;
   min-width: 24px;
@@ -297,6 +325,60 @@ select {
 
 .route.team-b {
   color: var(--blue);
+}
+
+.lord-marker {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  margin-left: -17px;
+  margin-top: -17px;
+  border-radius: 50%;
+  border: 3px solid var(--gold);
+  background: #17130d;
+  color: #ffe2a8;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  line-height: 1;
+  font-weight: 900;
+  box-shadow:
+    0 0 0 3px rgba(0, 0, 0, 0.55),
+    0 0 0 7px rgba(213, 156, 66, 0.18),
+    0 0 22px rgba(213, 156, 66, 0.42);
+  transform: translate3d(0, 0, 0);
+  will-change: left, top;
+}
+
+.lord-marker.team-a {
+  background: radial-gradient(circle at 35% 35%, #5a2b29, #17130d 74%);
+  box-shadow:
+    0 0 0 3px rgba(0, 0, 0, 0.55),
+    0 0 0 7px rgba(217, 83, 83, 0.2),
+    0 0 24px rgba(213, 156, 66, 0.46);
+}
+
+.lord-marker.team-b {
+  background: radial-gradient(circle at 35% 35%, #233b62, #17130d 74%);
+  box-shadow:
+    0 0 0 3px rgba(0, 0, 0, 0.55),
+    0 0 0 7px rgba(79, 143, 232, 0.2),
+    0 0 24px rgba(213, 156, 66, 0.46);
+}
+
+.lord-marker.on-node {
+  width: 42px;
+  height: 42px;
+  margin-left: -21px;
+  margin-top: -21px;
+  font-size: 20px;
+}
+
+.lord-marker.in-battle {
+  box-shadow:
+    0 0 0 3px rgba(0, 0, 0, 0.6),
+    0 0 0 8px rgba(213, 156, 66, 0.32),
+    0 0 28px rgba(213, 156, 66, 0.6);
 }
 
 .battle-marker {
