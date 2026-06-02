@@ -3,6 +3,7 @@ import json
 import multiprocessing as mp
 import os
 import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -112,6 +113,25 @@ def print_json(item: dict) -> None:
     print(json.dumps(item, ensure_ascii=False, sort_keys=True), flush=True)
 
 
+def git_version_info() -> dict:
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        status = subprocess.check_output(
+            ["git", "status", "--short"],
+            cwd=ROOT,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except Exception:
+        return {"git_commit": None, "git_dirty": None}
+    return {"git_commit": commit, "git_dirty": bool(status)}
+
+
 def main() -> None:
     args = parse_args()
     run_dir = Path(args.run_dir or _run_dir_default())
@@ -123,6 +143,7 @@ def main() -> None:
     torch.manual_seed(config.seed)
 
     device = resolve_device(config.device)
+    version_info = git_version_info()
     policy = MaskedActorCritic(hidden_size=config.hidden_size).to(device)
     optimizer = torch.optim.Adam(policy.parameters(), lr=config.learning_rate)
 
@@ -140,6 +161,7 @@ def main() -> None:
             "device": str(device),
             "resume": args.resume,
             "start_update": start_update,
+            **version_info,
         }, handle, ensure_ascii=False, indent=2, sort_keys=True)
 
     metrics_path = run_dir / "metrics.jsonl"
@@ -152,6 +174,7 @@ def main() -> None:
         "updates_this_invocation": config.updates,
         "start_update": start_update,
         "resume": args.resume,
+        **version_info,
     })
 
     if start_update == 1 and args.random_baseline_episodes > 0:
@@ -226,6 +249,7 @@ def main() -> None:
         "checkpoints_dir": str(run_dir / "checkpoints"),
         "records": len(final_metrics),
         "total_steps": total_steps,
+        **version_info,
     })
 
 
