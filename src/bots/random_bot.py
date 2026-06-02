@@ -6,7 +6,7 @@ from ..core.constants import ActionType, UnitType, UNIT_COST
 from ..core.map import ADJACENCY
 from .base import Bot
 
-UNIT_TYPES = list(UnitType)
+UNIT_TYPES = list(UNIT_COST)
 
 
 class RandomBot(Bot):

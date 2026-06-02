@@ -19,9 +19,10 @@ from typing import Optional
 
 from .constants import (
     ActionType, UnitType, TICK_LIMIT, TRAVEL_TIME, EDGE_COLLISION_THRESHOLD,
-    MAX_COMBAT_TICKS, TEAM_A_PLAYERS, TEAM_B_PLAYERS,
+    MAX_COMBAT_TICKS, TEAM_A_PLAYERS, TEAM_B_PLAYERS, CORE_HP,
+    DEATH_TIME_START_TICK, DEATH_TIME_CORE_DAMAGE_PER_TICK,
 )
-from .state import GameState, MovingGroup, NodeState, Battle, get_team
+from .state import GameState, MovingGroup, NodeState, Battle, get_enemy_team, get_team
 from .map import ADJACENCY, NODE_TYPES, NodeType
 from .combat import (
     build_player_units, build_neutral_units, build_core_unit, build_baron_unit,
@@ -73,7 +74,10 @@ class GameEngine:
             self.tick()
 
         if self.state.winner is None:
+            self._finalize_death_time()
+        if self.state.winner is None:
             self.state.winner = "DRAW"
+            self.state.winner_type = "draw_no_core_damage"
         return self.state.winner
 
     def tick(self) -> None:
@@ -104,6 +108,7 @@ class GameEngine:
                 if event:
                     tick_events.append(event)
 
+        self._apply_death_time_damage(tick_events)
         self._check_victory()
         if self.record_replay:
             self.replay_ticks.append(self._snapshot_tick(state, tick_events))
@@ -329,6 +334,36 @@ class GameEngine:
                     queue.append(next_path)
 
         return None
+
+    def _find_unrestricted_route(self, src: str, dst: str) -> Optional[list[str]]:
+        if src not in self.state.nodes or dst not in self.state.nodes or src == dst:
+            return None
+        visited = {src}
+        queue = deque([[src]])
+        while queue:
+            path = queue.popleft()
+            node_id = path[-1]
+            for neighbor in ADJACENCY.get(node_id, []):
+                if neighbor in visited:
+                    continue
+                next_path = path + [neighbor]
+                if neighbor == dst:
+                    return next_path
+                visited.add(neighbor)
+                queue.append(next_path)
+        return None
+
+    def _random_enemy_core(self, player_id: str) -> Optional[str]:
+        enemy_team = get_enemy_team(get_team(player_id))
+        cores = [
+            player.player_id
+            for player in self.state.players.values()
+            if player.team == enemy_team and player.alive
+        ]
+        if not cores:
+            return None
+        index = int(self.state.rng.integers(0, len(cores)))
+        return sorted(cores)[index]
 
     def _is_accessible_destination(self, player_id: str, node_id: str, via_node: str) -> bool:
         node = self.state.nodes[node_id]
@@ -666,6 +701,96 @@ class GameEngine:
         self._lock_node_player(baron_node, group.player_id)
         return {"type": "MOVE_IN", "node": "Baron", "player": group.player_id}
 
+    def _spawn_lord_push(self, player_id: str, node_id: str = "Baron") -> Optional[dict]:
+        target = self._random_enemy_core(player_id)
+        if target is None:
+            return None
+        path = self._find_unrestricted_route(node_id, target)
+        if not path or len(path) < 2:
+            return None
+
+        units = {UnitType.LORD.value: 1}
+        speed = self._group_speed(units)
+        group = MovingGroup(
+            player_id=player_id,
+            team=get_team(player_id),
+            units=units,
+            src=node_id,
+            dst=path[1],
+            arrival_tick=self._estimate_arrival_tick(self.state.tick, path, speed),
+            started_tick=self.state.tick,
+            travel_ticks=1.0,
+            progress=0.0,
+            intent="LORD_PUSH",
+            path=path,
+            speed=speed,
+            final_dst=target,
+        )
+        self._set_group_segment(group, 0, progress=0.0)
+        self.state.moving_groups.append(group)
+        return {
+            "type": "LORD_SPAWNED",
+            "player": player_id,
+            "team": get_team(player_id),
+            "src": node_id,
+            "target": target,
+            "path": path,
+            "units": units,
+            "speed": round(speed, 3),
+            "arrives": group.arrival_tick,
+        }
+
+    def _continue_lord_push(self, battle: Battle, player_id: Optional[str]) -> Optional[dict]:
+        if not player_id:
+            return None
+        if battle.participant_intents.get(player_id) != "LORD_PUSH":
+            return None
+
+        node = self.state.nodes[battle.location_id]
+        lord_count = int((node.units or {}).get(UnitType.LORD.value, 0) or 0)
+        if lord_count <= 0:
+            return None
+
+        final_dst = battle.participant_final_dsts.get(player_id)
+        if not final_dst or final_dst == battle.location_id:
+            return None
+
+        path = self._find_unrestricted_route(battle.location_id, final_dst)
+        if not path or len(path) < 2:
+            return None
+
+        node.units[UnitType.LORD.value] = lord_count - 1
+        if node.units[UnitType.LORD.value] <= 0:
+            node.units.pop(UnitType.LORD.value, None)
+
+        units = {UnitType.LORD.value: 1}
+        speed = self._group_speed(units)
+        group = MovingGroup(
+            player_id=player_id,
+            team=get_team(player_id),
+            units=units,
+            src=battle.location_id,
+            dst=path[1],
+            arrival_tick=self._estimate_arrival_tick(self.state.tick, path, speed),
+            started_tick=self.state.tick,
+            travel_ticks=1.0,
+            progress=0.0,
+            intent="LORD_PUSH",
+            path=path,
+            speed=speed,
+            final_dst=final_dst,
+        )
+        self._set_group_segment(group, 0, progress=0.0)
+        self.state.moving_groups.append(group)
+        return {
+            "player": player_id,
+            "src": battle.location_id,
+            "target": final_dst,
+            "path": path,
+            "units": units,
+            "arrives": group.arrival_tick,
+        }
+
     def _start_node_battle(
         self,
         group: MovingGroup,
@@ -727,7 +852,7 @@ class GameEngine:
             node.visiting_units.clear()
 
         if include_core and core_owner:
-            battle.units.append(build_core_unit(core_owner))
+            battle.units.append(build_core_unit(core_owner, hp=self.state.players[core_owner].core_hp))
 
         if include_neutral and node.neutral_hp > 0:
             battle.units.extend(build_neutral_units(node.neutral_hp))
@@ -794,8 +919,8 @@ class GameEngine:
         battle.participant_routes[player_id] = (src, dst)
         battle.participant_intents[player_id] = intent
         battle.participant_entry_sides[player_id] = entry_side
-        if battle.location_kind == "edge":
-            current_group = getattr(self, "_current_group", None)
+        current_group = getattr(self, "_current_group", None)
+        if current_group is not None and getattr(current_group, "player_id", None) == player_id:
             battle.participant_paths[player_id] = list(getattr(current_group, "path", []) or [src, dst])
             battle.participant_segment_indices[player_id] = getattr(current_group, "segment_index", 0)
             battle.participant_speeds[player_id] = getattr(current_group, "speed", 1.0)
@@ -852,8 +977,20 @@ class GameEngine:
         if battle.objective == "core":
             core_alive = any(u.is_alive() and u.unit_type == "CORE" for u in battle.units)
             core_owner = battle.core_owner or battle.location_id
+            previous_core_hp = float(self.state.players[core_owner].core_hp)
+            remaining_core_hp = sum(
+                max(0.0, unit.hp)
+                for unit in battle.units
+                if unit.unit_type == "CORE" and unit.is_alive()
+            )
+            self.state.players[core_owner].core_hp = max(0.0, remaining_core_hp)
+            self._record_core_combat_damage(
+                core_owner,
+                previous_core_hp - self.state.players[core_owner].core_hp,
+            )
             if not core_alive and winner_player:
                 self.state.players[core_owner].alive = False
+                self.state.players[core_owner].core_hp = 0.0
                 node.owner = winner_player
                 self._set_node_units(
                     node,
@@ -872,7 +1009,15 @@ class GameEngine:
                     self._battle_entry_side(battle, core_owner),
                 )
                 self._lock_node_player(node, core_owner)
-            return self._resolution_event(battle, winner_player, {"core_destroyed": not core_alive})
+            return self._resolution_event(
+                battle,
+                winner_player,
+                {
+                    "core_destroyed": not core_alive,
+                    "core_owner": core_owner,
+                    "core_hp": round(self.state.players[core_owner].core_hp, 3),
+                },
+            )
 
         if battle.objective == "neutral":
             remaining_neutral_hp = int(sum(
@@ -922,12 +1067,17 @@ class GameEngine:
                     self._battle_entry_side(battle, winner_player),
                 )
                 self._lock_node_player(node, winner_player)
+                lord_event = self._spawn_lord_push(winner_player, "Baron")
             else:
                 self.state.baron.hp = max(0, remaining_baron_hp)
                 node.owner = "NEUTRAL"
                 node.units = {}
                 self._forget_battle_entry_sides(node, battle)
-            return self._resolution_event(battle, winner_player or "BARON", {"baron_killed": not baron_alive})
+                lord_event = None
+            extra = {"baron_killed": not baron_alive}
+            if lord_event:
+                extra["lord_spawned"] = lord_event
+            return self._resolution_event(battle, winner_player or "BARON", extra)
 
         if winner_player:
             if node.owner == "NEUTRAL" and node.neutral_hp > 0:
@@ -947,11 +1097,16 @@ class GameEngine:
                     self._battle_entry_side(battle, winner_player),
                 )
                 self._lock_node_player(node, winner_player)
+            lord_continue = self._continue_lord_push(battle, winner_player)
         else:
             node.units = {}
             self._forget_battle_entry_sides(node, battle)
+            lord_continue = None
 
-        return self._resolution_event(battle, winner_player, {"result": "PVP_RESOLVED"})
+        extra = {"result": "PVP_RESOLVED"}
+        if lord_continue:
+            extra["lord_continued"] = lord_continue
+        return self._resolution_event(battle, winner_player, extra)
 
     def _finish_edge_battle(self, battle: Battle) -> dict:
         survivors_by_player = count_survivors_by_player(battle.units)
@@ -1176,17 +1331,130 @@ class GameEngine:
     def _edge_key(self, a: str, b: str) -> str:
         return f"edge:{self._edge_id(a, b)}"
 
+    def _record_core_combat_damage(self, core_owner: str, amount: float) -> None:
+        if amount <= 0:
+            return
+        damaged_team = get_team(core_owner)
+        source_team = get_enemy_team(damaged_team)
+        self.state.core_combat_damage += float(amount)
+        self.state.core_damage_by_team[source_team] = (
+            self.state.core_damage_by_team.get(source_team, 0.0) + float(amount)
+        )
+
+    def _apply_death_time_damage(self, tick_events: list) -> None:
+        if self.state.tick < DEATH_TIME_START_TICK or self.state.tick >= TICK_LIMIT:
+            return
+        for player_id, player in list(self.state.players.items()):
+            if not player.alive or player.core_hp <= 0:
+                continue
+            before = float(player.core_hp)
+            player.core_hp = max(0.0, before - DEATH_TIME_CORE_DAMAGE_PER_TICK)
+            damage = before - player.core_hp
+            if damage <= 0:
+                continue
+            event = {
+                "type": "DEATH_TIME_CORE_DAMAGE",
+                "player": player_id,
+                "team": player.team,
+                "damage": round(damage, 3),
+                "core_hp": round(player.core_hp, 3),
+            }
+            if player.core_hp <= 0:
+                self._destroy_core_by_environment(player_id)
+                event["core_destroyed"] = True
+            tick_events.append(event)
+
+    def _destroy_core_by_environment(self, player_id: str) -> None:
+        player = self.state.players[player_id]
+        if not player.alive:
+            return
+        player.alive = False
+        player.core_hp = 0.0
+        self._remove_player_units(player_id)
+
+    def _team_core_hp(self, team: str) -> float:
+        return sum(
+            max(0.0, float(player.core_hp))
+            for player in self.state.players.values()
+            if player.team == team
+        )
+
+    def _alive_core_count(self, team: str) -> int:
+        return sum(
+            1
+            for player in self.state.players.values()
+            if player.team == team and player.alive and player.core_hp > 0
+        )
+
+    def _death_time_winner_from_scores(
+        self,
+        final_deaths: Optional[dict[str, int]] = None,
+        hp_before: Optional[dict[str, float]] = None,
+    ) -> str:
+        final_deaths = final_deaths or {
+            "TEAM_A": self._alive_core_count("TEAM_A"),
+            "TEAM_B": self._alive_core_count("TEAM_B"),
+        }
+        if final_deaths.get("TEAM_A", 0) > final_deaths.get("TEAM_B", 0):
+            return "TEAM_A"
+        if final_deaths.get("TEAM_B", 0) > final_deaths.get("TEAM_A", 0):
+            return "TEAM_B"
+
+        hp_before = hp_before or {
+            "TEAM_A": self._team_core_hp("TEAM_A"),
+            "TEAM_B": self._team_core_hp("TEAM_B"),
+        }
+        if hp_before["TEAM_A"] > hp_before["TEAM_B"]:
+            return "TEAM_A"
+        if hp_before["TEAM_B"] > hp_before["TEAM_A"]:
+            return "TEAM_B"
+
+        dealt = self.state.core_damage_by_team
+        if dealt.get("TEAM_A", 0.0) > dealt.get("TEAM_B", 0.0):
+            return "TEAM_A"
+        if dealt.get("TEAM_B", 0.0) > dealt.get("TEAM_A", 0.0):
+            return "TEAM_B"
+
+        return "TEAM_A"
+
+    def _finalize_death_time(self) -> None:
+        hp_before = {
+            "TEAM_A": self._team_core_hp("TEAM_A"),
+            "TEAM_B": self._team_core_hp("TEAM_B"),
+        }
+        final_deaths = {"TEAM_A": 0, "TEAM_B": 0}
+        for player_id, player in list(self.state.players.items()):
+            if player.alive and player.core_hp > 0:
+                final_deaths[player.team] += 1
+                self._destroy_core_by_environment(player_id)
+        self.state.death_time_final_core_deaths = final_deaths
+
+        if self.state.core_combat_damage <= 0:
+            self.state.winner = "DRAW"
+            self.state.winner_type = "draw_no_core_damage"
+            return
+
+        self.state.winner = self._death_time_winner_from_scores(final_deaths, hp_before)
+        self.state.winner_type = "death_time"
+
     def _check_victory(self) -> None:
         state = self.state
         a_alive = any(p.alive for p in state.players.values() if p.team == "TEAM_A")
         b_alive = any(p.alive for p in state.players.values() if p.team == "TEAM_B")
 
         if not a_alive and not b_alive:
-            state.winner = "DRAW"
+            if state.tick >= DEATH_TIME_START_TICK and state.core_combat_damage > 0:
+                state.winner = self._death_time_winner_from_scores()
+                state.winner_type = "death_time"
+            else:
+                state.winner = "DRAW"
+                state.winner_type = "draw_no_core_damage"
         elif not a_alive:
             state.winner = "TEAM_B"
+            state.winner_type = "death_time" if state.tick >= DEATH_TIME_START_TICK else "normal"
         elif not b_alive:
             state.winner = "TEAM_A"
+            state.winner_type = "death_time" if state.tick >= DEATH_TIME_START_TICK else "normal"
 
     # ------------------------------------------------------------------
     # Observation and replay
@@ -1201,6 +1469,11 @@ class GameEngine:
             nodes_obs[node_id] = {
                 "owner": node.owner,
                 "units": dict(node.units),
+                "core_hp": (
+                    round(self.state.players[node_id].core_hp, 3)
+                    if node_id in self.state.players
+                    else None
+                ),
                 "neutral_hp": node.neutral_hp,
                 "neutral_income": node.neutral_income,
                 "neutral_aggro_teams": sorted(node.neutral_aggro_teams),
@@ -1215,8 +1488,10 @@ class GameEngine:
             "player_id": player_id,
             "team": player.team,
             "tick": state.tick,
+            "winner_type": state.winner_type,
             "resources": player.resources,
             "alive": player.alive,
+            "core_hp": player.core_hp,
             "core_node": player.core_node,
             "nodes": nodes_obs,
             "moving_groups": [
@@ -1245,7 +1520,7 @@ class GameEngine:
                 "controlled_by": state.baron.controlled_by,
             },
             "players": {
-                pid: {"alive": p.alive, "resources": p.resources}
+                pid: {"alive": p.alive, "resources": p.resources, "core_hp": round(p.core_hp, 3)}
                 for pid, p in state.players.items()
             },
         }
@@ -1253,10 +1528,16 @@ class GameEngine:
     def _snapshot_tick(self, state: GameState, events: list) -> dict:
         return {
             "tick": state.tick,
+            "winner_type": state.winner_type,
             "nodes": {
                 nid: {
                     "owner": node.owner,
                     "units": dict(node.units),
+                    "core_hp": (
+                        round(state.players[nid].core_hp, 3)
+                        if nid in state.players
+                        else None
+                    ),
                     "neutral_hp": node.neutral_hp,
                     "neutral_aggro_teams": sorted(node.neutral_aggro_teams),
                     "visiting_units": {
@@ -1288,13 +1569,22 @@ class GameEngine:
             ],
             "active_battles": self._battle_snapshots(),
             "players": {
-                pid: {"resources": round(player.resources, 2), "alive": player.alive}
+                pid: {
+                    "resources": round(player.resources, 2),
+                    "alive": player.alive,
+                    "core_hp": round(player.core_hp, 3),
+                }
                 for pid, player in state.players.items()
             },
             "baron": {
                 "hp": state.baron.hp,
                 "controlled_by": state.baron.controlled_by,
             },
+            "core_damage_by_team": {
+                team: round(damage, 3)
+                for team, damage in sorted(state.core_damage_by_team.items())
+            },
+            "death_time_final_core_deaths": dict(state.death_time_final_core_deaths),
             "events": events,
         }
 

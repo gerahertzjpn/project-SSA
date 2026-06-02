@@ -38,14 +38,18 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - `events` are shown in the tick event list; `BATTLE_TICK.summary` is used instead of raw per-unit frames.
 - player alive/resources are shown from `players`.
 - Lord state is visible through the central legacy `Baron` node owner and replay event list.
+- Core HP is persistent and exposed as `nodes[*].core_hp` for core nodes and `players[*].core_hp`.
 - The `State` tab shows active node state as visual force/order cards: stationed owner units, visitors, neutral/Lord center guards, ready locks, and incoming/outgoing movement orders with route progress.
 
 ## Simulation Notes
 
 - Neutral guard and Lord combat units are centered exactly at combat position `10.0`, not placed on the defender/right side.
+- Neutral Lord stats are `120hp` and `16 atk`.
+- Killing the neutral Lord spawns an allied `LORD` unit on the same node. It automatically pushes along a shortest route toward a random living enemy core and fights enemies encountered on the way.
 - Neutral guards are represented as a stationary centered group with Ranger-equivalent range (`3.0`) and a small strength-based damage bonus. Once aggroed by an attack/capture, the whole neutral group attacks.
 - Current neutral aggro is intent-based: `CAPTURE`/`ATTACK` starts neutral aggro immediately, while `TRANSIT` does not. Future damage-triggered aggro is tracked in `docs/SPRINT_2_TRAINING_PREP.md`.
 - TEAM_A cores are placed on the left side of the combat line, TEAM_B cores on the right side. Cores have high attack range.
+- Death Time starts at tick `270`: all living cores take fixed damage each tick through tick `299`, leaving a full-health core at `1hp`. At tick `300`, final lethal damage resolves the match by the number of own cores that survived until the final hit, then total core HP/damage tie-breakers. Draw is reserved for games with no non-death-time core damage.
 - Combat approach movement uses unit speed. Speed `1.0` crosses the full combat line in `TRAVEL_TIME` world ticks; faster/slower units scale from that baseline. Attack cadence and damage are not accelerated.
 - Route movement speed is based on the slowest unit in the moving group. Edge travel, empty node crossing, source exit, and final node entry all scale from that same speed.
 - A source node exit or final node entry costs half of a full node crossing. Passing through an intermediate node costs one full node crossing.

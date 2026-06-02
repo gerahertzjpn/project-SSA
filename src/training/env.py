@@ -32,6 +32,7 @@ class TrainingEnvConfig:
     terminal_win_reward: float = 1.0
     terminal_loss_reward: float = -1.0
     terminal_draw_reward: float = 0.0
+    death_time_win_reward_multiplier: float = 0.5
     shaping_weight: float = 0.02
 
 
@@ -103,6 +104,7 @@ class TrainingEnv:
         self.engine.tick()
         if self.state.tick >= self.config.max_ticks and self.state.winner is None:
             self.state.winner = "DRAW"
+            self.state.winner_type = "truncated"
 
         obs_after = self.raw_observation()
         shaped_score = self._score(obs_after)
@@ -176,10 +178,16 @@ class TrainingEnv:
         if winner == "DRAW":
             return self.config.terminal_draw_reward
         return (
-            self.config.terminal_win_reward
+            self._terminal_win_reward()
             if winner == team_of(self.config.controlled_player)
             else self.config.terminal_loss_reward
         )
+
+    def _terminal_win_reward(self) -> float:
+        reward = self.config.terminal_win_reward
+        if self.state.winner_type == "death_time":
+            reward *= self.config.death_time_win_reward_multiplier
+        return reward
 
     def _score(self, obs: dict) -> float:
         own_team = team_of(self.config.controlled_player)
@@ -206,8 +214,9 @@ class TrainingEnv:
         return {
             "tick": int(obs.get("tick", 0) or 0),
             "winner": self.state.winner if self.state is not None else None,
+            "winner_type": self.state.winner_type if self.state is not None else None,
             "controlled_player": self.config.controlled_player,
             "legal_actions": int(mask.sum()),
             "reward_components": reward_components,
-            "observation_version": "train_obs_v0.1",
+            "observation_version": "train_obs_v0.2",
         }

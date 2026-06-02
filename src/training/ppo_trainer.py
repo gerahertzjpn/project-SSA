@@ -51,6 +51,7 @@ class EpisodeMetrics:
     terminal_sum: float = 0.0
     steps: int = 0
     winner: Optional[str] = None
+    winner_type: Optional[str] = None
 
 
 def resolve_device(device: str) -> torch.device:
@@ -74,15 +75,19 @@ def _env_config(config: PPOConfig, seed: int) -> TrainingEnvConfig:
 def _episode_summary(metrics: EpisodeMetrics, controlled_player: str) -> dict:
     own_team = team_of(controlled_player)
     winner = metrics.winner or "DRAW"
+    winner_type = metrics.winner_type or "unknown"
     return {
         "return": float(metrics.return_sum),
         "shaping": float(metrics.shaping_sum),
         "terminal": float(metrics.terminal_sum),
         "steps": int(metrics.steps),
         "winner": winner,
+        "winner_type": winner_type,
         "win": 1 if winner == own_team else 0,
         "loss": 1 if winner not in {own_team, "DRAW", None} else 0,
         "draw": 1 if winner in {"DRAW", None} else 0,
+        "normal_win": 1 if winner == own_team and winner_type == "normal" else 0,
+        "death_time_win": 1 if winner == own_team and winner_type == "death_time" else 0,
     }
 
 
@@ -135,6 +140,7 @@ def _collect_rollout_worker(request: dict) -> dict:
         obs = next_obs
         if done:
             episode.winner = info.get("winner") or "DRAW"
+            episode.winner_type = info.get("winner_type") or "unknown"
             episodes.append(_episode_summary(episode, config.controlled_player))
             episode = EpisodeMetrics()
             reset_seed = seed + 10_000 + step_index
@@ -307,6 +313,8 @@ def summarize_training_episodes(episodes: list[dict]) -> dict:
         "win_rate": round(_rate(episodes, "win"), 6),
         "loss_rate": round(_rate(episodes, "loss"), 6),
         "draw_rate": round(_rate(episodes, "draw"), 6),
+        "normal_win_rate": round(_rate(episodes, "normal_win"), 6),
+        "death_time_win_rate": round(_rate(episodes, "death_time_win"), 6),
         "mean_episode_steps": round(_mean(episodes, "steps"), 3),
     }
 
@@ -339,6 +347,7 @@ def evaluate_policy(
             metrics.steps += 1
             done = bool(terminal or truncated)
         metrics.winner = info.get("winner") or "DRAW"
+        metrics.winner_type = info.get("winner_type") or "unknown"
         summaries.append(_episode_summary(metrics, config.controlled_player))
 
     summary = summarize_training_episodes(summaries)
@@ -368,6 +377,7 @@ def evaluate_random_legal_policy(config: PPOConfig, episodes: int, seed: int) ->
             metrics.steps += 1
             done = bool(terminal or truncated)
         metrics.winner = info.get("winner") or "DRAW"
+        metrics.winner_type = info.get("winner_type") or "unknown"
         summaries.append(_episode_summary(metrics, config.controlled_player))
 
     summary = summarize_training_episodes(summaries)

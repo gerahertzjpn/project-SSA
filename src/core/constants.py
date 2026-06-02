@@ -18,6 +18,7 @@ class UnitType(Enum):
     RANGER = "RANGER"
     ARCHER = "RANGER"  # legacy alias; display/docs use Ranger/R
     SKIRMISHER = "SKIRMISHER"
+    LORD = "LORD"
 
 
 class ActionType(Enum):
@@ -39,12 +40,14 @@ UNIT_COST = {
 
 CORE_HP = 50
 CORE_ATK = 2
+DEATH_TIME_START_TICK = 270
+DEATH_TIME_CORE_DAMAGE_PER_TICK = (CORE_HP - 1) / (TICK_LIMIT - DEATH_TIME_START_TICK)
 
 TRAVEL_TIME = 3  # world ticks per edge; enables mid-edge collision checks
 EDGE_COLLISION_THRESHOLD = 0.05
 
-BARON_HP = 30
-BARON_ATK = 4
+BARON_HP = 120
+BARON_ATK = 16
 BARON_RESPAWN_TICKS = 50
 
 PLAYER_IDS = ["A1", "A2", "A3", "B1", "B2", "B3"]

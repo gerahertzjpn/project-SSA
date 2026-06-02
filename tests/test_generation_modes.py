@@ -83,12 +83,19 @@ def _state_digest(state) -> dict:
     return {
         "tick": state.tick,
         "winner": state.winner,
+        "winner_type": state.winner_type,
+        "core_combat_damage": _float(state.core_combat_damage),
+        "core_damage_by_team": tuple(
+            sorted((team, _float(damage)) for team, damage in state.core_damage_by_team.items())
+        ),
+        "death_time_final_core_deaths": tuple(sorted(state.death_time_final_core_deaths.items())),
         "players": {
             player_id: (
                 player.team,
                 player.core_node,
                 _float(player.resources),
                 player.alive,
+                _float(player.core_hp),
             )
             for player_id, player in sorted(state.players.items())
         },

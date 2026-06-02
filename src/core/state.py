@@ -60,6 +60,7 @@ class PlayerState:
     core_node: str
     resources: float
     alive: bool
+    core_hp: float
 
 
 @dataclass
@@ -100,6 +101,10 @@ class GameState:
     players: dict                       # player_id -> PlayerState
     baron: BaronState
     winner: Optional[str]               # None | 'TEAM_A' | 'TEAM_B' | 'DRAW'
+    winner_type: Optional[str]          # normal | death_time | draw_no_core_damage | truncated
+    core_combat_damage: float           # non-death-time core damage dealt by combat/lord
+    core_damage_by_team: dict           # team -> non-death-time core damage dealt
+    death_time_final_core_deaths: dict  # team -> cores destroyed by final death-time hit
     rng: object                         # numpy rng for reproducibility
 
     # ongoing persistent battles: "node:<id>" or "edge:<a>|<b>" -> Battle
@@ -161,6 +166,7 @@ def make_initial_state(seed: int = 42) -> GameState:
             core_node=pid,
             resources=start_resources,
             alive=True,
+            core_hp=float(CORE_HP),
         )
 
     baron = BaronState(
@@ -177,6 +183,10 @@ def make_initial_state(seed: int = 42) -> GameState:
         players=players,
         baron=baron,
         winner=None,
+        winner_type=None,
+        core_combat_damage=0.0,
+        core_damage_by_team={"TEAM_A": 0.0, "TEAM_B": 0.0},
+        death_time_final_core_deaths={"TEAM_A": 0, "TEAM_B": 0},
         rng=rng,
     )
 

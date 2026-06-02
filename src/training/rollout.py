@@ -48,6 +48,7 @@ def run_random_rollouts(
             "episode": episode,
             "seed": seed + episode,
             "winner": info["winner"],
+            "winner_type": info.get("winner_type"),
             "ticks": info["tick"],
             "steps": steps,
             "return": round(float(total_reward), 6),

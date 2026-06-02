@@ -31,15 +31,18 @@ def main():
         os.makedirs(args.out, exist_ok=True)
 
     results = {"TEAM_A": 0, "TEAM_B": 0, "DRAW": 0}
+    winner_types = {}
     for i in range(args.runs):
         seed = args.seed + i
         path = os.path.join(args.out, f"replay_{i}.json") if profile.save_replay else None
         result = run_match(seed=seed, bot_type=args.bot, replay_path=path, mode=args.mode)
         print(format_match_result(result))
         results[result.winner] = results.get(result.winner, 0) + 1
+        winner_types[result.winner_type] = winner_types.get(result.winner_type, 0) + 1
 
     if args.runs > 1:
         print(f"\nResults over {args.runs} matches ({args.mode} mode): {results}")
+        print(f"Winner types: {winner_types}")
 
 
 if __name__ == "__main__":

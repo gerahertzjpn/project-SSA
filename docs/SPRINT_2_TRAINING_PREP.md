@@ -97,8 +97,8 @@ Illegal decoded actions fall back to `HOLD`.
 
 Current vector:
 
-- `OBSERVATION_VERSION = train_obs_v0.1`
-- `OBSERVATION_DIM = 492`
+- `OBSERVATION_VERSION = train_obs_v0.2`
+- `OBSERVATION_DIM = 505`
 - dtype: `float32`
 
 The vector includes:
@@ -107,6 +107,7 @@ The vector includes:
 - per-node type and owner relation;
 - per-node self/ally/enemy/neutral unit counts;
 - neutral HP/income/aggro;
+- persistent core HP;
 - ready lock signal;
 - moving groups aggregated by node;
 - node battle HP summaries.
@@ -118,6 +119,7 @@ This is a training interface, not a replay format. Replay schema remains separat
 Default reward:
 
 - terminal win: `+1.0`
+- terminal death-time win: `+0.5`
 - terminal loss: `-1.0`
 - draw: `0.0`
 - small shaping delta: control/resource/alive-score delta times `0.02`
@@ -146,6 +148,7 @@ Current trainer rules:
 - training rollouts are stochastic policy samples;
 - eval rollouts use deterministic `argmax` actions;
 - eval metrics are logged separately from training reward;
+- normal win-rate and death-time win-rate are logged separately;
 - random-legal baseline eval is logged at the start of a fresh run;
 - checkpoint/resume must be verified by launching a new process with
   `--resume`, not just by checking that a file exists.
@@ -174,7 +177,7 @@ Expected properties:
 
 - JSON output;
 - `kind` is `random_rollout_smoke_no_training`;
-- all observations have dimension `492`;
+- all observations have dimension `505`;
 - no replay JSON is stored in engine memory during the rollout.
 
 Full verification:

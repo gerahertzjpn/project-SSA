@@ -8,6 +8,7 @@ import numpy as np
 
 from src.core.constants import (
     BARON_HP,
+    CORE_HP,
     PLAYER_IDS,
     TEAM_A_PLAYERS,
     TEAM_B_PLAYERS,
@@ -20,13 +21,13 @@ from src.core.engine import Action
 from src.core.map import ADJACENCY, ALL_NODES, NODE_TYPES, NodeType
 
 
-OBSERVATION_VERSION = "train_obs_v0.1"
+OBSERVATION_VERSION = "train_obs_v0.2"
 
 UNIT_ORDER = (UnitType.VANGUARD, UnitType.RANGER, UnitType.SKIRMISHER)
 RELATIONS = ("self", "ally", "enemy", "neutral")
 MOVE_INTENTS = ("CAPTURE", "TRANSIT")
 GLOBAL_FEATURES = 11
-NODE_FEATURES = 37
+NODE_FEATURES = 38
 OBSERVATION_DIM = GLOBAL_FEATURES + len(ALL_NODES) * NODE_FEATURES
 
 
@@ -354,6 +355,7 @@ def encode_observation(obs: dict, player_id: str) -> np.ndarray:
         features.extend([
             float(node.get("neutral_hp", 0) or 0) / 10.0,
             float(node.get("neutral_income", 0) or 0) / 10.0,
+            float(node.get("core_hp", 0.0) or 0.0) / float(CORE_HP),
             min(1.0, ready_remaining / 10.0),
             1.0 if own_team in aggro else 0.0,
             1.0 if any(team in aggro for team in {"TEAM_A", "TEAM_B"} - {own_team}) else 0.0,

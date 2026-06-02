@@ -43,6 +43,7 @@ CORE_RANGE = 8.0
 
 _SLOT_ORDER = {
     UnitType.VANGUARD.value: 0,
+    UnitType.LORD.value: 0,
     UnitType.SKIRMISHER.value: 1,
     UnitType.RANGER.value: 2,
     "ARCHER": 2,
@@ -111,13 +112,14 @@ def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
     ]
 
 
-def _build_core(player_id: str) -> UnitInstance:
+def _build_core(player_id: str, hp: float | None = None) -> UnitInstance:
     pos = ATTACKER_SIDE if player_id in TEAM_A_PLAYERS else DEFENDER_SIDE
+    current_hp = float(CORE_HP if hp is None else hp)
     return UnitInstance(
         uid=_new_uid(),
         unit_type="CORE",
         team=player_id,
-        hp=float(CORE_HP),
+        hp=current_hp,
         max_hp=float(CORE_HP),
         atk=float(CORE_ATK),
         range=CORE_RANGE,
@@ -269,8 +271,8 @@ def build_neutral_units(neutral_hp: int) -> list[UnitInstance]:
     return _build_neutrals(neutral_hp)
 
 
-def build_core_unit(player_id: str) -> UnitInstance:
-    return _build_core(player_id)
+def build_core_unit(player_id: str, hp: float | None = None) -> UnitInstance:
+    return _build_core(player_id, hp=hp)
 
 
 def build_baron_unit(baron_hp: int) -> UnitInstance:

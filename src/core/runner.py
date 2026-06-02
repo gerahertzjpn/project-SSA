@@ -44,6 +44,7 @@ class MatchResult:
     bot_type: str
     mode: str
     winner: str
+    winner_type: str
     total_ticks: int
     replay_path: Optional[str]
     replay_ticks_recorded: int
@@ -97,7 +98,20 @@ def run_match(
             total_ticks=state.tick,
             ticks=engine.replay_ticks,
             path=replay_path,
-            extra_meta={"generation_mode": profile.mode},
+            extra_meta={
+                "generation_mode": profile.mode,
+                "winner_type": state.winner_type,
+                "core_combat_damage": round(state.core_combat_damage, 3),
+                "core_damage_by_team": {
+                    team: round(damage, 3)
+                    for team, damage in sorted(state.core_damage_by_team.items())
+                },
+                "death_time_final_core_deaths": dict(state.death_time_final_core_deaths),
+                "final_core_hp": {
+                    player_id: round(player.core_hp, 3)
+                    for player_id, player in sorted(state.players.items())
+                },
+            },
             pretty=pretty_replay,
         )
 
@@ -106,6 +120,7 @@ def run_match(
         bot_type=bot_type,
         mode=profile.mode,
         winner=winner,
+        winner_type=state.winner_type or "unknown",
         total_ticks=state.tick,
         replay_path=replay_path if profile.save_replay else None,
         replay_ticks_recorded=len(engine.replay_ticks),
@@ -119,5 +134,5 @@ def format_match_result(result: MatchResult) -> str:
     replay_part = f"Replay: {result.replay_path}" if result.replay_path else "Replay: disabled"
     return (
         f"[mode={result.mode} seed={result.seed}] Winner: {result.winner} "
-        f"| Ticks: {result.total_ticks} | {replay_part}"
+        f"({result.winner_type}) | Ticks: {result.total_ticks} | {replay_part}"
     )

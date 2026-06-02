@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from .constants import UnitType
+from .constants import BARON_ATK, BARON_HP, UnitType
 
 # R-P-S: VANGUARD > SKIRMISHER > RANGER > VANGUARD
 # Reflected through unit stats: rangers shred vanguards at range before they close,
@@ -28,6 +28,14 @@ UNIT_STATS: dict[UnitType, dict] = {
         "speed": 1.5,
         "slot": "mid",
         "base_pos": 5,
+    },
+    UnitType.LORD: {
+        "hp": BARON_HP,
+        "atk": BARON_ATK,
+        "range": 2.0,
+        "speed": 1.0,
+        "slot": "front",
+        "base_pos": 1,
     },
 }
 
