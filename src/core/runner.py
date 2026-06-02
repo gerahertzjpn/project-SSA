@@ -111,6 +111,13 @@ def run_match(
                     player_id: round(player.core_hp, 3)
                     for player_id, player in sorted(state.players.items())
                 },
+                "allied_lord": {
+                    "owner": state.baron.allied_lord_owner,
+                    "hp": round(state.baron.allied_lord_hp, 3),
+                    "target": state.baron.allied_lord_target,
+                    "alive": state.baron.allied_lord_alive,
+                    "expended": state.baron.allied_lord_expended,
+                },
             },
             pretty=pretty_replay,
         )

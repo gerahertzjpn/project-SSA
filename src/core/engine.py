@@ -711,6 +711,11 @@ class GameEngine:
 
         units = {UnitType.LORD.value: 1}
         speed = self._group_speed(units)
+        self.state.baron.allied_lord_owner = player_id
+        self.state.baron.allied_lord_hp = float(self.state.baron.max_hp)
+        self.state.baron.allied_lord_target = target
+        self.state.baron.allied_lord_alive = True
+        self.state.baron.allied_lord_expended = False
         group = MovingGroup(
             player_id=player_id,
             team=get_team(player_id),
@@ -745,6 +750,8 @@ class GameEngine:
             return None
         if battle.participant_intents.get(player_id) != "LORD_PUSH":
             return None
+        if not self.state.baron.allied_lord_alive:
+            return None
 
         node = self.state.nodes[battle.location_id]
         lord_count = int((node.units or {}).get(UnitType.LORD.value, 0) or 0)
@@ -754,6 +761,8 @@ class GameEngine:
         final_dst = battle.participant_final_dsts.get(player_id)
         if not final_dst or final_dst == battle.location_id:
             return None
+        if self.state.baron.allied_lord_target:
+            final_dst = self.state.baron.allied_lord_target
 
         path = self._find_unrestricted_route(battle.location_id, final_dst)
         if not path or len(path) < 2:
@@ -915,7 +924,9 @@ class GameEngine:
         if not units:
             return
         entry_side = entry_side or self._entry_side(player_id, src, dst)
-        battle.units.extend(build_player_units(units, player_id, entry_side))
+        built_units = build_player_units(units, player_id, entry_side)
+        self._apply_allied_lord_hp_to_units(player_id, built_units)
+        battle.units.extend(built_units)
         battle.participant_routes[player_id] = (src, dst)
         battle.participant_intents[player_id] = intent
         battle.participant_entry_sides[player_id] = entry_side
@@ -925,6 +936,51 @@ class GameEngine:
             battle.participant_segment_indices[player_id] = getattr(current_group, "segment_index", 0)
             battle.participant_speeds[player_id] = getattr(current_group, "speed", 1.0)
             battle.participant_final_dsts[player_id] = getattr(current_group, "final_dst", dst) or dst
+
+    def _apply_allied_lord_hp_to_units(self, player_id: str, units: list) -> None:
+        if (
+            self.state.baron.allied_lord_owner != player_id
+            or not self.state.baron.allied_lord_alive
+        ):
+            return
+        for unit in units:
+            if unit.unit_type == UnitType.LORD.value:
+                unit.hp = max(0.0, float(self.state.baron.allied_lord_hp))
+                unit.max_hp = float(self.state.baron.max_hp)
+
+    def _sync_allied_lord_after_battle(self, battle: Battle) -> None:
+        owner = self.state.baron.allied_lord_owner
+        if not owner or not self.state.baron.allied_lord_alive:
+            return
+        lord_units = [
+            unit for unit in battle.units
+            if unit.team == owner and unit.unit_type == UnitType.LORD.value
+        ]
+        if not lord_units:
+            return
+        alive_hp = [max(0.0, unit.hp) for unit in lord_units if unit.is_alive()]
+        if alive_hp:
+            self.state.baron.allied_lord_hp = max(alive_hp)
+        else:
+            self._kill_allied_lord(expended=False)
+
+    def _kill_allied_lord(self, expended: bool) -> None:
+        self.state.baron.allied_lord_hp = 0.0
+        self.state.baron.allied_lord_alive = False
+        self.state.baron.allied_lord_expended = expended
+        owner = self.state.baron.allied_lord_owner
+        if not owner:
+            return
+        for node in self.state.nodes.values():
+            if node.units.get(UnitType.LORD.value):
+                node.units.pop(UnitType.LORD.value, None)
+            visitors = node.visiting_units.get(owner)
+            if visitors and visitors.get(UnitType.LORD.value):
+                visitors.pop(UnitType.LORD.value, None)
+        for group in list(self.state.moving_groups):
+            if group.player_id == owner and group.units.get(UnitType.LORD.value):
+                group.units.pop(UnitType.LORD.value, None)
+        self.state.moving_groups = [group for group in self.state.moving_groups if unit_total(group.units) > 0]
 
     def _aggro_neutrals(self, battle: Battle, player_id: str, node_id: str) -> None:
         team = get_team(player_id)
@@ -971,6 +1027,7 @@ class GameEngine:
 
     def _finish_node_battle(self, battle: Battle) -> dict:
         node = self.state.nodes[battle.location_id]
+        self._sync_allied_lord_after_battle(battle)
         survivors_by_player = count_survivors_by_player(battle.units)
         winner_player = self._strongest_survivor(survivors_by_player)
 
@@ -988,7 +1045,13 @@ class GameEngine:
                 core_owner,
                 previous_core_hp - self.state.players[core_owner].core_hp,
             )
+            lord_expended = False
             if not core_alive and winner_player:
+                survivor_units = dict(survivors_by_player.get(winner_player, {}))
+                if survivor_units.pop(UnitType.LORD.value, 0) > 0:
+                    lord_expended = True
+                    self._kill_allied_lord(expended=True)
+                survivors_by_player[winner_player] = survivor_units
                 self.state.players[core_owner].alive = False
                 self.state.players[core_owner].core_hp = 0.0
                 node.owner = winner_player
@@ -1016,6 +1079,7 @@ class GameEngine:
                     "core_destroyed": not core_alive,
                     "core_owner": core_owner,
                     "core_hp": round(self.state.players[core_owner].core_hp, 3),
+                    "lord_expended": lord_expended,
                 },
             )
 
@@ -1109,6 +1173,7 @@ class GameEngine:
         return self._resolution_event(battle, winner_player, extra)
 
     def _finish_edge_battle(self, battle: Battle) -> dict:
+        self._sync_allied_lord_after_battle(battle)
         survivors_by_player = count_survivors_by_player(battle.units)
         continuing = []
 
@@ -1518,6 +1583,11 @@ class GameEngine:
             "baron": {
                 "hp": state.baron.hp,
                 "controlled_by": state.baron.controlled_by,
+                "allied_lord_owner": state.baron.allied_lord_owner,
+                "allied_lord_hp": round(state.baron.allied_lord_hp, 3),
+                "allied_lord_target": state.baron.allied_lord_target,
+                "allied_lord_alive": state.baron.allied_lord_alive,
+                "allied_lord_expended": state.baron.allied_lord_expended,
             },
             "players": {
                 pid: {"alive": p.alive, "resources": p.resources, "core_hp": round(p.core_hp, 3)}
@@ -1579,6 +1649,11 @@ class GameEngine:
             "baron": {
                 "hp": state.baron.hp,
                 "controlled_by": state.baron.controlled_by,
+                "allied_lord_owner": state.baron.allied_lord_owner,
+                "allied_lord_hp": round(state.baron.allied_lord_hp, 3),
+                "allied_lord_target": state.baron.allied_lord_target,
+                "allied_lord_alive": state.baron.allied_lord_alive,
+                "allied_lord_expended": state.baron.allied_lord_expended,
             },
             "core_damage_by_team": {
                 team: round(damage, 3)

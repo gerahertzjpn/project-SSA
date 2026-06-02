@@ -104,6 +104,11 @@ def _state_digest(state) -> dict:
             state.baron.max_hp,
             state.baron.controlled_by,
             state.baron.ticks_remaining,
+            state.baron.allied_lord_owner,
+            _float(state.baron.allied_lord_hp),
+            state.baron.allied_lord_target,
+            state.baron.allied_lord_alive,
+            state.baron.allied_lord_expended,
         ),
         "nodes": {
             node_id: (

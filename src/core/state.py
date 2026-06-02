@@ -69,6 +69,11 @@ class BaronState:
     max_hp: int
     controlled_by: Optional[str]   # None or player_id of killer
     ticks_remaining: int            # ticks until baron is expended/respawns
+    allied_lord_owner: Optional[str] = None
+    allied_lord_hp: float = 0.0
+    allied_lord_target: Optional[str] = None
+    allied_lord_alive: bool = False
+    allied_lord_expended: bool = False
 
 
 @dataclass
