@@ -7,6 +7,7 @@ from src.core.combat import (
     CENTER_SIDE,
     COMBAT_MOVE_SPEED,
     DEFENDER_SIDE,
+    build_baron_unit,
     build_core_unit,
     build_player_units,
     build_neutral_units,
@@ -15,7 +16,7 @@ from src.core.combat import (
     resolve_baron_combat,
     tick_battle_units,
 )
-from src.core.constants import TRAVEL_TIME, UnitType
+from src.core.constants import BARON_ATTACK_RATE, BARON_ATK, BARON_HP, TRAVEL_TIME, UnitType
 from src.core.units import UNIT_STATS
 
 
@@ -152,6 +153,32 @@ def test_baron_fight_survives():
         baron_hp=30,
     )
     assert baron_killed is False
+
+
+def test_lord_stats_reflect_current_balance():
+    lord = build_player_units({UnitType.LORD.value: 1}, "A1", "attacker")[0]
+    baron = build_baron_unit(BARON_HP)
+
+    assert lord.max_hp == BARON_HP
+    assert lord.atk == BARON_ATK
+    assert lord.attack_rate == BARON_ATTACK_RATE
+    assert baron.max_hp == BARON_HP
+    assert baron.atk == BARON_ATK
+    assert baron.attack_rate == BARON_ATTACK_RATE
+
+
+def test_lord_attack_rate_fires_multiple_shots():
+    lord = build_player_units({UnitType.LORD.value: 1}, "A1", "attacker")[0]
+    targets = build_player_units({UnitType.SKIRMISHER.value: 3}, "B1", "defender")
+    for index, target in enumerate(targets):
+        target.pos = lord.pos + 1.0 + index * 0.1
+
+    frame = tick_battle_units([lord, *targets], record_trace=True)
+    lord_frame = next(item for item in frame if item["uid"] == lord.uid)
+
+    assert len(lord_frame["attacks"]) == BARON_ATTACK_RATE
+    assert len({shot["target"] for shot in lord_frame["attacks"]}) == BARON_ATTACK_RATE
+    assert sum(target.is_alive() for target in targets) == 0
 
 
 def test_neutrals_are_centered_stationary_group_with_ranger_range():

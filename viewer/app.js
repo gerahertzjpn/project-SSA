@@ -29,7 +29,7 @@ const EDGES = [
 const CORE_NODES = new Set(["A1", "A2", "A3", "B1", "B2", "B3"]);
 const CP_NODES = new Set(["CP1", "CP2", "CP3", "CP4", "CP5", "CP6"]);
 const CORE_MAX_HP = 50;
-const LORD_MAX_HP = 120;
+const LORD_MAX_HP = 150;
 const SAMPLE_REPLAYS = Array.from({ length: 20 }, (_, index) => ({
   label: `replay_${index}.json`,
   path: `../replays_viewer_debug_smoke/replay_${index}.json`,

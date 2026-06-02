@@ -19,7 +19,7 @@ clashes) where the agent only needs the outcome, not the per-tick position data.
 from typing import Optional
 
 from .constants import (
-    UnitType, CORE_HP, CORE_ATK, BARON_ATK, MAX_COMBAT_TICKS,
+    UnitType, CORE_HP, CORE_ATK, BARON_ATK, BARON_ATTACK_RATE, MAX_COMBAT_TICKS,
     TEAM_A_PLAYERS, TEAM_B_PLAYERS, TRAVEL_TIME,
 )
 from .units import UnitInstance, UNIT_STATS
@@ -81,6 +81,7 @@ def _build_side(units_dict: dict, team: str, is_attacker: bool) -> list[UnitInst
             range=float(stats["range"]),
             speed=float(stats["speed"]),
             pos=pos,
+            attack_rate=int(stats.get("attack_rate", 1)),
         ))
     return instances
 
@@ -107,6 +108,7 @@ def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
             range=NEUTRAL_RANGE,
             speed=0.0,
             pos=CENTER_SIDE,
+            attack_rate=1,
         )
         for _ in range(neutral_hp)
     ]
@@ -125,6 +127,7 @@ def _build_core(player_id: str, hp: float | None = None) -> UnitInstance:
         range=CORE_RANGE,
         speed=0.0,
         pos=pos,
+        attack_rate=1,
     )
 
 
@@ -139,6 +142,7 @@ def _build_baron(baron_hp: int) -> UnitInstance:
         range=2.0,
         speed=0.0,
         pos=CENTER_SIDE,
+        attack_rate=BARON_ATTACK_RATE,
     )
 
 
@@ -146,11 +150,18 @@ def _build_baron(baron_hp: int) -> UnitInstance:
 # Targeting and snapshot
 # ---------------------------------------------------------------------------
 
-def _find_target(unit: UnitInstance, enemies: list[UnitInstance]) -> Optional[UnitInstance]:
+def _find_target(
+    unit: UnitInstance,
+    enemies: list[UnitInstance],
+    pending: Optional[dict[int, float]] = None,
+) -> Optional[UnitInstance]:
     best = None
     best_dist = float("inf")
+    pending = pending or {}
     for e in enemies:
         if not e.is_alive():
+            continue
+        if e.hp - pending.get(e.uid, 0.0) <= 0:
             continue
         dist = abs(unit.pos - e.pos)
         if dist <= unit.range and dist < best_dist:
@@ -224,11 +235,15 @@ def _find_persistent_target(
     all_units: list[UnitInstance],
     neutral_aggro_teams: Optional[set[str]] = None,
     in_range_only: bool = True,
+    pending: Optional[dict[int, float]] = None,
 ) -> Optional[UnitInstance]:
     best = None
     best_dist = float("inf")
+    pending = pending or {}
     for other in all_units:
         if not _is_hostile(unit, other, neutral_aggro_teams):
+            continue
+        if other.hp - pending.get(other.uid, 0.0) <= 0:
             continue
         dist = abs(unit.pos - other.pos)
         if in_range_only and dist > unit.range:
@@ -239,12 +254,32 @@ def _find_persistent_target(
     return best
 
 
+def _attack_rate(unit: UnitInstance) -> int:
+    return max(1, int(getattr(unit, "attack_rate", 1) or 1))
+
+
+def _queue_attack(
+    unit: UnitInstance,
+    target: UnitInstance,
+    pending: dict[int, float],
+    damage_log: dict[int, float],
+    target_log: dict[int, int],
+    attack_log: dict[int, list[tuple[int, float]]],
+) -> None:
+    pending[target.uid] = pending.get(target.uid, 0.0) + unit.atk
+    damage_log[unit.uid] = damage_log.get(unit.uid, 0.0) + unit.atk
+    target_log[unit.uid] = target.uid
+    attack_log.setdefault(unit.uid, []).append((target.uid, unit.atk))
+
+
 def _frame_snapshot(
     all_units: list[UnitInstance],
     damage_log: dict,
     target_log: Optional[dict[int, int]] = None,
+    attack_log: Optional[dict[int, list[tuple[int, float]]]] = None,
 ) -> list:
     target_log = target_log or {}
+    attack_log = attack_log or {}
     return [
         {
             "uid": u.uid,
@@ -257,6 +292,10 @@ def _frame_snapshot(
             "atk": round(u.atk, 2),
             "dmg": round(damage_log.get(u.uid, 0.0), 2),
             "target": target_log.get(u.uid),
+            "attacks": [
+                {"target": target_uid, "damage": round(damage, 2)}
+                for target_uid, damage in attack_log.get(u.uid, [])
+            ],
         }
         for u in all_units
     ]
@@ -308,26 +347,27 @@ def tick_battle_units(
     pending: dict[int, float] = {}
     damage_log: dict[int, float] = {}
     target_log: dict[int, int] = {}
+    attack_log: dict[int, list[tuple[int, float]]] = {}
     alive = [u for u in units if u.is_alive()]
 
     for unit in alive:
-        target = _find_persistent_target(
-            unit,
-            alive,
-            neutral_aggro_teams=neutral_aggro_teams,
-            in_range_only=True,
-        )
-        if target is None:
-            continue
-        pending[target.uid] = pending.get(target.uid, 0.0) + unit.atk
-        damage_log[unit.uid] = damage_log.get(unit.uid, 0.0) + unit.atk
-        target_log[unit.uid] = target.uid
+        for _ in range(_attack_rate(unit)):
+            target = _find_persistent_target(
+                unit,
+                alive,
+                neutral_aggro_teams=neutral_aggro_teams,
+                in_range_only=True,
+                pending=pending,
+            )
+            if target is None:
+                break
+            _queue_attack(unit, target, pending, damage_log, target_log, attack_log)
 
     for unit in units:
         if unit.uid in pending:
             unit.hp -= pending[unit.uid]
 
-    return _frame_snapshot(units, damage_log, target_log) if record_trace else []
+    return _frame_snapshot(units, damage_log, target_log, attack_log) if record_trace else []
 
 
 def has_hostile_units(
@@ -397,27 +437,28 @@ def _run_combat(
         pending: dict[int, float] = {}
         damage_log: dict[int, float] = {}
         target_log: dict[int, int] = {}
+        attack_log: dict[int, list[tuple[int, float]]] = {}
 
         for u in alive_atk:
-            t = _find_target(u, alive_def)
-            if t:
-                pending[t.uid] = pending.get(t.uid, 0.0) + u.atk
-                damage_log[u.uid] = u.atk
-                target_log[u.uid] = t.uid
+            for _ in range(_attack_rate(u)):
+                t = _find_target(u, alive_def, pending=pending)
+                if not t:
+                    break
+                _queue_attack(u, t, pending, damage_log, target_log, attack_log)
 
         for u in alive_def:
-            t = _find_target(u, alive_atk)
-            if t:
-                pending[t.uid] = pending.get(t.uid, 0.0) + u.atk
-                damage_log[u.uid] = u.atk
-                target_log[u.uid] = t.uid
+            for _ in range(_attack_rate(u)):
+                t = _find_target(u, alive_atk, pending=pending)
+                if not t:
+                    break
+                _queue_attack(u, t, pending, damage_log, target_log, attack_log)
 
         for unit in all_units:
             if unit.uid in pending:
                 unit.hp -= pending[unit.uid]
 
         if record_trace:
-            trace.append(_frame_snapshot(all_units, damage_log, target_log))
+            trace.append(_frame_snapshot(all_units, damage_log, target_log, attack_log))
 
     return (
         [u for u in attackers if u.is_alive()],

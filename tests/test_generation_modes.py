@@ -50,6 +50,7 @@ def _battle_unit_digest(unit) -> tuple:
         _float(unit.hp),
         _float(unit.max_hp),
         _float(unit.atk),
+        getattr(unit, "attack_rate", 1),
         _float(unit.range),
         _float(unit.speed),
         _float(unit.pos),

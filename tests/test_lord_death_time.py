@@ -1,5 +1,6 @@
 from src.core.combat import build_core_unit, build_neutral_units, build_player_units
 from src.core.constants import (
+    BARON_HP,
     CORE_HP,
     DEATH_TIME_CORE_DAMAGE_PER_TICK,
     DEATH_TIME_START_TICK,
@@ -175,7 +176,7 @@ def test_allied_lord_hp_persists_between_battles():
     state = make_initial_state(seed=108)
     state.nodes["CP5"].owner = "B1"
     state.baron.allied_lord_owner = "A1"
-    state.baron.allied_lord_hp = 120.0
+    state.baron.allied_lord_hp = float(BARON_HP)
     state.baron.allied_lord_target = "B1"
     state.baron.allied_lord_alive = True
     engine = GameEngine(state, {}, record_trace=False, record_replay=False)

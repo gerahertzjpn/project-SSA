@@ -1737,18 +1737,22 @@ class GameEngine:
                 continue
             team = item["team"]
             damage_by_team[team] = damage_by_team.get(team, 0.0) + damage
-            target_uid = item.get("target")
-            target = frame_by_uid.get(target_uid)
-            if target:
-                attacks.append([
-                    item["uid"],
-                    target_uid,
-                    round(damage, 2),
-                    item["team"],
-                    self._unit_type_code(item["type"]),
-                    target["team"],
-                    self._unit_type_code(target["type"]),
-                ])
+            shot_log = item.get("attacks") or []
+            if not shot_log and item.get("target") is not None:
+                shot_log = [{"target": item.get("target"), "damage": damage}]
+            for shot in shot_log:
+                target_uid = shot.get("target")
+                target = frame_by_uid.get(target_uid)
+                if target:
+                    attacks.append([
+                        item["uid"],
+                        target_uid,
+                        round(float(shot.get("damage", 0.0)), 2),
+                        item["team"],
+                        self._unit_type_code(item["type"]),
+                        target["team"],
+                        self._unit_type_code(target["type"]),
+                    ])
 
         return {
             "alive": self._battle_side_summary(battle.units),
