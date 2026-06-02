@@ -283,6 +283,36 @@ def test_long_move_builds_shortest_route_and_walks_through_node():
     assert group.dst == "CP3"
 
 
+def test_guarded_neutrals_are_targets_not_transit_nodes():
+    state = make_initial_state(seed=19)
+    engine = GameEngine(state, make_bots())
+
+    reachable = {
+        node_id
+        for node_id in state.nodes
+        if engine._find_route("A1", "A1", node_id)
+    }
+
+    assert reachable == {"CP1", "CP2"}
+
+
+def test_route_does_not_transit_enemy_nodes_or_living_lord():
+    state = make_initial_state(seed=20)
+    state.nodes["CP1"].owner = "A1"
+    state.nodes["CP1"].neutral_hp = 0
+    state.nodes["CP3"].owner = "B1"
+    state.nodes["CP3"].neutral_hp = 0
+    state.nodes["CP5"].owner = "NEUTRAL"
+    state.nodes["CP5"].neutral_hp = 0
+
+    engine = GameEngine(state, make_bots())
+
+    assert engine._find_route("A1", "CP1", "CP5") is None
+
+    state.baron.hp = 0
+    assert engine._find_route("A1", "CP1", "CP5") == ["CP1", "Baron", "CP5"]
+
+
 def test_movement_speed_uses_slowest_unit_in_group():
     state = make_initial_state(seed=18)
     state.nodes["A1"].units = {UnitType.SKIRMISHER.value: 2}

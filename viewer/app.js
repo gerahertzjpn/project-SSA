@@ -339,10 +339,11 @@ function renderNodes(tick) {
     ].filter(Boolean).join(" ");
     node.style.left = `${scaleX(x)}px`;
     node.style.top = `${scaleY(y)}px`;
+    node.dataset.nodeId = id;
     node.title = nodeTitle(id, nodeState);
     node.textContent = displayNodeLabel(id);
 
-    const total = unitTotal(nodeState.units) + visitingTotal(nodeState.visiting_units);
+    const total = nodeDisplayTotal(nodeState, tick, id);
     if (total > 0) {
       const stack = document.createElement("span");
       stack.className = "stack";
@@ -367,11 +368,14 @@ function renderRoutes(tick, nextTick, alpha) {
   const used = new Set();
 
   for (const group of tick?.moving_groups || []) {
+    if (!isEdgeMovement(group)) {
+      continue;
+    }
     const nextGroup = findNextGroup(group, nextGroups, used);
-    const fallbackProgress = Number(group.arrives) <= Number(nextTick?.tick) ? 1 : group.progress;
+    const nextProgress = sameMovementSegment(group, nextGroup) ? nextGroup.progress : 1;
     const progress = interpolateValue(
       Number(group.progress || 0),
-      Number(nextGroup?.progress ?? fallbackProgress ?? 0),
+      Number(nextProgress ?? 0),
       alpha,
     );
     const pos = movingGroupPosition(group, progress);
@@ -436,15 +440,17 @@ function renderStatePanel(tick, nextTick, alpha) {
 
 function stateNodeCard(nodeId, tick, nextTick, alpha) {
   const node = tick.nodes?.[nodeId] || {};
-  const incoming = (tick.moving_groups || []).filter((group) => group.dst === nodeId);
-  const outgoing = (tick.moving_groups || []).filter((group) => group.src === nodeId);
+  const inside = (tick.moving_groups || []).filter((group) => movementNodeId(group) === nodeId);
+  const incoming = (tick.moving_groups || []).filter((group) => isEdgeMovement(group) && group.dst === nodeId);
+  const outgoing = (tick.moving_groups || []).filter((group) => isEdgeMovement(group) && group.src === nodeId);
   const battle = (tick.active_battles || []).find((item) => item.location_kind === "node" && item.location_id === nodeId);
-  const forceCards = stateForceCards(nodeId, node, tick);
+  const forceCards = stateForceCards(nodeId, node, tick, inside);
   const orderCards = [
+    ...inside.map((group) => movingGroupCard(group, "in node", nextTick, alpha)),
     ...incoming.map((group) => movingGroupCard(group, "in", nextTick, alpha)),
     ...outgoing.map((group) => movingGroupCard(group, "out", nextTick, alpha)),
   ];
-  const hasActivity = incoming.length || outgoing.length || battle || forceCards.length || node.neutral_hp > 0;
+  const hasActivity = inside.length || incoming.length || outgoing.length || battle || forceCards.length || node.neutral_hp > 0;
 
   if (!hasActivity) {
     return "";
@@ -456,13 +462,14 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
     .join("");
 
   return `
-    <div class="state-node-card ${battle || incoming.length || outgoing.length ? "active" : ""}">
+    <div class="state-node-card ${battle || inside.length || incoming.length || outgoing.length ? "active" : ""}">
       <div class="state-node-head">
         <strong>${displayNodeLabel(nodeId)}</strong>
         <span>${node.owner || "NEUTRAL"}</span>
       </div>
       <div class="state-tags">
         ${battle ? `<span class="state-tag battle">node battle</span>` : ""}
+        ${inside.length ? `<span class="state-tag">inside ${inside.length}</span>` : ""}
         ${incoming.length ? `<span class="state-tag">in ${incoming.length}</span>` : ""}
         ${outgoing.length ? `<span class="state-tag">out ${outgoing.length}</span>` : ""}
         ${node.neutral_hp > 0 ? `<span class="state-tag neutral">neutral ${node.neutral_hp}</span>` : ""}
@@ -480,7 +487,7 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
   `;
 }
 
-function stateForceCards(nodeId, node = {}, tick = {}) {
+function stateForceCards(nodeId, node = {}, tick = {}, insideGroups = []) {
   const cards = [];
   const currentTick = Number(tick.tick || 0);
 
@@ -512,6 +519,15 @@ function stateForceCards(nodeId, node = {}, tick = {}) {
       { NEUTRAL: node.neutral_hp },
       aggro ? `aggro ${aggro}` : "passive center guard",
       "neutral",
+    ));
+  }
+
+  for (const group of insideGroups) {
+    cards.push(stateForceCard(
+      group.player,
+      group.units,
+      `${phaseLabel(group.phase)} ${Math.round(Number(group.progress || 0) * 100)}%`,
+      "moving inside",
     ));
   }
 
@@ -563,10 +579,10 @@ function forceStatus(node, player, currentTick, fallback) {
 function movingGroupCard(group, label, nextTick, alpha) {
   const nextGroups = [...(nextTick?.moving_groups || [])];
   const nextGroup = findNextGroup(group, nextGroups, new Set());
-  const fallbackProgress = Number(group.arrives) <= Number(nextTick?.tick) ? 1 : group.progress;
+  const nextProgress = sameMovementSegment(group, nextGroup) ? nextGroup.progress : 1;
   const progress = interpolateValue(
     Number(group.progress || 0),
-    Number(nextGroup?.progress ?? fallbackProgress ?? 0),
+    Number(nextProgress ?? 0),
     alpha,
   );
   const boundedProgress = Math.max(0, Math.min(1, progress));
@@ -860,13 +876,10 @@ function interpolate(src, dst, progress) {
 }
 
 function movingGroupPosition(group, progress) {
-  if (group.phase === "edge" || !group.phase) {
-    return interpolate(group.src, group.dst, progress);
+  if (!isEdgeMovement(group)) {
+    return null;
   }
-
-  const nodeId = group.segment_node || (group.phase === "node_exit" ? group.src : group.dst);
-  const point = nodePhasePoint(nodeId, group.src, group.dst, group.phase, progress);
-  return point ? scalePoint(point) : interpolate(group.src, group.dst, progress);
+  return interpolate(group.src, group.dst, progress);
 }
 
 function nodePhasePoint(nodeId, src, dst, phase, progress) {
@@ -985,13 +998,45 @@ function nodeActivityClass(nodeId, tick) {
     battle.location_kind === "node" && battle.location_id === nodeId
   ));
   const hasMovement = (tick.moving_groups || []).some((group) => (
-    group.src === nodeId || group.dst === nodeId
+    group.src === nodeId || group.dst === nodeId || movementNodeId(group) === nodeId
   ));
   const hasNodeEvent = (tick.events || []).some((event) => (
     event.node === nodeId || event.location_id === nodeId || event.src === nodeId || event.dst === nodeId
   ));
 
   return hasBattle || hasMovement || hasNodeEvent ? "active" : "";
+}
+
+function isEdgeMovement(group) {
+  return !group.phase || group.phase === "edge";
+}
+
+function movementNodeId(group) {
+  if (isEdgeMovement(group)) {
+    return null;
+  }
+  if (group.segment_node) {
+    return group.segment_node;
+  }
+  if (group.phase === "node_exit") {
+    return group.src;
+  }
+  if (group.phase === "node_enter") {
+    return group.dst;
+  }
+  return null;
+}
+
+function sameMovementSegment(group, candidate) {
+  if (!candidate) {
+    return false;
+  }
+  return (
+    group.phase === candidate.phase &&
+    Number(group.segment_index ?? 0) === Number(candidate.segment_index ?? 0) &&
+    group.src === candidate.src &&
+    group.dst === candidate.dst
+  );
 }
 
 function teamClass(player) {
@@ -1309,6 +1354,13 @@ function formationTeamClass(team) {
 
 function unitTotal(units = {}) {
   return Object.values(units || {}).reduce((sum, count) => sum + Number(count || 0), 0);
+}
+
+function nodeDisplayTotal(nodeState = {}, tick = {}, nodeId = "") {
+  const movingInside = (tick.moving_groups || [])
+    .filter((group) => movementNodeId(group) === nodeId)
+    .reduce((sum, group) => sum + unitTotal(group.units), 0);
+  return unitTotal(nodeState.units) + visitingTotal(nodeState.visiting_units) + movingInside;
 }
 
 function visitingTotal(visitors = {}) {

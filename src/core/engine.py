@@ -332,7 +332,9 @@ class GameEngine:
         if node_id == "Baron" and self.state.nodes["Baron"].owner == "NEUTRAL" and self.state.baron.hp > 0:
             return False
         node = self.state.nodes[node_id]
-        return node.owner == "NEUTRAL" or get_team(node.owner) == get_team(player_id)
+        if node.owner == "NEUTRAL":
+            return int(node.neutral_hp or 0) <= 0
+        return get_team(node.owner) == get_team(player_id)
 
     def _group_speed(self, units: dict) -> float:
         speeds = []
@@ -446,14 +448,13 @@ class GameEngine:
 
         node = self.state.nodes[node_id]
         if node.neutral_hp > 0:
-            if self._has_enemy_visitors(node, group.player_id):
-                return self._start_node_battle(
-                    group=group,
-                    node_id=node_id,
-                    objective="pvp",
-                    include_visitors=True,
-                )
-            return None
+            return self._start_node_battle(
+                group=group,
+                node_id=node_id,
+                objective="neutral",
+                include_neutral=True,
+                include_visitors=True,
+            )
 
         if node.owner == "NEUTRAL":
             if self._has_enemy_visitors(node, group.player_id):

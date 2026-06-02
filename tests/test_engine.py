@@ -62,6 +62,17 @@ def test_neutral_nodes_start_with_guards():
         assert state.nodes[cp].owner == "NEUTRAL"
 
 
+def test_random_bot_closed_core_only_sees_adjacent_guarded_targets():
+    state = make_initial_state(seed=0)
+    engine = GameEngine(state, {})
+    obs = engine._observe("A1")
+    bot = RandomBot("A1", "TEAM_A", seed=0)
+
+    targets = bot._accessible_targets("A1", obs["nodes"], obs["baron"])
+
+    assert set(targets) == {"CP1", "CP2"}
+
+
 def test_mirror_neutrals():
     # CP1 should equal CP6, CP2 should equal CP5
     state = make_initial_state(seed=42)

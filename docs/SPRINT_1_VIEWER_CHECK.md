@@ -23,11 +23,11 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 ## Visual mapping
 
 - `nodes[*].owner` controls node color: A players are red, B players are blue, neutral nodes are grey.
-- `nodes[*].units` and `nodes[*].visiting_units` are shown as stack counts on nodes.
+- `nodes[*].units`, `nodes[*].visiting_units`, and moving groups currently inside a node phase are shown as stack counts on nodes.
 - `nodes[*].unit_ready_tick` marks units that arrived/resolved this tick and cannot leave that node until the next tick.
 - `nodes[*].unit_entry_side` records the last 1D combat side (`attacker`/left or `defender`/right) used by stationed units for each player.
 - `nodes[*].neutral_hp` is shown on control points as a small neutral guard badge.
-- `moving_groups` are shown as route dots using current movement phase: `node_exit`, `edge`, `node_transit`, or `node_enter`.
+- `moving_groups` are shown as route dots only while they are on an `edge` phase. During `node_exit`, `node_transit`, or `node_enter`, the group is visually counted inside that node instead of being drawn on the graph edge.
 - `moving_groups[*].path` is the full planned route, while `src`/`dst` describe the current phase endpoints.
 - `active_battles[*].location_kind == "node"` is shown on the node.
 - `active_battles[*].location_kind == "edge"` is shown on the edge midpoint/position.
@@ -47,6 +47,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - Combat approach movement uses unit speed. Speed `1.0` crosses the full combat line in `TRAVEL_TIME` world ticks; faster/slower units scale from that baseline. Attack cadence and damage are not accelerated.
 - Route movement speed is based on the slowest unit in the moving group. Edge travel, empty node crossing, source exit, and final node entry all scale from that same speed.
 - A source node exit or final node entry costs half of a full node crossing. Passing through an intermediate node costs one full node crossing.
+- Neutral nodes with living guards are valid destinations, but not valid transit nodes. Cleared neutral nodes are valid transit nodes.
 - Units that arrive at a node or survive a node battle receive a one-tick ready lock. They can be observed on that node before they can be moved to the next edge.
 - Node battles stay 1D, but player units now enter from the side implied by their route. Stationed owner/visitor units reuse their remembered `unit_entry_side` instead of always falling back to TEAM_A left / TEAM_B right.
 - Battle and event cards use fixed heights with internal scroll areas so UI height does not jump when event counts change.
@@ -58,7 +59,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - The current bots can leave units in place by choosing `HOLD`, but there is no dedicated high-level `DEFEND_POINT` or persistent garrison intent yet.
 - A `MOVE` takes all currently controllable units for that player from the source node. There is no partial split or squad selection yet.
 - A `MOVE` destination may be farther than one edge. The engine builds the shortest valid route automatically.
-- Valid route destinations are neutral nodes, allied nodes, Lord, and enemy nodes that are adjacent to a neutral/allied transit node. Enemy nodes are valid targets, but not valid transit hubs.
+- Valid route destinations are neutral nodes, allied nodes, Lord, and enemy nodes that are adjacent to a cleared neutral/allied transit node. Enemy nodes, guarded neutral nodes, and living neutral Lord are valid targets, but not valid transit hubs.
 - Friendly reinforcements merge into node-level units; on a friendly node owned by another player, practical control transfers to the node owner. Visitor units on neutral/passive nodes keep player identity until moved or pulled into battle.
 - Node combat is a 1D left/right abstraction derived from node order and remembered entry side. The map can have several graph entrances, but combat intentionally collapses them to exactly left or right; it does not preserve four separate entry channels.
 

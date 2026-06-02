@@ -188,6 +188,8 @@ select {
 .edges line {
   stroke: #4e5661;
   stroke-width: 2;
+  shape-rendering: geometricPrecision;
+  vector-effect: non-scaling-stroke;
 }
 
 .node {
@@ -279,13 +281,14 @@ select {
   position: absolute;
   width: 14px;
   height: 14px;
-  margin-left: -7px;
-  margin-top: -7px;
+  margin-left: 0;
+  margin-top: 0;
   border-radius: 50%;
   border: 2px solid currentColor;
   background: #101114;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
-  transition: transform 80ms linear;
+  transform: translate3d(-50%, -50%, 0);
+  will-change: left, top;
 }
 
 .route.team-a {

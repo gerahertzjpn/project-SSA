@@ -57,6 +57,29 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
             page.wait_for_function("document.querySelector('#replayMeta').textContent.includes('schema')")
             page.click('[data-tab="state"]')
             page.wait_for_selector(".state-node-card")
+            route_check = page.evaluate(
+                """() => {
+                    const tickIndex = state.replay.ticks.findIndex((item) =>
+                        (item.moving_groups || []).some((group) => movementNodeId(group))
+                    );
+                    if (tickIndex < 0) {
+                        return null;
+                    }
+                    seekTo(tickIndex);
+                    const tick = state.replay.ticks[tickIndex];
+                    const inside = (tick.moving_groups || []).find((group) => movementNodeId(group));
+                    const nodeId = movementNodeId(inside);
+                    const stack = document.querySelector(`.node[data-node-id="${nodeId}"] .stack`);
+                    return {
+                        tick: tickIndex,
+                        nodeId,
+                        routeDots: document.querySelectorAll('.route').length,
+                        edgeGroups: (tick.moving_groups || []).filter((group) => !group.phase || group.phase === 'edge').length,
+                        expectedStack: nodeDisplayTotal(tick.nodes[nodeId], tick, nodeId),
+                        stackText: stack ? stack.textContent : '0'
+                    };
+                }"""
+            )
 
             counts = page.evaluate(
                 """() => ({
@@ -81,6 +104,9 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
         assert counts["forceCards"] > 0
         assert counts["activeTab"] == "state"
         assert "schema" in counts["meta"]
+        assert route_check is not None
+        assert route_check["routeDots"] == route_check["edgeGroups"]
+        assert int(route_check["stackText"]) == route_check["expectedStack"]
         assert len(screenshot) > 50_000
         assert len(set(sample)) > 50
         assert sum(1 for red, green, blue in sample if red + green + blue > 90) > 1000
