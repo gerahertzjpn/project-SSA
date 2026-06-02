@@ -28,6 +28,8 @@ const EDGES = [
 
 const CORE_NODES = new Set(["A1", "A2", "A3", "B1", "B2", "B3"]);
 const CP_NODES = new Set(["CP1", "CP2", "CP3", "CP4", "CP5", "CP6"]);
+const CORE_MAX_HP = 50;
+const LORD_MAX_HP = 120;
 const SAMPLE_REPLAYS = Array.from({ length: 20 }, (_, index) => ({
   label: `replay_${index}.json`,
   path: `../replays_viewer_debug_smoke/replay_${index}.json`,
@@ -477,12 +479,13 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
   const outgoing = (tick.moving_groups || []).filter((group) => isEdgeMovement(group) && group.src === nodeId);
   const battle = (tick.active_battles || []).find((item) => item.location_kind === "node" && item.location_id === nodeId);
   const forceCards = stateForceCards(nodeId, node, tick, inside);
+  const coreHp = coreHpMarkup(nodeId, node, tick);
   const orderCards = [
-    ...inside.map((group) => movingGroupCard(group, "in node", nextTick, alpha)),
-    ...incoming.map((group) => movingGroupCard(group, "in", nextTick, alpha)),
-    ...outgoing.map((group) => movingGroupCard(group, "out", nextTick, alpha)),
+    ...inside.map((group) => movingGroupCard(group, "in node", tick, nextTick, alpha)),
+    ...incoming.map((group) => movingGroupCard(group, "in", tick, nextTick, alpha)),
+    ...outgoing.map((group) => movingGroupCard(group, "out", tick, nextTick, alpha)),
   ];
-  const hasActivity = inside.length || incoming.length || outgoing.length || battle || forceCards.length || node.neutral_hp > 0;
+  const hasActivity = coreHp || inside.length || incoming.length || outgoing.length || battle || forceCards.length || node.neutral_hp > 0;
 
   if (!hasActivity) {
     return "";
@@ -507,6 +510,7 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
         ${node.neutral_hp > 0 ? `<span class="state-tag neutral">neutral ${node.neutral_hp}</span>` : ""}
         ${ready}
       </div>
+      ${coreHp}
       <div class="state-section-title">standing</div>
       <div class="state-force-grid">
         ${forceCards.length ? forceCards.join("") : `<div class="state-empty">no stationed force</div>`}
@@ -522,6 +526,8 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
 function stateForceCards(nodeId, node = {}, tick = {}, insideGroups = []) {
   const cards = [];
   const currentTick = Number(tick.tick || 0);
+  const battle = (tick.active_battles || []).find((item) => item.location_kind === "node" && item.location_id === nodeId);
+  const alliedLord = alliedLordBattleInfo(battle);
 
   if (unitTotal(node.units) > 0) {
     const owner = node.owner || "NEUTRAL";
@@ -560,6 +566,19 @@ function stateForceCards(nodeId, node = {}, tick = {}, insideGroups = []) {
       group.units,
       `${phaseLabel(group.phase)} ${Math.round(Number(group.progress || 0) * 100)}%`,
       "moving inside",
+      unitCountLabel(group.units),
+      hasLordUnit(group.units) ? alliedLordHpMarkup(group.player, tick) : "",
+    ));
+  }
+
+  if (alliedLord) {
+    cards.push(stateForceCard(
+      alliedLord.owner,
+      { LORD: 1 },
+      "node battle",
+      "allied lord",
+      `${formatNumber(alliedLord.hp)} hp`,
+      stateHpBar(alliedLord.hp, alliedLord.maxHp || LORD_MAX_HP, "lord hp", "lord"),
     ));
   }
 
@@ -570,13 +589,14 @@ function stateForceCards(nodeId, node = {}, tick = {}, insideGroups = []) {
       "guarding center",
       "boss",
       `${formatNumber(tick.baron.hp)} hp`,
+      stateHpBar(tick.baron.hp, LORD_MAX_HP, "lord hp", "lord"),
     ));
   }
 
   return cards;
 }
 
-function stateForceCard(player, units, status, role, detail = unitCountLabel(units)) {
+function stateForceCard(player, units, status, role, detail = unitCountLabel(units), extraMarkup = "") {
   return `
     <div class="state-force-card ${formationTeamClass(player)}">
       <div class="state-card-head">
@@ -587,7 +607,43 @@ function stateForceCard(player, units, status, role, detail = unitCountLabel(uni
         <span>${role}</span>
         <span>${detail}</span>
       </div>
+      ${extraMarkup}
       <div class="state-unit-row">${unitChips(units)}</div>
+    </div>
+  `;
+}
+
+function coreHpMarkup(nodeId, node = {}, tick = {}) {
+  if (!CORE_NODES.has(nodeId)) {
+    return "";
+  }
+
+  const nodeHp = Number(node.core_hp);
+  const playerHp = Number(tick.players?.[nodeId]?.core_hp);
+  const hp = Number.isFinite(nodeHp) ? nodeHp : (Number.isFinite(playerHp) ? playerHp : 0);
+  return stateHpBar(hp, CORE_MAX_HP, "core hp", "core");
+}
+
+function alliedLordHpMarkup(player, tick = {}) {
+  if (tick.baron?.allied_lord_owner !== player) {
+    return "";
+  }
+
+  const hp = Number(tick.baron?.allied_lord_hp || 0);
+  return hp > 0 ? stateHpBar(hp, LORD_MAX_HP, "lord hp", "lord") : "";
+}
+
+function stateHpBar(current, max, label, kind = "") {
+  const hp = Math.max(0, Number(current) || 0);
+  const maxHp = Math.max(1, Number(max) || 1);
+  const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+  return `
+    <div class="state-hp ${kind}">
+      <div class="state-hp-row">
+        <span>${label}</span>
+        <span>${formatNumber(hp)}/${formatNumber(maxHp)}</span>
+      </div>
+      <div class="state-hp-track"><span style="width: ${pct}%;"></span></div>
     </div>
   `;
 }
@@ -608,7 +664,7 @@ function forceStatus(node, player, currentTick, fallback) {
   return readyStatus(node, player, currentTick, `${fallback} ${sideText}`);
 }
 
-function movingGroupCard(group, label, nextTick, alpha) {
+function movingGroupCard(group, label, tick, nextTick, alpha) {
   const nextGroups = [...(nextTick?.moving_groups || [])];
   const nextGroup = findNextGroup(group, nextGroups, new Set());
   const nextProgress = sameMovementSegment(group, nextGroup) ? nextGroup.progress : 1;
@@ -634,6 +690,7 @@ function movingGroupCard(group, label, nextTick, alpha) {
         <span>${intent} · speed ${formatNumber(group.speed || 1)}</span>
         <span>${eta}</span>
       </div>
+      ${hasLordUnit(group.units) ? alliedLordHpMarkup(group.player, tick) : ""}
       <div class="state-unit-row">${unitChips(group.units)}</div>
     </div>
   `;
@@ -967,20 +1024,32 @@ function alliedLordMarkers(tick, nextTick, alpha = 0) {
   return dedupeLordMarkers(markers);
 }
 
-function alliedLordBattleOwner(battle = {}) {
+function alliedLordBattleInfo(battle = {}) {
   for (const unit of normalizeFormation(battle.formation || [])) {
     if (unit.type === "L" && isPlayerId(unit.team)) {
-      return unit.team;
+      return {
+        owner: unit.team,
+        hp: unit.hp,
+        maxHp: unit.maxHp || LORD_MAX_HP,
+      };
     }
   }
 
   for (const [player, info] of Object.entries(battle.sides || {})) {
     if (isPlayerId(player) && hasLordUnit(info.units)) {
-      return player;
+      return {
+        owner: player,
+        hp: Number(info.hp || 0),
+        maxHp: LORD_MAX_HP,
+      };
     }
   }
 
   return null;
+}
+
+function alliedLordBattleOwner(battle = {}) {
+  return alliedLordBattleInfo(battle)?.owner || null;
 }
 
 function nodeAlliedLordOwner(node = {}) {

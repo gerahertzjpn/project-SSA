@@ -112,14 +112,19 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
             )
 
             counts = page.evaluate(
-                """() => ({
+                """() => {
+                    seekTo(0);
+                    return ({
                     nodes: document.querySelectorAll('.node').length,
                     routes: document.querySelectorAll('.route').length,
                     stateCards: document.querySelectorAll('.state-node-card').length,
                     forceCards: document.querySelectorAll('.state-force-card').length,
+                    coreHpBars: document.querySelectorAll('.state-hp.core').length,
+                    lordHpBars: document.querySelectorAll('.state-hp.lord').length,
                     activeTab: document.querySelector('.panel-tab.active')?.dataset.tab,
                     meta: document.querySelector('#replayMeta').textContent
-                })"""
+                    });
+                }"""
             )
             screenshot = page.screenshot(full_page=False)
             browser.close()
@@ -132,6 +137,8 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
         assert counts["nodes"] == 13
         assert counts["stateCards"] > 0
         assert counts["forceCards"] > 0
+        assert counts["coreHpBars"] >= 6
+        assert counts["lordHpBars"] >= 1
         assert counts["activeTab"] == "state"
         assert "schema" in counts["meta"]
         assert route_check is not None

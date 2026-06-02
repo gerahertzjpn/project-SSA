@@ -43,6 +43,9 @@ def test_viewer_loads_compact_replay_schema():
     assert "movingGroupPosition" in script
     assert "alliedLordMarkers" in script
     assert "renderLordOverlay" in script
+    assert "stateHpBar" in script
+    assert "coreHpMarkup" in script
+    assert "LORD_MAX_HP" in script
     assert "phaseLabel" in script
     assert "attackLinks" in script
     assert "attackSummaryMarkup" in script
@@ -71,6 +74,8 @@ def test_viewer_layout_has_arena_layers():
     assert ".state-force-card" in styles
     assert ".state-move-card" in styles
     assert ".state-progress" in styles
+    assert ".state-hp" in styles
+    assert ".state-hp-track" in styles
     assert ".battle-item.resolved" in styles
     assert ".battle-side" in styles
     assert "@media (max-height: 700px)" in styles
