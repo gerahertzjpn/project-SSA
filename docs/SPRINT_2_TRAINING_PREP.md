@@ -13,6 +13,43 @@ network yet.
   not accumulate replay JSON in memory.
 - Combat trace recording is disabled by default for training rollouts.
 
+## Generation Modes
+
+There are two simulation generation profiles:
+
+- `replay`: classic generation for viewer playback and debugging.
+  - `record_trace = true`
+  - `record_replay = true`
+  - replay JSON is saved
+- `training`: headless generation for long neural-network rollouts.
+  - `record_trace = false`
+  - `record_replay = false`
+  - replay JSON is not saved
+
+Important contract:
+
+- Both modes must use the same simulation rules, RNG seeds, bot actions, movement,
+  combat, income, production, routing, and tick order.
+- Training mode may disable only observer/debug artifacts that cannot affect the
+  resulting world state.
+- Do not disable, shortcut, batch, or approximate anything that changes what the
+  policy experiences or what actions mean.
+
+Current disabled artifacts in `training` mode:
+
+- per-tick replay snapshots;
+- per-combat trace/event summaries used by the viewer.
+
+These are intentionally behavior-equivalent to replay mode. Tests compare final
+state parity between `replay` and `training` generation for identical seeds.
+
+Future league note:
+
+- Neural policies in the league are expected to be stochastic.
+- Generation mode is orthogonal to that. A stochastic policy should still sample
+  from its action distribution in training/evaluation according to the league
+  rules; `training` mode only controls recording overhead.
+
 ## Important Future Note: Neutral Aggro
 
 Current implementation:
