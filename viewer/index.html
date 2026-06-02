@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autobattler Replay Viewer</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark" aria-hidden="true"></div>
+        <div>
+          <h1>Autobattler Replay</h1>
+          <p id="replayMeta">Load replay JSON</p>
+        </div>
+      </div>
+      <div class="loaders">
+        <select id="sampleSelect" aria-label="Sample replay"></select>
+        <button id="loadSampleBtn" class="command" type="button">Load</button>
+        <label class="file-button">
+          JSON
+          <input id="fileInput" type="file" accept="application/json,.json">
+        </label>
+      </div>
+    </header>
+
+    <section class="workspace">
+      <section class="arena-panel" aria-label="Match map">
+        <div id="arena" class="arena">
+          <svg class="edges" viewBox="0 0 680 410" preserveAspectRatio="none" aria-hidden="true">
+            <g id="edgeLayer"></g>
+          </svg>
+          <div id="nodeLayer"></div>
+          <div id="routeLayer"></div>
+          <div id="battleLayer"></div>
+        </div>
+        <div class="timeline">
+          <button id="prevBtn" class="icon-button" type="button" title="Previous tick" aria-label="Previous tick">|&lt;</button>
+          <button id="playBtn" class="icon-button primary" type="button" title="Play/Pause" aria-label="Play/Pause">&gt;</button>
+          <button id="nextBtn" class="icon-button" type="button" title="Next tick" aria-label="Next tick">&gt;|</button>
+          <input id="tickSlider" type="range" min="0" max="0" value="0" aria-label="Replay tick">
+          <div class="tick-readout"><span id="tickNow">0</span>/<span id="tickMax">0</span></div>
+          <select id="speedSelect" aria-label="Playback speed">
+            <option value="700">1x</option>
+            <option value="350" selected>2x</option>
+            <option value="160">4x</option>
+            <option value="80">8x</option>
+          </select>
+        </div>
+      </section>
+
+      <aside class="side-panel">
+        <div class="panel-tabs" role="tablist" aria-label="Replay panels">
+          <button class="panel-tab" type="button" role="tab" data-tab="replay" aria-controls="tabReplay" aria-selected="false">Replay</button>
+          <button class="panel-tab" type="button" role="tab" data-tab="players" aria-controls="tabPlayers" aria-selected="false">Players</button>
+          <button class="panel-tab" type="button" role="tab" data-tab="state" aria-controls="tabState" aria-selected="false">State</button>
+          <button class="panel-tab active" type="button" role="tab" data-tab="battles" aria-controls="tabBattles" aria-selected="true">Battles</button>
+          <button class="panel-tab" type="button" role="tab" data-tab="events" aria-controls="tabEvents" aria-selected="false">Events</button>
+        </div>
+
+        <section id="tabReplay" class="side-tab diagnostics" data-tab-panel="replay" role="tabpanel" aria-label="Replay diagnostics">
+          <h2>Replay</h2>
+          <div id="diagnosticsGrid" class="diagnostics-grid"></div>
+        </section>
+        <section id="tabPlayers" class="side-tab scoreboard" data-tab-panel="players" role="tabpanel" aria-label="Players">
+          <h2>Players</h2>
+          <div id="playersGrid" class="players-grid"></div>
+        </section>
+        <section id="tabState" class="side-tab state-panel" data-tab-panel="state" role="tabpanel" aria-label="Map state">
+          <h2>State</h2>
+          <div id="stateList" class="state-list"></div>
+        </section>
+        <section id="tabBattles" class="side-tab combat-panel active" data-tab-panel="battles" role="tabpanel" aria-label="Active battles">
+          <h2>Active Battles</h2>
+          <div id="battleList" class="battle-list"></div>
+        </section>
+        <section id="tabEvents" class="side-tab event-panel" data-tab-panel="events" role="tabpanel" aria-label="Tick events">
+          <h2>Tick Events</h2>
+          <div id="eventList" class="event-list"></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -1,0 +1,58 @@
+from dataclasses import dataclass
+from .constants import UnitType
+
+# R-P-S: VANGUARD > SKIRMISHER > RANGER > VANGUARD
+# Reflected through unit stats: rangers shred vanguards at range before they close,
+# skirmishers close quickly and kill rangers, vanguards absorb skirmisher hits.
+UNIT_STATS: dict[UnitType, dict] = {
+    UnitType.VANGUARD: {
+        "hp": 10,
+        "atk": 2,
+        "range": 1.0,
+        "speed": 1.0,  # positions per combat tick
+        "slot": "front",
+        "base_pos": 2,  # starting position offset from own side
+    },
+    UnitType.RANGER: {
+        "hp": 3,
+        "atk": 5,
+        "range": 3.0,
+        "speed": 0.5,
+        "slot": "back",
+        "base_pos": 10,
+    },
+    UnitType.SKIRMISHER: {
+        "hp": 5,
+        "atk": 3,
+        "range": 1.5,
+        "speed": 1.5,
+        "slot": "mid",
+        "base_pos": 5,
+    },
+}
+
+# Neutral unit stats (like vanguard but with configurable HP/ATK)
+NEUTRAL_UNIT_BASE = {
+    "hp": 1,         # multiplied by neutral_strength
+    "atk": 1,        # neutral_atk = strength // 2 + 1 (set dynamically)
+    "range": 0.5,
+    "speed": 0.0,    # neutrals don't advance
+    "slot": "front",
+    "base_pos": 1,
+}
+
+
+@dataclass
+class UnitInstance:
+    uid: int
+    unit_type: str       # UnitType.value or 'NEUTRAL' or 'CORE'
+    team: str            # player_id or 'NEUTRAL'
+    hp: float
+    max_hp: float
+    atk: float
+    range: float
+    speed: float
+    pos: float           # 1D position (attackers start low, defenders start high)
+
+    def is_alive(self) -> bool:
+        return self.hp > 0

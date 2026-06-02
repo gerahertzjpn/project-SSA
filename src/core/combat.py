@@ -1,0 +1,523 @@
+"""
+Tactical combat helpers (v0 — lightweight 1D simulator).
+
+Both sides arranged on a 1D line [0..20]:
+  - Attackers start at the low end (0), defenders at the high end (20).
+  - Front slots (vanguards) closest to enemy, back slots (archers) furthest.
+  - Each combat tick: units advance, attack nearest enemy in range, damage simultaneous.
+  - Neutrals: single garrison unit (defend a point, high range so they fire first).
+  - Core: stationary defender at the very back with HP + counterattack.
+
+The public resolve_* functions are kept for focused unit tests and quick balance probes.
+The engine uses the tickable helpers below to keep battles persistent in GameState:
+node/edge battles live across world ticks and reinforcements join the existing battle.
+
+record_trace=False skips _frame_snapshot entirely — use during RL training (millions of
+clashes) where the agent only needs the outcome, not the per-tick position data.
+"""
+
+from typing import Optional
+
+from .constants import (
+    UnitType, CORE_HP, CORE_ATK, BARON_ATK, MAX_COMBAT_TICKS,
+    TEAM_A_PLAYERS, TEAM_B_PLAYERS, TRAVEL_TIME,
+)
+from .units import UnitInstance, UNIT_STATS
+
+_uid_counter = 0
+
+
+def _new_uid() -> int:
+    global _uid_counter
+    _uid_counter += 1
+    return _uid_counter
+
+
+ATTACKER_SIDE = 0.0
+DEFENDER_SIDE = 20.0
+CENTER_SIDE = (ATTACKER_SIDE + DEFENDER_SIDE) / 2.0
+SLOT_SPACING = 1.0
+COMBAT_MOVE_SPEED = (DEFENDER_SIDE - ATTACKER_SIDE) / TRAVEL_TIME
+NEUTRAL_RANGE = 3.0
+CORE_RANGE = 8.0
+
+_SLOT_ORDER = {
+    UnitType.VANGUARD.value: 0,
+    UnitType.SKIRMISHER.value: 1,
+    UnitType.RANGER.value: 2,
+    "ARCHER": 2,
+}
+
+
+# ---------------------------------------------------------------------------
+# Unit construction helpers
+# ---------------------------------------------------------------------------
+
+def _build_side(units_dict: dict, team: str, is_attacker: bool) -> list[UnitInstance]:
+    base = ATTACKER_SIDE if is_attacker else DEFENDER_SIDE
+    direction = 1.0 if is_attacker else -1.0
+
+    all_units = []
+    for unit_type_val, count in units_dict.items():
+        unit_type_enum = _unit_type_enum(unit_type_val)
+        unit_type_val = unit_type_enum.value
+        stats = UNIT_STATS.get(unit_type_enum, UNIT_STATS[UnitType.VANGUARD])
+        slot_order = _SLOT_ORDER.get(unit_type_val, 1)
+        for _ in range(count):
+            all_units.append((slot_order, unit_type_val, stats))
+    all_units.sort(key=lambda x: x[0])
+
+    instances = []
+    for i, (_, unit_type_val, stats) in enumerate(all_units):
+        pos = base + direction * i * SLOT_SPACING
+        instances.append(UnitInstance(
+            uid=_new_uid(),
+            unit_type=unit_type_val,
+            team=team,
+            hp=float(stats["hp"]),
+            max_hp=float(stats["hp"]),
+            atk=float(stats["atk"]),
+            range=float(stats["range"]),
+            speed=float(stats["speed"]),
+            pos=pos,
+        ))
+    return instances
+
+
+def _unit_type_enum(unit_type_val: str) -> UnitType:
+    if unit_type_val == "ARCHER":
+        return UnitType.RANGER
+    return UnitType(unit_type_val)
+
+
+def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
+    if neutral_hp <= 0:
+        return []
+    total_atk = float(neutral_hp // 2 + 1)
+    per_unit_atk = total_atk / neutral_hp
+    return [
+        UnitInstance(
+            uid=_new_uid(),
+            unit_type="NEUTRAL",
+            team="NEUTRAL",
+            hp=1.0,
+            max_hp=1.0,
+            atk=per_unit_atk,
+            range=NEUTRAL_RANGE,
+            speed=0.0,
+            pos=CENTER_SIDE,
+        )
+        for _ in range(neutral_hp)
+    ]
+
+
+def _build_core(player_id: str) -> UnitInstance:
+    pos = ATTACKER_SIDE if player_id in TEAM_A_PLAYERS else DEFENDER_SIDE
+    return UnitInstance(
+        uid=_new_uid(),
+        unit_type="CORE",
+        team=player_id,
+        hp=float(CORE_HP),
+        max_hp=float(CORE_HP),
+        atk=float(CORE_ATK),
+        range=CORE_RANGE,
+        speed=0.0,
+        pos=pos,
+    )
+
+
+def _build_baron(baron_hp: int) -> UnitInstance:
+    return UnitInstance(
+        uid=_new_uid(),
+        unit_type="BARON",
+        team="BARON",
+        hp=float(baron_hp),
+        max_hp=float(baron_hp),
+        atk=float(BARON_ATK),
+        range=2.0,
+        speed=0.0,
+        pos=CENTER_SIDE,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Targeting and snapshot
+# ---------------------------------------------------------------------------
+
+def _find_target(unit: UnitInstance, enemies: list[UnitInstance]) -> Optional[UnitInstance]:
+    best = None
+    best_dist = float("inf")
+    for e in enemies:
+        if not e.is_alive():
+            continue
+        dist = abs(unit.pos - e.pos)
+        if dist <= unit.range and dist < best_dist:
+            best_dist = dist
+            best = e
+    return best
+
+
+def _nearest_target(unit: UnitInstance, enemies: list[UnitInstance]) -> Optional[UnitInstance]:
+    best = None
+    best_dist = float("inf")
+    for enemy in enemies:
+        if not enemy.is_alive():
+            continue
+        dist = abs(unit.pos - enemy.pos)
+        if dist < best_dist:
+            best_dist = dist
+            best = enemy
+    return best
+
+
+def _move_toward_target(unit: UnitInstance, target: Optional[UnitInstance]) -> None:
+    if target is None or unit.speed <= 0:
+        return
+    dist = abs(target.pos - unit.pos)
+    if dist <= unit.range:
+        return
+    direction = 1.0 if target.pos > unit.pos else -1.0
+    step = min(COMBAT_MOVE_SPEED, max(0.0, dist - unit.range))
+    unit.pos += direction * step
+
+
+def _combat_side(team: str) -> str:
+    if team in TEAM_A_PLAYERS:
+        return "TEAM_A"
+    if team in TEAM_B_PLAYERS:
+        return "TEAM_B"
+    return team
+
+
+def _is_hostile(
+    a: UnitInstance,
+    b: UnitInstance,
+    neutral_aggro_teams: Optional[set[str]] = None,
+) -> bool:
+    if not a.is_alive() or not b.is_alive() or a.uid == b.uid:
+        return False
+
+    neutral_aggro_teams = neutral_aggro_teams or set()
+    a_side = _combat_side(a.team)
+    b_side = _combat_side(b.team)
+
+    if a_side == b_side and a_side not in {"NEUTRAL", "BARON"}:
+        return False
+
+    if a_side == "NEUTRAL":
+        return b.team in neutral_aggro_teams or b_side in neutral_aggro_teams
+    if b_side == "NEUTRAL":
+        return a.team in neutral_aggro_teams or a_side in neutral_aggro_teams
+
+    if a_side == "BARON":
+        return b_side in {"TEAM_A", "TEAM_B"}
+    if b_side == "BARON":
+        return a_side in {"TEAM_A", "TEAM_B"}
+
+    return a_side != b_side
+
+
+def _find_persistent_target(
+    unit: UnitInstance,
+    all_units: list[UnitInstance],
+    neutral_aggro_teams: Optional[set[str]] = None,
+    in_range_only: bool = True,
+) -> Optional[UnitInstance]:
+    best = None
+    best_dist = float("inf")
+    for other in all_units:
+        if not _is_hostile(unit, other, neutral_aggro_teams):
+            continue
+        dist = abs(unit.pos - other.pos)
+        if in_range_only and dist > unit.range:
+            continue
+        if dist < best_dist:
+            best_dist = dist
+            best = other
+    return best
+
+
+def _frame_snapshot(
+    all_units: list[UnitInstance],
+    damage_log: dict,
+    target_log: Optional[dict[int, int]] = None,
+) -> list:
+    target_log = target_log or {}
+    return [
+        {
+            "uid": u.uid,
+            "type": u.unit_type,
+            "team": u.team,
+            "pos": round(u.pos, 2),
+            "hp": round(u.hp, 2),
+            "max_hp": round(u.max_hp, 2),
+            "range": round(u.range, 2),
+            "atk": round(u.atk, 2),
+            "dmg": round(damage_log.get(u.uid, 0.0), 2),
+            "target": target_log.get(u.uid),
+        }
+        for u in all_units
+    ]
+
+
+def build_player_units(units_dict: dict, player_id: str, entry_side: str) -> list[UnitInstance]:
+    """Build persistent battle units for a player entering from attacker/defender side."""
+    return _build_side(units_dict, player_id, is_attacker=entry_side == "attacker")
+
+
+def build_neutral_units(neutral_hp: int) -> list[UnitInstance]:
+    return _build_neutrals(neutral_hp)
+
+
+def build_core_unit(player_id: str) -> UnitInstance:
+    return _build_core(player_id)
+
+
+def build_baron_unit(baron_hp: int) -> UnitInstance:
+    return _build_baron(baron_hp)
+
+
+def tick_battle_units(
+    units: list[UnitInstance],
+    record_trace: bool = True,
+    neutral_aggro_teams: Optional[set[str]] = None,
+) -> list:
+    """
+    Advance a persistent battle by exactly one combat tick.
+    Mutates units in place and returns one replay frame, or [] when trace is disabled.
+    """
+    alive = [u for u in units if u.is_alive()]
+    if not alive:
+        return []
+
+    for unit in alive:
+        if unit.speed <= 0:
+            continue
+        target = _find_persistent_target(
+            unit,
+            alive,
+            neutral_aggro_teams=neutral_aggro_teams,
+            in_range_only=False,
+        )
+        if target is None:
+            continue
+        _move_toward_target(unit, target)
+
+    pending: dict[int, float] = {}
+    damage_log: dict[int, float] = {}
+    target_log: dict[int, int] = {}
+    alive = [u for u in units if u.is_alive()]
+
+    for unit in alive:
+        target = _find_persistent_target(
+            unit,
+            alive,
+            neutral_aggro_teams=neutral_aggro_teams,
+            in_range_only=True,
+        )
+        if target is None:
+            continue
+        pending[target.uid] = pending.get(target.uid, 0.0) + unit.atk
+        damage_log[unit.uid] = damage_log.get(unit.uid, 0.0) + unit.atk
+        target_log[unit.uid] = target.uid
+
+    for unit in units:
+        if unit.uid in pending:
+            unit.hp -= pending[unit.uid]
+
+    return _frame_snapshot(units, damage_log, target_log) if record_trace else []
+
+
+def has_hostile_units(
+    units: list[UnitInstance],
+    neutral_aggro_teams: Optional[set[str]] = None,
+) -> bool:
+    alive = [u for u in units if u.is_alive()]
+    for i, unit in enumerate(alive):
+        for other in alive[i + 1:]:
+            if _is_hostile(unit, other, neutral_aggro_teams):
+                return True
+    return False
+
+
+def count_survivors_by_player(units: list[UnitInstance]) -> dict[str, dict]:
+    result: dict[str, dict[str, int]] = {}
+    for unit in units:
+        if not unit.is_alive() or unit.unit_type in ("NEUTRAL", "CORE", "BARON"):
+            continue
+        result.setdefault(unit.team, {})
+        result[unit.team][unit.unit_type] = result[unit.team].get(unit.unit_type, 0) + 1
+    return result
+
+
+def alive_player_ids(units: list[UnitInstance]) -> list[str]:
+    players = []
+    for unit in units:
+        if unit.is_alive() and unit.unit_type not in ("NEUTRAL", "CORE", "BARON"):
+            if unit.team not in players:
+                players.append(unit.team)
+    return players
+
+
+def alive_combat_sides(units: list[UnitInstance]) -> set[str]:
+    return {_combat_side(pid) for pid in alive_player_ids(units)}
+
+
+# ---------------------------------------------------------------------------
+# Core combat loop (single source of truth)
+# ---------------------------------------------------------------------------
+
+def _run_combat(
+    attackers: list[UnitInstance],
+    defenders: list[UnitInstance],
+    record_trace: bool,
+) -> tuple[list[UnitInstance], list[UnitInstance], list]:
+    """
+    Run the tick loop until one side is eliminated or MAX_COMBAT_TICKS is reached.
+    Returns (alive_attackers, alive_defenders, trace).
+    trace is [] when record_trace=False.
+    """
+    all_units = attackers + defenders
+    trace: list = []
+
+    for _ in range(MAX_COMBAT_TICKS):
+        alive_atk = [u for u in attackers if u.is_alive()]
+        alive_def = [u for u in defenders if u.is_alive()]
+
+        if not alive_atk or not alive_def:
+            break
+
+        for u in alive_atk:
+            _move_toward_target(u, _nearest_target(u, alive_def))
+        for u in alive_def:
+            _move_toward_target(u, _nearest_target(u, alive_atk))
+
+        pending: dict[int, float] = {}
+        damage_log: dict[int, float] = {}
+        target_log: dict[int, int] = {}
+
+        for u in alive_atk:
+            t = _find_target(u, alive_def)
+            if t:
+                pending[t.uid] = pending.get(t.uid, 0.0) + u.atk
+                damage_log[u.uid] = u.atk
+                target_log[u.uid] = t.uid
+
+        for u in alive_def:
+            t = _find_target(u, alive_atk)
+            if t:
+                pending[t.uid] = pending.get(t.uid, 0.0) + u.atk
+                damage_log[u.uid] = u.atk
+                target_log[u.uid] = t.uid
+
+        for unit in all_units:
+            if unit.uid in pending:
+                unit.hp -= pending[unit.uid]
+
+        if record_trace:
+            trace.append(_frame_snapshot(all_units, damage_log, target_log))
+
+    return (
+        [u for u in attackers if u.is_alive()],
+        [u for u in defenders if u.is_alive()],
+        trace,
+    )
+
+
+def _count_survivors(units: list[UnitInstance]) -> dict:
+    result: dict[str, int] = {}
+    for u in units:
+        if u.unit_type in ("NEUTRAL", "CORE", "BARON"):
+            continue
+        result[u.unit_type] = result.get(u.unit_type, 0) + 1
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def resolve_combat(
+    attacker_units: dict,
+    attacker_team: str,
+    defender_units: dict,
+    defender_team: str,
+    neutral_hp: int = 0,
+    record_trace: bool = True,
+) -> tuple[dict, str, list, int]:
+    """
+    Resolve a clash at a neutral CP or enemy-held CP.
+    Returns (survivors, winner_team, trace, remaining_neutral_hp).
+    remaining_neutral_hp > 0 only when winner_team == "NEUTRAL" and neutrals survived.
+    """
+    attackers = _build_side(attacker_units, attacker_team, is_attacker=True)
+
+    if neutral_hp > 0:
+        defenders = _build_neutrals(neutral_hp)
+        defender_team = "NEUTRAL"
+    else:
+        defenders = _build_side(defender_units, defender_team, is_attacker=False)
+
+    if not attackers:
+        return defender_units.copy(), defender_team, [], 0
+    if not defenders:
+        return attacker_units.copy(), attacker_team, [], 0
+
+    alive_atk, alive_def, trace = _run_combat(attackers, defenders, record_trace)
+
+    if alive_atk and not alive_def:
+        return _count_survivors(alive_atk), attacker_team, trace, 0
+    if neutral_hp > 0:
+        remaining = int(sum(u.hp for u in alive_def if u.unit_type == "NEUTRAL"))
+        return {}, "NEUTRAL", trace, remaining
+    return _count_survivors([u for u in alive_def if u.unit_type != "CORE"]), defender_team, trace, 0
+
+
+def resolve_combat_with_core(
+    attacker_units: dict,
+    attacker_team: str,
+    defender_units: dict,
+    defender_team: str,
+    core_owner: str,
+    record_trace: bool = True,
+) -> tuple[dict, str, list, bool]:
+    """
+    Resolve an attack on an enemy core node.
+    Returns (survivors, winner_team, trace, core_destroyed).
+    """
+    attackers = _build_side(attacker_units, attacker_team, is_attacker=True)
+    defenders = _build_side(defender_units, defender_team, is_attacker=False)
+    core_unit = _build_core(core_owner)
+    defenders.append(core_unit)
+
+    if not attackers:
+        return defender_units.copy(), defender_team, [], False
+
+    alive_atk, alive_def, trace = _run_combat(attackers, defenders, record_trace)
+    core_alive = core_unit.is_alive()
+
+    if alive_atk and not alive_def:
+        return _count_survivors(alive_atk), attacker_team, trace, True
+    survivors = _count_survivors([u for u in alive_def if u.unit_type != "CORE"])
+    return survivors, defender_team, trace, not core_alive
+
+
+def resolve_baron_combat(
+    attacker_units: dict,
+    attacker_team: str,
+    baron_hp: int,
+    record_trace: bool = True,
+) -> tuple[dict, bool, list]:
+    """
+    Attack the Baron entity.
+    Returns (survivors, baron_killed, trace).
+    """
+    baron = _build_baron(baron_hp)
+    attackers = _build_side(attacker_units, attacker_team, is_attacker=True)
+
+    if not attackers:
+        return {}, False, []
+
+    alive_atk, _, trace = _run_combat(attackers, [baron], record_trace)
+    baron_killed = not baron.is_alive()
+    return _count_survivors(alive_atk), baron_killed, trace

@@ -1,0 +1,80 @@
+# Sprint 1 viewer check
+
+## Scope
+
+Replay viewer reads JSON only. It does not simulate combat, movement, income, battle resolution, or victory.
+
+## Replay schema used
+
+- `schema_version`: `0.4.1`
+- `combat_trace_format`: `compact_v3`
+- sample path: `replays_viewer_debug_smoke/replay_0.json`
+- active battle formation rows are `[uid, team, unit_code, hp, max_hp, pos, range]`
+- `BATTLE_TICK.summary.attacks` rows are `[attacker_uid, target_uid, damage, attacker_team, attacker_code, target_team, target_code]`
+
+## Naming Canon
+
+- Ranged unit display name is **Ranger**, code **R**.
+- The legacy enum alias `UnitType.ARCHER` still exists for compatibility, but new production/replay data should use `RANGER`; viewer displays both `ARCHER` and old `A` rows as `R`.
+- Central boss display name is **Lord**, code **L**.
+- The internal map node id is still `Baron` and some engine events/constants still use `baron/BARON` as legacy compatibility names; viewer displays those as `Lord/L`.
+- Do not introduce new user-facing `Archer/A` or `Baron/B` labels. `A` and `B` are reserved for player/team identifiers.
+
+## Visual mapping
+
+- `nodes[*].owner` controls node color: A players are red, B players are blue, neutral nodes are grey.
+- `nodes[*].units` and `nodes[*].visiting_units` are shown as stack counts on nodes.
+- `nodes[*].unit_ready_tick` marks units that arrived/resolved this tick and cannot leave that node until the next tick.
+- `nodes[*].unit_entry_side` records the last 1D combat side (`attacker`/left or `defender`/right) used by stationed units for each player.
+- `nodes[*].neutral_hp` is shown on control points as a small neutral guard badge.
+- `moving_groups` are shown as route dots interpolated from `src` to `dst` using `progress`.
+- `active_battles[*].location_kind == "node"` is shown on the node.
+- `active_battles[*].location_kind == "edge"` is shown on the edge midpoint/position.
+- `active_battles[*].formation` is shown as a compact 1D combat line inside each battle card.
+- `BATTLE_TICK.summary.attacks` is shown as colored attack links plus a short attack log; ranged attacks are dashed.
+- Recently resolved battles remain visible for a short replay lookback as faded cards, using the last active formation snapshot plus the final `BATTLE_TICK.summary`.
+- `events` are shown in the tick event list; `BATTLE_TICK.summary` is used instead of raw per-unit frames.
+- player alive/resources are shown from `players`.
+- Lord state is visible through the central legacy `Baron` node owner and replay event list.
+- The `State` tab shows active node state as visual force/order cards: stationed owner units, visitors, neutral/Lord center guards, ready locks, and incoming/outgoing movement orders with route progress.
+
+## Simulation Notes
+
+- Neutral guard and Lord combat units are centered exactly at combat position `10.0`, not placed on the defender/right side.
+- Neutral guards are represented as a group of neutral units with medium range (`3.0`). Once aggroed by an attack/capture, the whole neutral group attacks.
+- TEAM_A cores are placed on the left side of the combat line, TEAM_B cores on the right side. Cores have high attack range.
+- Combat approach movement uses the same line-crossing duration as empty-edge movement: crossing the full combat line takes `TRAVEL_TIME` world ticks. Attack cadence and damage are not accelerated.
+- Units that arrive at a node or survive a node battle receive a one-tick ready lock. They can be observed on that node before they can be moved to the next edge.
+- Node battles stay 1D, but player units now enter from the side implied by their route. Stationed owner/visitor units reuse their remembered `unit_entry_side` instead of always falling back to TEAM_A left / TEAM_B right.
+- Battle and event cards use fixed heights with internal scroll areas so UI height does not jump when event counts change.
+
+## Current Control Model
+
+- Action space is `HOLD`, `PRODUCE`, and one-edge `MOVE`.
+- Sending units to hold a node is currently represented as `MOVE` to that node, then no follow-up `MOVE`; arrived units stand at the abstract node center and receive a one-tick ready lock.
+- The current bots can leave units in place by choosing `HOLD`, but there is no dedicated high-level `DEFEND_POINT` or persistent garrison intent yet.
+- A `MOVE` takes all currently controllable units for that player from the source node. There is no partial split or squad selection yet.
+- Friendly reinforcements merge into node-level units; on a friendly node owned by another player, practical control transfers to the node owner. Visitor units on neutral/passive nodes keep player identity until moved or pulled into battle.
+- Node combat is a 1D left/right abstraction derived from node order and remembered entry side. The map can have several graph entrances, but combat intentionally collapses them to exactly left or right; it does not preserve four separate entry channels.
+
+## Manual check
+
+1. Run the server from repo root:
+   `python -m http.server 8001 --bind 127.0.0.1`
+2. Open:
+   `http://127.0.0.1:8001/`
+3. Press `Load`.
+4. Use play/pause, previous/next, seek slider, and speed selector.
+5. Verify that ticks with `BATTLE_STARTED`, `BATTLE_TICK`, and `BATTLE_RESOLVED` have visible battle markers, matching side summaries, and stable formation rows.
+
+## Automated checks
+
+- `pytest -q`
+- HTTP smoke:
+  - `http://127.0.0.1:8001/`
+  - `http://127.0.0.1:8001/viewer/index.html`
+  - `http://127.0.0.1:8001/replays_viewer_debug_smoke/replay_0.json`
+
+## Known limitation
+
+Automated browser screenshot verification was not run in this environment because no browser executable was available in `PATH`. Static viewer wiring and HTTP delivery are covered by tests.
