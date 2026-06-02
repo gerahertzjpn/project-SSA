@@ -67,6 +67,8 @@ def test_viewer_loads_compact_replay_schema():
     assert "/api/generate-replays" in script
     assert "API_PORTS" in script
     assert "apiBaseCandidates" in script
+    assert "serverStatusLabel" in script
+    assert "apiStale" in script
     assert "replayFetchUrl" in script
     assert "DEFAULT_UI_RUNS" in script
     assert "displayUnitCode" in script
@@ -115,6 +117,10 @@ def test_viewer_generation_server_is_ui_limited_only():
     assert "/api/generate-replays" in server
     assert "clear_replays()" in server
     assert "REPLAY_NAME" in server
+    assert "server_info()" in server
+    assert "source_fingerprint" in server
+    assert "discover_policy_checkpoints" in server
+    assert "policy_model_id_for_checkpoint" in server
     assert "Access-Control-Allow-Origin" in server
     assert "do_OPTIONS" in server
     assert "player_models=player_models" in server

@@ -55,6 +55,8 @@ const state = {
   maxUiRuns: 100,
   apiBase: "",
   apiAvailable: false,
+  apiStale: false,
+  serverInfo: null,
   generating: false,
 };
 
@@ -168,13 +170,17 @@ function handleTabKey(event, index) {
 async function initGenerator() {
   populatePlayerModelSelects(state.models, PLAYER_IDS);
   state.apiAvailable = false;
+  state.apiStale = false;
   state.apiBase = "";
+  state.serverInfo = null;
   validateGeneratorControls();
   setGeneratorLoading(true);
   setGeneratorStatus("Finding API...");
 
   try {
     const { payload, base } = await fetchGeneratorConfig();
+    state.serverInfo = payload.server || null;
+    state.apiStale = Boolean(state.serverInfo?.stale);
     state.apiAvailable = true;
     state.apiBase = base;
     state.models = payload.models?.length ? payload.models : [...FALLBACK_MODELS];
@@ -184,10 +190,17 @@ async function initGenerator() {
     if (payload.replays?.length) {
       populateSamples(payload.replays);
     }
-    setGeneratorStatus(`Ready | max ${state.maxUiRuns}${apiBaseLabel(base)}`);
+    setGeneratorStatus(
+      state.apiStale
+        ? `API stale | restart viewer${serverStatusLabel(state.serverInfo)}`
+        : `Ready | max ${state.maxUiRuns}${apiBaseLabel(base)}${serverStatusLabel(state.serverInfo)}`,
+      state.apiStale ? "error" : "",
+    );
   } catch (error) {
     state.apiAvailable = false;
+    state.apiStale = false;
     state.apiBase = "";
+    state.serverInfo = null;
     setGeneratorStatus("API offline | run start_viewer.bat", "error");
   } finally {
     setGeneratorLoading(false);
@@ -243,6 +256,16 @@ function apiBaseLabel(base) {
   }
 }
 
+function serverStatusLabel(info) {
+  if (!info) {
+    return "";
+  }
+  const commit = info.commit || "?";
+  const schema = info.schema_version || "?";
+  const stale = info.stale ? " stale" : "";
+  return ` | build ${commit} | schema ${schema}${stale}`;
+}
+
 function populatePlayerModelSelects(models = FALLBACK_MODELS, players = PLAYER_IDS) {
   els.playerModelGrid.innerHTML = "";
   const choices = models.length ? models : FALLBACK_MODELS;
@@ -276,7 +299,7 @@ function validateGeneratorControls() {
   const runs = Number(els.matchCountInput.value);
   const validRuns = Number.isInteger(runs) && runs >= 1 && runs <= state.maxUiRuns;
   const validSeed = Number.isFinite(Number(els.seedInput.value));
-  const canGenerate = state.apiAvailable && !state.generating && validRuns && validSeed;
+  const canGenerate = state.apiAvailable && !state.apiStale && !state.generating && validRuns && validSeed;
   els.generateMatchesBtn.disabled = !canGenerate;
 
   if (state.generating) {
@@ -290,12 +313,16 @@ function validateGeneratorControls() {
     setGeneratorStatus("Seed is invalid", "validation");
     return false;
   }
+  if (state.apiStale) {
+    setGeneratorStatus("API stale | restart viewer", "error");
+    return false;
+  }
   if (!state.apiAvailable) {
     setGeneratorStatus("API offline | run start_viewer.bat", "error");
     return false;
   }
   if (els.generationStatus.dataset.kind === "validation") {
-    setGeneratorStatus(`Ready | max ${state.maxUiRuns}`);
+    setGeneratorStatus(`Ready | max ${state.maxUiRuns}${serverStatusLabel(state.serverInfo)}`);
   }
   return true;
 }
@@ -339,8 +366,10 @@ async function generateMatches() {
     }
 
     const replays = data.replays?.length ? data.replays : [];
-    populateSamples(replays.length ? replays : SAMPLE_REPLAYS);
-    setGeneratorStatus("Generation complete", "ok");
+    state.serverInfo = data.server || state.serverInfo;
+    state.apiStale = Boolean(state.serverInfo?.stale);
+    populateSamples(replays);
+    setGeneratorStatus(`Generation complete${serverStatusLabel(state.serverInfo)}`, "ok");
     els.generatorSummary.textContent = generationSummary(data);
 
     if (replays[0]) {

@@ -2,12 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
 from typing import Optional
 
 from src.bots.random_bot import RandomBot
 from src.bots.scripted_bot import ScriptedBot
-from src.bots.policy_bot import PolicyBot, default_policy_checkpoint
-from src.core.constants import PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS
+from src.bots.policy_bot import (
+    PolicyBot,
+    checkpoint_from_policy_model_id,
+    default_policy_checkpoint,
+)
+from src.core.constants import (
+    CORE_ATTACK_RANGE,
+    LORD_ATTACK_RANGE,
+    PLAYER_IDS,
+    TEAM_A_PLAYERS,
+    TEAM_B_PLAYERS,
+    TRAVEL_TIME,
+)
 from src.core.engine import GameEngine
 from src.core.replay import save_replay
 from src.core.state import GameState, make_initial_state
@@ -68,6 +80,13 @@ def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
         return ScriptedBot(player_id, team)
     if model_id == "random":
         return RandomBot(player_id, team, seed=seed)
+    if model_id.startswith("policy:"):
+        return PolicyBot(
+            player_id,
+            team,
+            checkpoint_path=checkpoint_from_policy_model_id(model_id),
+            deterministic=True,
+        )
     if model_id in {"ppo_random_v1", "ppo_random_v1_latest"}:
         if model_id == "ppo_random_v1_latest":
             latest = Path("training_runs/sprint2_random_first_real_v1/checkpoints/latest.pt")
@@ -94,6 +113,31 @@ def generation_profile(mode: str) -> GenerationProfile:
         choices = ", ".join(sorted(GENERATION_PROFILES))
         raise ValueError(f"Unknown generation mode {mode!r}; expected one of: {choices}")
     return GENERATION_PROFILES[mode]
+
+
+def current_code_commit() -> str:
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parents[2],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip() or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def rules_meta() -> dict:
+    return {
+        "no_shoot_while_moving": True,
+        "allied_lord_can_move_and_shoot": True,
+        "allied_lord_attacks_forward_only": True,
+        "lord_attack_range": LORD_ATTACK_RANGE,
+        "core_attack_range": CORE_ATTACK_RANGE,
+        "edge_travel_time": TRAVEL_TIME,
+    }
 
 
 def run_match(
@@ -131,6 +175,8 @@ def run_match(
             extra_meta={
                 "generation_mode": profile.mode,
                 "bot_type": bot_type,
+                "code_commit": current_code_commit(),
+                "rules": rules_meta(),
                 "player_models": dict(player_models or {}),
                 "winner_type": state.winner_type,
                 "core_combat_damage": round(state.core_combat_damage, 3),

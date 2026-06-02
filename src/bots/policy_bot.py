@@ -12,6 +12,7 @@ from src.training.spaces import decode_action, encode_observation, legal_action_
 
 
 _POLICY_STATE_CACHE: dict[str, dict] = {}
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class PolicyBot(Bot):
@@ -61,3 +62,32 @@ def default_policy_checkpoint() -> Optional[Path]:
         if path.exists():
             return path
     return None
+
+
+def policy_model_id_for_checkpoint(path: str | Path) -> str:
+    checkpoint_path = Path(path).resolve()
+    try:
+        relative = checkpoint_path.relative_to(PROJECT_ROOT)
+    except ValueError:
+        relative = checkpoint_path
+    return f"policy:{relative.as_posix()}"
+
+
+def checkpoint_from_policy_model_id(model_id: str) -> Path:
+    if not model_id.startswith("policy:"):
+        raise ValueError(f"Not a policy model id: {model_id}")
+
+    raw_path = Path(model_id.split(":", 1)[1])
+    if raw_path.is_absolute():
+        raise ValueError("Policy model path must be relative")
+
+    checkpoint_path = (PROJECT_ROOT / raw_path).resolve()
+    training_root = (PROJECT_ROOT / "training_runs").resolve()
+    try:
+        checkpoint_path.relative_to(training_root)
+    except ValueError as error:
+        raise ValueError("Policy checkpoints must live under training_runs") from error
+
+    if checkpoint_path.suffix != ".pt" or not checkpoint_path.exists():
+        raise ValueError(f"Policy checkpoint is not available: {raw_path.as_posix()}")
+    return checkpoint_path

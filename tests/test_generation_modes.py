@@ -212,6 +212,25 @@ def test_replay_profile_accepts_per_player_models(tmp_path: Path):
     assert len(replay["ticks"]) == result.total_ticks
 
 
+def test_replay_meta_records_code_and_rules_version(tmp_path: Path):
+    replay_path = tmp_path / "rules_replay.json"
+
+    run_match(
+        seed=21,
+        bot_type="random",
+        replay_path=str(replay_path),
+        mode="replay",
+    )
+    replay = load_replay(str(replay_path))
+
+    assert replay["meta"]["schema_version"] == "0.5.1"
+    assert replay["meta"]["code_commit"]
+    assert replay["meta"]["rules"]["no_shoot_while_moving"] is True
+    assert replay["meta"]["rules"]["allied_lord_can_move_and_shoot"] is True
+    assert replay["meta"]["rules"]["lord_attack_range"] == 11.0
+    assert replay["meta"]["rules"]["core_attack_range"] == 12.0
+
+
 def test_training_profile_requires_no_replay_path(tmp_path: Path):
     result = run_match(
         seed=5,
