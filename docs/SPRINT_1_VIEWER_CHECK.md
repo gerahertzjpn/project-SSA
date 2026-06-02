@@ -44,6 +44,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 
 - Neutral guard and Lord combat units are centered exactly at combat position `10.0`, not placed on the defender/right side.
 - Neutral guards are represented as a stationary centered group with Ranger-equivalent range (`3.0`) and a small strength-based damage bonus. Once aggroed by an attack/capture, the whole neutral group attacks.
+- Current neutral aggro is intent-based: `CAPTURE`/`ATTACK` starts neutral aggro immediately, while `TRANSIT` does not. Future damage-triggered aggro is tracked in `docs/SPRINT_2_TRAINING_PREP.md`.
 - TEAM_A cores are placed on the left side of the combat line, TEAM_B cores on the right side. Cores have high attack range.
 - Combat approach movement uses unit speed. Speed `1.0` crosses the full combat line in `TRAVEL_TIME` world ticks; faster/slower units scale from that baseline. Attack cadence and damage are not accelerated.
 - Route movement speed is based on the slowest unit in the moving group. Edge travel, empty node crossing, source exit, and final node entry all scale from that same speed.

@@ -49,14 +49,22 @@ class Action:
 
 
 class GameEngine:
-    def __init__(self, state: GameState, bots: dict, record_trace: bool = True):
+    def __init__(
+        self,
+        state: GameState,
+        bots: dict,
+        record_trace: bool = True,
+        record_replay: bool = True,
+    ):
         """
         bots: dict mapping player_id -> Bot instance
         record_trace: pass False during RL training to skip per-tick combat snapshots
+        record_replay: pass False during RL training to avoid accumulating replay JSON
         """
         self.state = state
         self.bots = bots
         self.record_trace = record_trace
+        self.record_replay = record_replay
         self.replay_ticks = []
 
     def run(self) -> str:
@@ -97,9 +105,13 @@ class GameEngine:
                     tick_events.append(event)
 
         self._check_victory()
-        self.replay_ticks.append(self._snapshot_tick(state, tick_events))
+        if self.record_replay:
+            self.replay_ticks.append(self._snapshot_tick(state, tick_events))
 
         state.tick += 1
+
+    def observe(self, player_id: str) -> dict:
+        return self._observe(player_id)
 
     # ------------------------------------------------------------------
     # Movement
