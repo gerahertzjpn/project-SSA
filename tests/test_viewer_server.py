@@ -32,6 +32,18 @@ def test_ui_generation_replaces_old_replays_and_returns_numbered_list(tmp_path: 
     assert result["server"]["schema_version"] == "0.5.1"
 
 
+def test_replay_files_are_sorted_by_numeric_index(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(server, "REPLAY_DIR", tmp_path)
+    for name in ("replay_10.json", "replay_2.json", "replay_1.json"):
+        (tmp_path / name).write_text("{}", encoding="utf-8")
+
+    assert [item["label"] for item in server.replay_files()] == [
+        "replay_1.json",
+        "replay_2.json",
+        "replay_10.json",
+    ]
+
+
 def test_viewer_server_discovers_policy_checkpoints(tmp_path: Path, monkeypatch):
     checkpoint = tmp_path / "training_runs" / "new_policy" / "checkpoints" / "latest.pt"
     checkpoint.parent.mkdir(parents=True)

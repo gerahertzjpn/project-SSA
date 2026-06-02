@@ -115,13 +115,19 @@ def replay_files() -> list[dict]:
     if not REPLAY_DIR.exists():
         return []
     files = []
-    for path in sorted(REPLAY_DIR.iterdir(), key=lambda item: item.name):
+    for path in sorted(REPLAY_DIR.iterdir(), key=replay_sort_key):
         if path.is_file() and REPLAY_NAME.match(path.name):
             files.append({
                 "label": path.name,
                 "path": f"../{REPLAY_DIR.name}/{path.name}",
             })
     return files
+
+
+def replay_sort_key(path: Path) -> tuple[int, str]:
+    match = re.search(r"(\d+)", path.stem)
+    index = int(match.group(1)) if match else 0
+    return index, path.name
 
 
 def clear_replays() -> None:
