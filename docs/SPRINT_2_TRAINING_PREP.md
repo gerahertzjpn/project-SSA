@@ -214,6 +214,53 @@ Recommended next step after trainer smoke:
 
 Only after this works should we move toward 3v3 multi-agent self-play.
 
+## Sprint 2 Clean Closure
+
+Clean single-agent training was rerun after the Lord/ranged-abuse fixes.
+
+Run:
+
+```powershell
+python scripts/train_policy.py --run-dir training_runs/sprint2_scripted_clean_v1 --overwrite --updates 400 --workers 16 --rollout-steps 512 --eval-episodes 50 --eval-interval 10 --checkpoint-interval 10 --random-baseline-episodes 100 --ally-bot scripted --opponent-bot scripted --seed 20260603 --torch-threads 1
+```
+
+The run was intentionally stopped after checkpoint-backed update `100` because
+that checkpoint already passed the scripted gate. Resume was verified in a real
+process:
+
+```powershell
+python scripts/train_policy.py --run-dir training_runs/sprint2_scripted_clean_v1 --resume training_runs/sprint2_scripted_clean_v1/checkpoints/latest.pt --updates 390 --workers 16 --rollout-steps 512 --eval-episodes 50 --eval-interval 50 --checkpoint-interval 10 --random-baseline-episodes 0 --ally-bot scripted --opponent-bot scripted --seed 20260603 --torch-threads 1
+```
+
+Final eval:
+
+```powershell
+python scripts/evaluate_checkpoints.py --run-dir training_runs/sprint2_scripted_clean_v1 --updates 50,100 --modes argmax,stochastic --seed-bases 20260603,20270603,20280603,20290603 --episodes-per-seed 50 --workers 16 --torch-threads 1 --ally-bot scripted --opponent-bot scripted --include-random-legal --out-dir training_runs/evals/sprint2_clean_scripted_eval_50_100
+```
+
+Gate result:
+
+- `checkpoint_update_100.pt` is the accepted Sprint 2 checkpoint.
+- Scripted control: `34.5%` win, `45.5%` loss, `20.0%` draw over 200 episodes.
+- Random-legal A1: `37.0%` win, `37.5%` loss, `25.5%` draw over 200 episodes.
+- Update 50 argmax: `66.0%` win, `0.0%` loss, `34.0%` draw; all wins were death-time wins.
+- Update 100 argmax: `99.5%` win, `0.0%` loss, `0.5%` draw.
+- Update 100 argmax split: `47.0%` normal wins, `52.5%` death-time wins.
+- Update 100 argmax seed blocks: `100%`, `100%`, `98%`, `100%` win.
+- Update 100 stochastic: `77.0%` win, `13.0%` loss, `10.0%` draw.
+- Invalid action rate was `0.0%` in all reported evals.
+
+Conclusion:
+
+- The PPO loop learns under the corrected simulation rules.
+- The accepted checkpoint beats scripted and random-legal controls by a wide,
+  stable margin in deterministic argmax eval.
+- Stochastic policy quality is useful but weaker than argmax; future league
+  work should continue tracking stochastic eval separately.
+- Sprint 2 is closed for the single-agent proof. The next step is Sprint 3
+  league/self-play infrastructure, not treating the old pre-fix exploit
+  checkpoints as valid policy-quality evidence.
+
 ## Invalidated Runs
 
 - `training_runs/sprint2_first_train` was run on the latest simulation code, but
