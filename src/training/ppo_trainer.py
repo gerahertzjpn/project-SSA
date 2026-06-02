@@ -14,7 +14,7 @@ from torch import nn
 
 from src.training.env import TrainingEnv, TrainingEnvConfig
 from src.training.policy import MaskedActorCritic, to_cpu_state_dict
-from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, team_of
+from src.training.spaces import ACTION_DIM, ACTION_SPECS, OBSERVATION_DIM, team_of
 
 
 @dataclass
@@ -37,7 +37,7 @@ class PPOConfig:
     value_coef: float = 0.5
     entropy_coef: float = 0.01
     max_grad_norm: float = 0.5
-    eval_episodes: int = 8
+    eval_episodes: int = 50
     eval_interval: int = 1
     checkpoint_interval: int = 1
     torch_threads: int = 1
@@ -304,8 +304,77 @@ def _mean(items: list[dict], key: str) -> float:
     return float(sum(float(item.get(key, 0.0) or 0.0) for item in items) / len(items))
 
 
-def summarize_training_episodes(episodes: list[dict]) -> dict:
+def action_label(action_index: int) -> str:
+    if action_index < 0 or action_index >= ACTION_DIM:
+        return f"{action_index}:INVALID"
+    spec = ACTION_SPECS[int(action_index)]
+    if spec.kind == "HOLD":
+        return f"{action_index}:HOLD"
+    if spec.kind == "PRODUCE" and spec.unit_type is not None:
+        return f"{action_index}:PRODUCE:{spec.unit_type.value}"
+    if spec.kind == "MOVE" and spec.destination:
+        return f"{action_index}:MOVE:{spec.intent}:{spec.destination}"
+    return f"{action_index}:{spec.kind}"
+
+
+def action_kind_label(action_index: int) -> str:
+    if action_index < 0 or action_index >= ACTION_DIM:
+        return "INVALID"
+    spec = ACTION_SPECS[int(action_index)]
+    if spec.kind == "MOVE":
+        return f"MOVE_{spec.intent}"
+    return spec.kind
+
+
+def summarize_action_distribution(actions: list[int] | np.ndarray, top_n: int = 8) -> dict:
+    action_array = np.asarray(actions, dtype=np.int64)
+    total = int(action_array.size)
+    if total <= 0:
+        return {
+            "total_actions": 0,
+            "unique_actions": 0,
+            "dominant_action": None,
+            "dominant_action_rate": 0.0,
+            "kind_counts": {},
+            "top_actions": [],
+        }
+
+    counts = np.bincount(action_array, minlength=ACTION_DIM)
+    nonzero = np.flatnonzero(counts)
+    kind_counts: dict[str, int] = {}
+    for action_index in action_array:
+        key = action_kind_label(int(action_index))
+        kind_counts[key] = kind_counts.get(key, 0) + 1
+
+    top_indexes = sorted(nonzero, key=lambda idx: (-int(counts[idx]), int(idx)))[:top_n]
+    top_actions = [
+        {
+            "action": action_label(int(index)),
+            "count": int(counts[index]),
+            "rate": round(float(counts[index]) / total, 6),
+        }
+        for index in top_indexes
+    ]
+    dominant = top_actions[0] if top_actions else None
+
     return {
+        "total_actions": total,
+        "unique_actions": int(nonzero.size),
+        "dominant_action": dominant["action"] if dominant else None,
+        "dominant_action_rate": dominant["rate"] if dominant else 0.0,
+        "kind_counts": {
+            key: {
+                "count": value,
+                "rate": round(float(value) / total, 6),
+            }
+            for key, value in sorted(kind_counts.items())
+        },
+        "top_actions": top_actions,
+    }
+
+
+def summarize_training_episodes(episodes: list[dict], actions: Optional[list[int] | np.ndarray] = None) -> dict:
+    summary = {
         "episodes": len(episodes),
         "mean_reward": round(_mean(episodes, "return"), 6),
         "mean_shaping": round(_mean(episodes, "shaping"), 6),
@@ -317,6 +386,9 @@ def summarize_training_episodes(episodes: list[dict]) -> dict:
         "death_time_win_rate": round(_rate(episodes, "death_time_win"), 6),
         "mean_episode_steps": round(_mean(episodes, "steps"), 3),
     }
+    if actions is not None:
+        summary["action_distribution"] = summarize_action_distribution(actions)
+    return summary
 
 
 @torch.no_grad()
@@ -330,6 +402,7 @@ def evaluate_policy(
 ) -> dict:
     policy.eval()
     summaries = []
+    actions = []
     for episode_index in range(episodes):
         env_seed = seed + episode_index
         env = TrainingEnv(_env_config(config, env_seed))
@@ -339,6 +412,7 @@ def evaluate_policy(
         while not done:
             mask = env.action_mask()
             step = policy.act(obs, mask, deterministic=deterministic, device=device)
+            actions.append(step.action)
             obs, reward, terminal, truncated, info = env.step(step.action)
             reward_components = info.get("reward_components", {}) or {}
             metrics.return_sum += float(reward)
@@ -350,7 +424,7 @@ def evaluate_policy(
         metrics.winner_type = info.get("winner_type") or "unknown"
         summaries.append(_episode_summary(metrics, config.controlled_player))
 
-    summary = summarize_training_episodes(summaries)
+    summary = summarize_training_episodes(summaries, actions)
     summary["mode"] = "argmax" if deterministic else "stochastic"
     summary["episodes_detail"] = summaries
     return summary
@@ -359,6 +433,7 @@ def evaluate_policy(
 def evaluate_random_legal_policy(config: PPOConfig, episodes: int, seed: int) -> dict:
     rng = np.random.default_rng(seed)
     summaries = []
+    actions = []
     for episode_index in range(episodes):
         env_seed = seed + episode_index
         env = TrainingEnv(_env_config(config, env_seed))
@@ -369,6 +444,7 @@ def evaluate_random_legal_policy(config: PPOConfig, episodes: int, seed: int) ->
             mask = env.action_mask()
             legal = np.flatnonzero(mask)
             action = int(rng.choice(legal)) if len(legal) else 0
+            actions.append(action)
             obs, reward, terminal, truncated, info = env.step(action)
             reward_components = info.get("reward_components", {}) or {}
             metrics.return_sum += float(reward)
@@ -380,7 +456,7 @@ def evaluate_random_legal_policy(config: PPOConfig, episodes: int, seed: int) ->
         metrics.winner_type = info.get("winner_type") or "unknown"
         summaries.append(_episode_summary(metrics, config.controlled_player))
 
-    summary = summarize_training_episodes(summaries)
+    summary = summarize_training_episodes(summaries, actions)
     summary["mode"] = "random_legal"
     summary["episodes_detail"] = summaries
     return summary

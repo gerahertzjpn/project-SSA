@@ -148,6 +148,10 @@ Current trainer rules:
 - training rollouts are stochastic policy samples;
 - eval rollouts use deterministic `argmax` actions;
 - eval metrics are logged separately from training reward;
+- train/eval summaries log action distributions, including dominant action rate,
+  so an untrained argmax policy collapsing to `HOLD` is visible immediately;
+- eval uses 50 episodes by default; smaller values are smoke-only and should not
+  be used to judge win-rate;
 - normal win-rate and death-time win-rate are logged separately;
 - random-legal baseline eval is logged at the start of a fresh run;
 - checkpoint/resume must be verified by launching a new process with
@@ -164,13 +168,13 @@ python scripts/training_smoke.py --episodes 3 --seed 20260602 --max-ticks 60
 First trainer smoke:
 
 ```powershell
-python scripts/train_policy.py --run-dir training_runs/first_smoke --overwrite --updates 3 --workers 4 --rollout-steps 300 --eval-episodes 4
+python scripts/train_policy.py --run-dir training_runs/first_smoke --overwrite --updates 3 --workers 4 --rollout-steps 300 --eval-episodes 50
 ```
 
 Checkpoint/resume verification:
 
 ```powershell
-python scripts/train_policy.py --run-dir training_runs/first_smoke --resume training_runs/first_smoke/checkpoints/latest.pt --updates 1 --workers 2 --rollout-steps 120 --eval-episodes 2
+python scripts/train_policy.py --run-dir training_runs/first_smoke --resume training_runs/first_smoke/checkpoints/latest.pt --updates 1 --workers 2 --rollout-steps 120 --eval-episodes 50
 ```
 
 Expected properties:

@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--value-coef", type=float, default=0.5)
     parser.add_argument("--entropy-coef", type=float, default=0.01)
     parser.add_argument("--max-grad-norm", type=float, default=0.5)
-    parser.add_argument("--eval-episodes", type=int, default=8)
+    parser.add_argument("--eval-episodes", type=int, default=50)
     parser.add_argument("--eval-interval", type=int, default=1)
     parser.add_argument("--checkpoint-interval", type=int, default=1)
     parser.add_argument("--seed", type=int, default=20260602)
@@ -63,7 +63,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-ticks", type=int, default=300)
     parser.add_argument("--torch-threads", type=int, default=1)
     parser.add_argument("--device", default="auto")
-    parser.add_argument("--random-baseline-episodes", type=int, default=8)
+    parser.add_argument("--random-baseline-episodes", type=int, default=50)
     return parser.parse_args()
 
 
@@ -176,7 +176,7 @@ def main() -> None:
             started = time.perf_counter()
             rollout = collect_rollouts(policy, config, update, pool=pool)
             total_steps += int(len(rollout["actions"]))
-            train_summary = summarize_training_episodes(rollout["episodes"])
+            train_summary = summarize_training_episodes(rollout["episodes"], rollout["actions"])
             loss_summary = update_policy(policy, optimizer, rollout, config, device)
 
             eval_summary = None
