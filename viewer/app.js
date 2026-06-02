@@ -28,6 +28,7 @@ const EDGES = [
 
 const CORE_NODES = new Set(["A1", "A2", "A3", "B1", "B2", "B3"]);
 const CP_NODES = new Set(["CP1", "CP2", "CP3", "CP4", "CP5", "CP6"]);
+const NODE_IDS = Object.keys(NODE_POSITIONS);
 const PLAYER_IDS = ["A1", "A2", "A3", "B1", "B2", "B3"];
 const CORE_MAX_HP = 50;
 const LORD_MAX_HP = 150;
@@ -58,6 +59,7 @@ const state = {
   apiStale: false,
   serverInfo: null,
   generating: false,
+  selectedStateNodes: new Set(NODE_IDS),
 };
 
 const els = {
@@ -80,6 +82,9 @@ const els = {
   speedSelect: document.getElementById("speedSelect"),
   diagnosticsGrid: document.getElementById("diagnosticsGrid"),
   playersGrid: document.getElementById("playersGrid"),
+  stateFilter: document.getElementById("stateFilter"),
+  stateFilterAllBtn: document.getElementById("stateFilterAllBtn"),
+  stateFilterNoneBtn: document.getElementById("stateFilterNoneBtn"),
   stateList: document.getElementById("stateList"),
   battleList: document.getElementById("battleList"),
   eventList: document.getElementById("eventList"),
@@ -98,6 +103,7 @@ const els = {
 function setup() {
   drawEdges();
   populateSamples();
+  populateStateFilter();
   bindControls();
   initGenerator();
   renderEmpty();
@@ -125,11 +131,55 @@ function bindControls() {
   els.seedInput.addEventListener("input", validateGeneratorControls);
   els.generateMatchesBtn.addEventListener("click", generateMatches);
   els.reconnectApiBtn.addEventListener("click", () => initGenerator());
+  els.stateFilterAllBtn.addEventListener("click", () => setStateNodeSelection(NODE_IDS));
+  els.stateFilterNoneBtn.addEventListener("click", () => setStateNodeSelection([]));
   els.panelTabs.forEach((button, index) => {
     button.addEventListener("click", () => setActiveTab(button.dataset.tab));
     button.addEventListener("keydown", (event) => handleTabKey(event, index));
   });
   setActiveTab(state.activeTab);
+}
+
+function populateStateFilter() {
+  els.stateFilter.innerHTML = "";
+  for (const nodeId of NODE_IDS) {
+    const label = document.createElement("label");
+    label.className = "state-filter-option";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = state.selectedStateNodes.has(nodeId);
+    checkbox.dataset.stateNode = nodeId;
+    checkbox.addEventListener("change", handleStateFilterChange);
+
+    const text = document.createElement("span");
+    text.textContent = displayNodeLabel(nodeId);
+
+    label.appendChild(checkbox);
+    label.appendChild(text);
+    els.stateFilter.appendChild(label);
+  }
+}
+
+function handleStateFilterChange(event) {
+  const nodeId = event.target.dataset.stateNode;
+  if (!nodeId) {
+    return;
+  }
+  if (event.target.checked) {
+    state.selectedStateNodes.add(nodeId);
+  } else {
+    state.selectedStateNodes.delete(nodeId);
+  }
+  renderTick(0);
+}
+
+function setStateNodeSelection(nodeIds) {
+  state.selectedStateNodes = new Set(nodeIds);
+  for (const checkbox of els.stateFilter.querySelectorAll("input[data-state-node]")) {
+    checkbox.checked = state.selectedStateNodes.has(checkbox.dataset.stateNode);
+  }
+  renderTick(0);
 }
 
 function setActiveTab(tab) {
@@ -752,11 +802,12 @@ function renderStatePanel(tick, nextTick, alpha) {
     return;
   }
 
-  const cards = Object.keys(NODE_POSITIONS)
+  const selectedNodes = NODE_IDS.filter((nodeId) => state.selectedStateNodes.has(nodeId));
+  const cards = selectedNodes
     .map((nodeId) => stateNodeCard(nodeId, tick, nextTick, alpha))
     .filter(Boolean);
 
-  els.stateList.innerHTML = cards.length ? cards.join("") : `<div class="empty">No active node state</div>`;
+  els.stateList.innerHTML = cards.length ? cards.join("") : `<div class="empty">No selected nodes</div>`;
 }
 
 function stateNodeCard(nodeId, tick, nextTick, alpha) {
@@ -773,10 +824,6 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
     ...outgoing.map((group) => movingGroupCard(group, "out", tick, nextTick, alpha)),
   ];
   const hasActivity = coreHp || inside.length || incoming.length || outgoing.length || battle || forceCards.length || node.neutral_hp > 0;
-
-  if (!hasActivity) {
-    return "";
-  }
 
   const ready = Object.entries(node.unit_ready_tick || {})
     .filter(([, readyTick]) => Number(readyTick) > Number(tick.tick))
@@ -796,6 +843,7 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
         ${outgoing.length ? `<span class="state-tag">out ${outgoing.length}</span>` : ""}
         ${node.neutral_hp > 0 ? `<span class="state-tag neutral">neutral ${node.neutral_hp}</span>` : ""}
         ${ready}
+        ${!hasActivity ? `<span class="state-tag">idle</span>` : ""}
       </div>
       ${coreHp}
       <div class="state-section-title">standing</div>

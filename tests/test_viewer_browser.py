@@ -126,6 +126,22 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
                     });
                 }"""
             )
+            filter_check = page.evaluate(
+                """() => {
+                    seekTo(0);
+                    document.querySelector('#stateFilterNoneBtn').click();
+                    const afterNone = document.querySelectorAll('.state-node-card').length;
+                    const emptyText = document.querySelector('#stateList .empty')?.textContent || '';
+                    document.querySelector('input[data-state-node="CP1"]').click();
+                    const cards = Array.from(document.querySelectorAll('.state-node-card'));
+                    return {
+                        afterNone,
+                        emptyText,
+                        afterCp1: cards.length,
+                        cp1Visible: cards[0]?.querySelector('.state-node-head strong')?.textContent === '1'
+                    };
+                }"""
+            )
             screenshot = page.screenshot(full_page=False)
             browser.close()
 
@@ -137,6 +153,10 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
         assert counts["nodes"] == 13
         assert counts["stateCards"] > 0
         assert counts["forceCards"] > 0
+        assert filter_check["afterNone"] == 0
+        assert "No selected nodes" in filter_check["emptyText"]
+        assert filter_check["afterCp1"] == 1
+        assert filter_check["cp1Visible"]
         assert counts["coreHpBars"] >= 6
         assert counts["lordHpBars"] >= 1
         assert counts["activeTab"] == "state"

@@ -723,6 +723,45 @@ select {
   gap: 8px;
 }
 
+.state-filter {
+  flex: 0 0 auto;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #101318;
+  padding: 7px;
+}
+
+.state-filter-actions {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.state-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.state-filter-option {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.state-filter-option input {
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  accent-color: var(--gold);
+}
+
 .state-node-card {
   border: 1px solid var(--line);
   background: var(--panel);

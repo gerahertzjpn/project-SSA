@@ -44,6 +44,7 @@
           <input id="tickSlider" type="range" min="0" max="0" value="0" aria-label="Replay tick">
           <div class="tick-readout"><span id="tickNow">0</span>/<span id="tickMax">0</span></div>
           <select id="speedSelect" aria-label="Playback speed">
+            <option value="2800">0.25x</option>
             <option value="1400">0.5x</option>
             <option value="700">1x</option>
             <option value="350" selected>2x</option>
@@ -94,6 +95,13 @@
         </section>
         <section id="tabState" class="side-tab state-panel" data-tab-panel="state" role="tabpanel" aria-label="Map state">
           <h2>State</h2>
+          <div class="state-filter">
+            <div class="state-filter-actions">
+              <button id="stateFilterAllBtn" class="mini-command" type="button">All</button>
+              <button id="stateFilterNoneBtn" class="mini-command" type="button">None</button>
+            </div>
+            <div id="stateFilter" class="state-filter-grid" aria-label="State node filter"></div>
+          </div>
           <div id="stateList" class="state-list"></div>
         </section>
         <section id="tabBattles" class="side-tab combat-panel active" data-tab-panel="battles" role="tabpanel" aria-label="Active battles">

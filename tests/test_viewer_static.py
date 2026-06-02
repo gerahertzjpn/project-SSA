@@ -23,6 +23,10 @@ def test_viewer_assets_exist_and_are_wired():
     assert 'data-tab="state"' in index
     assert 'data-tab-panel="events"' in index
     assert 'id="stateList"' in index
+    assert 'id="stateFilter"' in index
+    assert 'id="stateFilterAllBtn"' in index
+    assert 'id="stateFilterNoneBtn"' in index
+    assert '<option value="2800">0.25x</option>' in index
     assert 'id="matchCountInput"' in index
     assert 'id="seedInput"' in index
     assert 'id="playerModelGrid"' in index
@@ -44,6 +48,9 @@ def test_viewer_loads_compact_replay_schema():
     assert "battleSideCards" in script
     assert "recentResolvedBattles" in script
     assert "renderStatePanel" in script
+    assert "populateStateFilter" in script
+    assert "selectedStateNodes" in script
+    assert "setStateNodeSelection" in script
     assert "stateForceCards" in script
     assert "forceStatus" in script
     assert "movingGroupCard" in script
@@ -97,6 +104,9 @@ def test_viewer_layout_has_arena_layers():
     assert ".spinner.active" in styles
     assert ".mini-command" in styles
     assert ".state-node-card" in styles
+    assert ".state-filter" in styles
+    assert ".state-filter-grid" in styles
+    assert ".state-filter-option" in styles
     assert ".state-force-card" in styles
     assert ".state-move-card" in styles
     assert ".state-progress" in styles
