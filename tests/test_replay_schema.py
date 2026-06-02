@@ -107,3 +107,13 @@ def test_active_battle_snapshot_uses_side_summary():
     assert isinstance(snapshots[-1]["formation"][0], list)
     assert len(snapshots[-1]["formation"][0]) == 7
     assert "units" not in snapshots[-1]
+
+
+def test_replay_moving_group_includes_stable_started_tick():
+    _, engine = make_node_battle_engine()
+
+    engine.tick()
+    moving = engine.replay_ticks[-1]["moving_groups"][0]
+
+    assert moving["player"] == "A1"
+    assert moving["started"] == engine.replay_ticks[-1]["tick"]

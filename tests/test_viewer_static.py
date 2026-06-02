@@ -48,6 +48,9 @@ def test_viewer_loads_compact_replay_schema():
     assert "forceStatus" in script
     assert "movingGroupCard" in script
     assert "movingGroupPosition" in script
+    assert "movementSignature" in script
+    assert "pathSignature" in script
+    assert "started" in script
     assert "alliedLordMarkers" in script
     assert "renderLordOverlay" in script
     assert "stateHpBar" in script

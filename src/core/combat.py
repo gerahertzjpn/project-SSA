@@ -20,7 +20,7 @@ from typing import Optional
 
 from .constants import (
     UnitType, CORE_HP, CORE_ATK, BARON_ATK, BARON_ATTACK_RATE, MAX_COMBAT_TICKS,
-    TEAM_A_PLAYERS, TEAM_B_PLAYERS, TRAVEL_TIME,
+    TEAM_A_PLAYERS, TEAM_B_PLAYERS, TRAVEL_TIME, LORD_ATTACK_RANGE, CORE_ATTACK_RANGE,
 )
 from .units import UnitInstance, UNIT_STATS
 
@@ -39,7 +39,9 @@ CENTER_SIDE = (ATTACKER_SIDE + DEFENDER_SIDE) / 2.0
 SLOT_SPACING = 1.0
 COMBAT_MOVE_SPEED = (DEFENDER_SIDE - ATTACKER_SIDE) / TRAVEL_TIME
 NEUTRAL_RANGE = float(UNIT_STATS[UnitType.RANGER]["range"])
-CORE_RANGE = 8.0
+LORD_RANGE = LORD_ATTACK_RANGE
+CORE_RANGE = CORE_ATTACK_RANGE
+LORD_CONTACT_RANGE = 0.5
 
 _SLOT_ORDER = {
     UnitType.VANGUARD.value: 0,
@@ -82,6 +84,7 @@ def _build_side(units_dict: dict, team: str, is_attacker: bool) -> list[UnitInst
             speed=float(stats["speed"]),
             pos=pos,
             attack_rate=int(stats.get("attack_rate", 1)),
+            move_direction=direction,
         ))
     return instances
 
@@ -109,6 +112,7 @@ def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
             speed=0.0,
             pos=CENTER_SIDE,
             attack_rate=1,
+            move_direction=0.0,
         )
         for _ in range(neutral_hp)
     ]
@@ -128,6 +132,7 @@ def _build_core(player_id: str, hp: float | None = None) -> UnitInstance:
         speed=0.0,
         pos=pos,
         attack_rate=1,
+        move_direction=0.0,
     )
 
 
@@ -139,10 +144,11 @@ def _build_baron(baron_hp: int) -> UnitInstance:
         hp=float(baron_hp),
         max_hp=float(baron_hp),
         atk=float(BARON_ATK),
-        range=2.0,
+        range=LORD_RANGE,
         speed=0.0,
         pos=CENTER_SIDE,
         attack_rate=BARON_ATTACK_RATE,
+        move_direction=0.0,
     )
 
 
@@ -192,6 +198,72 @@ def _move_toward_target(unit: UnitInstance, target: Optional[UnitInstance]) -> N
     direction = 1.0 if target.pos > unit.pos else -1.0
     step = min(COMBAT_MOVE_SPEED * unit.speed, max(0.0, dist - unit.range))
     unit.pos += direction * step
+
+
+def _is_allied_lord(unit: UnitInstance) -> bool:
+    return unit.unit_type == UnitType.LORD.value and unit.team in TEAM_A_PLAYERS + TEAM_B_PLAYERS
+
+
+def _forward_direction(unit: UnitInstance) -> float:
+    direction = float(getattr(unit, "move_direction", 0.0) or 0.0)
+    if direction:
+        return 1.0 if direction > 0 else -1.0
+    return 1.0 if _combat_side(unit.team) == "TEAM_A" else -1.0
+
+
+def _is_ahead(unit: UnitInstance, other: UnitInstance) -> bool:
+    return (other.pos - unit.pos) * _forward_direction(unit) >= -1e-6
+
+
+def _find_allied_lord_target(
+    unit: UnitInstance,
+    all_units: list[UnitInstance],
+    neutral_aggro_teams: Optional[set[str]] = None,
+    in_range_only: bool = True,
+    pending: Optional[dict[int, float]] = None,
+) -> Optional[UnitInstance]:
+    best = None
+    best_dist = float("inf")
+    pending = pending or {}
+    for other in all_units:
+        if not _is_hostile(unit, other, neutral_aggro_teams):
+            continue
+        if not _is_ahead(unit, other):
+            continue
+        if other.hp - pending.get(other.uid, 0.0) <= 0:
+            continue
+        dist = abs(unit.pos - other.pos)
+        if in_range_only and dist > unit.range:
+            continue
+        if dist < best_dist:
+            best_dist = dist
+            best = other
+    return best
+
+
+def _move_allied_lord_forward(
+    unit: UnitInstance,
+    all_units: list[UnitInstance],
+    neutral_aggro_teams: Optional[set[str]] = None,
+) -> None:
+    if unit.speed <= 0:
+        return
+
+    target = _find_allied_lord_target(
+        unit,
+        all_units,
+        neutral_aggro_teams=neutral_aggro_teams,
+        in_range_only=False,
+    )
+    if target is not None:
+        dist = abs(target.pos - unit.pos)
+        if dist <= LORD_CONTACT_RANGE:
+            return
+        step = min(COMBAT_MOVE_SPEED * unit.speed, max(0.0, dist - LORD_CONTACT_RANGE))
+    else:
+        step = COMBAT_MOVE_SPEED * unit.speed
+
+    unit.pos = max(ATTACKER_SIDE, min(DEFENDER_SIDE, unit.pos + _forward_direction(unit) * step))
 
 
 def _combat_side(team: str) -> str:
@@ -331,8 +403,26 @@ def tick_battle_units(
     if not alive:
         return []
 
+    attack_ready = {
+        unit.uid
+        for unit in alive
+        if not _is_allied_lord(unit)
+        and _find_persistent_target(
+            unit,
+            alive,
+            neutral_aggro_teams=neutral_aggro_teams,
+            in_range_only=True,
+        )
+        is not None
+    }
+
     for unit in alive:
         if unit.speed <= 0:
+            continue
+        if _is_allied_lord(unit):
+            _move_allied_lord_forward(unit, alive, neutral_aggro_teams=neutral_aggro_teams)
+            continue
+        if unit.uid in attack_ready:
             continue
         target = _find_persistent_target(
             unit,
@@ -352,13 +442,24 @@ def tick_battle_units(
 
     for unit in alive:
         for _ in range(_attack_rate(unit)):
-            target = _find_persistent_target(
-                unit,
-                alive,
-                neutral_aggro_teams=neutral_aggro_teams,
-                in_range_only=True,
-                pending=pending,
-            )
+            if _is_allied_lord(unit):
+                target = _find_allied_lord_target(
+                    unit,
+                    alive,
+                    neutral_aggro_teams=neutral_aggro_teams,
+                    in_range_only=True,
+                    pending=pending,
+                )
+            elif unit.uid in attack_ready:
+                target = _find_persistent_target(
+                    unit,
+                    alive,
+                    neutral_aggro_teams=neutral_aggro_teams,
+                    in_range_only=True,
+                    pending=pending,
+                )
+            else:
+                target = None
             if target is None:
                 break
             _queue_attack(unit, target, pending, damage_log, target_log, attack_log)
@@ -429,10 +530,27 @@ def _run_combat(
         if not alive_atk or not alive_def:
             break
 
+        attack_ready_atk = {
+            u.uid
+            for u in alive_atk
+            if not _is_allied_lord(u) and _find_target(u, alive_def) is not None
+        }
+        attack_ready_def = {
+            u.uid
+            for u in alive_def
+            if not _is_allied_lord(u) and _find_target(u, alive_atk) is not None
+        }
+
         for u in alive_atk:
-            _move_toward_target(u, _nearest_target(u, alive_def))
+            if _is_allied_lord(u):
+                _move_allied_lord_forward(u, all_units)
+            elif u.uid not in attack_ready_atk:
+                _move_toward_target(u, _nearest_target(u, alive_def))
         for u in alive_def:
-            _move_toward_target(u, _nearest_target(u, alive_atk))
+            if _is_allied_lord(u):
+                _move_allied_lord_forward(u, all_units)
+            elif u.uid not in attack_ready_def:
+                _move_toward_target(u, _nearest_target(u, alive_atk))
 
         pending: dict[int, float] = {}
         damage_log: dict[int, float] = {}
@@ -441,14 +559,24 @@ def _run_combat(
 
         for u in alive_atk:
             for _ in range(_attack_rate(u)):
-                t = _find_target(u, alive_def, pending=pending)
+                if _is_allied_lord(u):
+                    t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=pending)
+                elif u.uid in attack_ready_atk:
+                    t = _find_target(u, alive_def, pending=pending)
+                else:
+                    t = None
                 if not t:
                     break
                 _queue_attack(u, t, pending, damage_log, target_log, attack_log)
 
         for u in alive_def:
             for _ in range(_attack_rate(u)):
-                t = _find_target(u, alive_atk, pending=pending)
+                if _is_allied_lord(u):
+                    t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=pending)
+                elif u.uid in attack_ready_def:
+                    t = _find_target(u, alive_atk, pending=pending)
+                else:
+                    t = None
                 if not t:
                     break
                 _queue_attack(u, t, pending, damage_log, target_log, attack_log)

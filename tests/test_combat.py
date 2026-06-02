@@ -16,7 +16,15 @@ from src.core.combat import (
     resolve_baron_combat,
     tick_battle_units,
 )
-from src.core.constants import BARON_ATTACK_RATE, BARON_ATK, BARON_HP, TRAVEL_TIME, UnitType
+from src.core.constants import (
+    BARON_ATTACK_RATE,
+    BARON_ATK,
+    BARON_HP,
+    CORE_ATTACK_RANGE,
+    LORD_ATTACK_RANGE,
+    TRAVEL_TIME,
+    UnitType,
+)
 from src.core.units import UNIT_STATS
 
 
@@ -162,9 +170,11 @@ def test_lord_stats_reflect_current_balance():
     assert lord.max_hp == BARON_HP
     assert lord.atk == BARON_ATK
     assert lord.attack_rate == BARON_ATTACK_RATE
+    assert lord.range == LORD_ATTACK_RANGE
     assert baron.max_hp == BARON_HP
     assert baron.atk == BARON_ATK
     assert baron.attack_rate == BARON_ATTACK_RATE
+    assert baron.range == LORD_ATTACK_RANGE
 
 
 def test_lord_attack_rate_fires_multiple_shots():
@@ -197,8 +207,8 @@ def test_cores_are_on_team_side_with_high_range():
 
     assert left_core.pos == ATTACKER_SIDE
     assert right_core.pos == DEFENDER_SIDE
-    assert left_core.range >= 8.0
-    assert right_core.range >= 8.0
+    assert left_core.range == CORE_ATTACK_RANGE
+    assert right_core.range == CORE_ATTACK_RANGE
 
 
 def test_combat_line_crossing_matches_empty_edge_travel_time():
@@ -213,3 +223,77 @@ def test_combat_approach_uses_unit_speed():
     tick_battle_units([slow, fast, target], record_trace=False)
 
     assert fast.pos > slow.pos
+
+
+def test_regular_unit_moves_without_attacking_when_target_starts_out_of_range():
+    ranger = build_player_units({UnitType.RANGER.value: 1}, "A1", "attacker")[0]
+    target = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
+    target.pos = ranger.pos + ranger.range + 1.0
+    target.speed = 0.0
+    target.range = 0.0
+    before_hp = target.hp
+
+    frame = tick_battle_units([ranger, target], record_trace=True)
+    ranger_frame = next(item for item in frame if item["uid"] == ranger.uid)
+
+    assert ranger.pos > ATTACKER_SIDE
+    assert target.hp == before_hp
+    assert ranger_frame["attacks"] == []
+
+
+def test_regular_unit_stops_and_attacks_when_target_starts_in_range():
+    ranger = build_player_units({UnitType.RANGER.value: 1}, "A1", "attacker")[0]
+    target = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
+    target.pos = ranger.pos + ranger.range - 0.1
+    target.speed = 0.0
+    target.range = 0.0
+    before_pos = ranger.pos
+    before_hp = target.hp
+
+    frame = tick_battle_units([ranger, target], record_trace=True)
+    ranger_frame = next(item for item in frame if item["uid"] == ranger.uid)
+
+    assert ranger.pos == before_pos
+    assert target.hp < before_hp
+    assert len(ranger_frame["attacks"]) == 1
+
+
+def test_reborn_lord_can_move_and_shoot_before_contact():
+    lord = build_player_units({UnitType.LORD.value: 1}, "A1", "attacker")[0]
+    target = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
+    target.pos = lord.pos + LORD_ATTACK_RANGE + 3.0
+    target.speed = 0.0
+    target.range = 0.0
+    target.hp = 100.0
+    target.max_hp = 100.0
+    before_hp = target.hp
+
+    frame = tick_battle_units([lord, target], record_trace=True)
+    lord_frame = next(item for item in frame if item["uid"] == lord.uid)
+
+    assert lord.pos > ATTACKER_SIDE
+    assert target.hp < before_hp
+    assert len(lord_frame["attacks"]) == BARON_ATTACK_RATE
+
+
+def test_reborn_lord_ignores_enemies_behind_him():
+    lord = build_player_units({UnitType.LORD.value: 1}, "A1", "attacker")[0]
+    lord.pos = CENTER_SIDE
+    behind = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
+    ahead = build_player_units({UnitType.VANGUARD.value: 1}, "B2", "defender")[0]
+    behind.pos = lord.pos - 1.0
+    ahead.pos = lord.pos + 4.0
+    for unit in (behind, ahead):
+        unit.speed = 0.0
+        unit.range = 0.0
+        unit.hp = 100.0
+        unit.max_hp = 100.0
+    behind_hp = behind.hp
+    ahead_hp = ahead.hp
+
+    frame = tick_battle_units([lord, behind, ahead], record_trace=True)
+    lord_frame = next(item for item in frame if item["uid"] == lord.uid)
+
+    assert behind.hp == behind_hp
+    assert ahead.hp < ahead_hp
+    assert {shot["target"] for shot in lord_frame["attacks"]} == {ahead.uid}

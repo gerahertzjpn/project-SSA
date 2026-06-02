@@ -1516,6 +1516,25 @@ function sameMovementSegment(group, candidate) {
   );
 }
 
+function movementSignature(group = {}) {
+  return [
+    group.player || "",
+    group.intent || "",
+    group.phase || "edge",
+    Number(group.segment_index ?? 0),
+    group.src || "",
+    group.dst || "",
+    group.final_dst || "",
+    group.started ?? "",
+    pathSignature(group.path),
+    unitSignature(group.units),
+  ].join("|");
+}
+
+function pathSignature(path = []) {
+  return (path || []).join(">");
+}
+
 function teamClass(player) {
   return String(player).startsWith("A") ? "team-a" : "team-b";
 }
@@ -1536,22 +1555,36 @@ function interpolateValue(from, to, alpha) {
 }
 
 function findNextGroup(group, nextGroups, used) {
+  const signature = movementSignature(group);
+  const currentProgress = Number(group.progress || 0);
+  let bestIndex = -1;
+  let bestScore = Number.POSITIVE_INFINITY;
+
   for (let index = 0; index < nextGroups.length; index += 1) {
     if (used.has(index)) {
       continue;
     }
 
     const candidate = nextGroups[index];
-    if (
-      candidate.player === group.player &&
-      candidate.src === group.src &&
-      candidate.dst === group.dst &&
-      candidate.intent === group.intent &&
-      unitSignature(candidate.units) === unitSignature(group.units)
-    ) {
-      used.add(index);
-      return candidate;
+    if (movementSignature(candidate) !== signature) {
+      continue;
     }
+
+    const candidateProgress = Number(candidate.progress || 0);
+    if (candidateProgress + 0.001 < currentProgress) {
+      continue;
+    }
+
+    const score = candidateProgress - currentProgress;
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  if (bestIndex >= 0) {
+    used.add(bestIndex);
+    return nextGroups[bestIndex];
   }
   return null;
 }
@@ -1918,10 +1951,10 @@ function defaultUnitRange(type) {
     S: 1.5,
     R: 3,
     A: 3,
-    C: 0.5,
+    C: 12,
     N: 4,
-    B: 2,
-    L: 2,
+    B: 11,
+    L: 11,
   }[type] || 1;
 }
 

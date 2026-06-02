@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from .constants import BARON_ATTACK_RATE, BARON_ATK, BARON_HP, UnitType
+from .constants import BARON_ATTACK_RATE, BARON_ATK, BARON_HP, LORD_ATTACK_RANGE, UnitType
 
 # R-P-S: VANGUARD > SKIRMISHER > RANGER > VANGUARD
 # Reflected through unit stats: rangers shred vanguards at range before they close,
@@ -33,7 +33,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "hp": BARON_HP,
         "atk": BARON_ATK,
         "attack_rate": BARON_ATTACK_RATE,
-        "range": 2.0,
+        "range": LORD_ATTACK_RANGE,
         "speed": 1.0,
         "slot": "front",
         "base_pos": 1,
@@ -63,6 +63,7 @@ class UnitInstance:
     speed: float
     pos: float           # 1D position (attackers start low, defenders start high)
     attack_rate: int = 1
+    move_direction: float = 0.0
 
     def is_alive(self) -> bool:
         return self.hp > 0
