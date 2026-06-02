@@ -33,6 +33,7 @@ const CORE_MAX_HP = 50;
 const LORD_MAX_HP = 150;
 const DEFAULT_UI_RUNS = 20;
 const DEFAULT_GENERATION_SEED = 20260602;
+const API_PORTS = [8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009, 8010];
 const FALLBACK_MODELS = [
   { id: "random", label: "Random bot" },
   { id: "scripted", label: "Scripted bot" },
@@ -52,6 +53,7 @@ const state = {
   samples: [...SAMPLE_REPLAYS],
   models: [...FALLBACK_MODELS],
   maxUiRuns: 100,
+  apiBase: "",
   apiAvailable: false,
   generating: false,
 };
@@ -83,6 +85,7 @@ const els = {
   seedInput: document.getElementById("seedInput"),
   playerModelGrid: document.getElementById("playerModelGrid"),
   generateMatchesBtn: document.getElementById("generateMatchesBtn"),
+  reconnectApiBtn: document.getElementById("reconnectApiBtn"),
   generationStatus: document.getElementById("generationStatus"),
   generationSpinner: document.getElementById("generationSpinner"),
   generatorSummary: document.getElementById("generatorSummary"),
@@ -119,6 +122,7 @@ function bindControls() {
   els.matchCountInput.addEventListener("input", validateGeneratorControls);
   els.seedInput.addEventListener("input", validateGeneratorControls);
   els.generateMatchesBtn.addEventListener("click", generateMatches);
+  els.reconnectApiBtn.addEventListener("click", () => initGenerator());
   els.panelTabs.forEach((button, index) => {
     button.addEventListener("click", () => setActiveTab(button.dataset.tab));
     button.addEventListener("keydown", (event) => handleTabKey(event, index));
@@ -163,16 +167,16 @@ function handleTabKey(event, index) {
 
 async function initGenerator() {
   populatePlayerModelSelects(state.models, PLAYER_IDS);
+  state.apiAvailable = false;
+  state.apiBase = "";
   validateGeneratorControls();
-  setGeneratorStatus("Connecting...");
+  setGeneratorLoading(true);
+  setGeneratorStatus("Finding API...");
 
   try {
-    const response = await fetch("/api/models", { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
-    }
-    const payload = await response.json();
+    const { payload, base } = await fetchGeneratorConfig();
     state.apiAvailable = true;
+    state.apiBase = base;
     state.models = payload.models?.length ? payload.models : [...FALLBACK_MODELS];
     state.maxUiRuns = Number(payload.max_ui_runs || 100);
     els.matchCountInput.max = String(state.maxUiRuns);
@@ -180,13 +184,63 @@ async function initGenerator() {
     if (payload.replays?.length) {
       populateSamples(payload.replays);
     }
-    setGeneratorStatus(`Ready | max ${state.maxUiRuns}`);
+    setGeneratorStatus(`Ready | max ${state.maxUiRuns}${apiBaseLabel(base)}`);
   } catch (error) {
     state.apiAvailable = false;
-    setGeneratorStatus("Generation API offline", "error");
+    state.apiBase = "";
+    setGeneratorStatus("API offline | run start_viewer.bat", "error");
+  } finally {
+    setGeneratorLoading(false);
   }
 
   validateGeneratorControls();
+}
+
+async function fetchGeneratorConfig() {
+  let lastError = null;
+  for (const base of apiBaseCandidates()) {
+    try {
+      const response = await fetch(apiUrlFrom(base, "/api/models"), { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      return { payload: await response.json(), base };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("Generation API offline");
+}
+
+function apiBaseCandidates() {
+  const bases = [""];
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    bases.push(window.location.origin);
+  }
+  for (const port of API_PORTS) {
+    bases.push(`http://127.0.0.1:${port}`);
+    bases.push(`http://localhost:${port}`);
+  }
+  return Array.from(new Set(bases));
+}
+
+function apiUrl(path) {
+  return apiUrlFrom(state.apiBase, path);
+}
+
+function apiUrlFrom(base, path) {
+  return base ? `${base}${path}` : path;
+}
+
+function apiBaseLabel(base) {
+  if (!base) {
+    return "";
+  }
+  try {
+    return ` | ${new URL(base).host}`;
+  } catch (error) {
+    return "";
+  }
 }
 
 function populatePlayerModelSelects(models = FALLBACK_MODELS, players = PLAYER_IDS) {
@@ -237,7 +291,7 @@ function validateGeneratorControls() {
     return false;
   }
   if (!state.apiAvailable) {
-    setGeneratorStatus("Generation API offline", "error");
+    setGeneratorStatus("API offline | run start_viewer.bat", "error");
     return false;
   }
   if (els.generationStatus.dataset.kind === "validation") {
@@ -274,7 +328,7 @@ async function generateMatches() {
   validateGeneratorControls();
 
   try {
-    const response = await fetch("/api/generate-replays", {
+    const response = await fetch(apiUrl("/api/generate-replays"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -354,12 +408,19 @@ async function loadSampleReplay() {
 }
 
 async function loadReplayPath(path, label = "") {
-  const response = await fetch(path, { cache: "no-store" });
+  const response = await fetch(replayFetchUrl(path), { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
   const replay = await response.json();
   setReplay(replay, label || path.replace("../", ""));
+}
+
+function replayFetchUrl(path) {
+  if (!state.apiBase || /^(https?:)?\/\//.test(path)) {
+    return path;
+  }
+  return new URL(path, `${state.apiBase}/viewer/index.html`).href;
 }
 
 function loadFileReplay(event) {

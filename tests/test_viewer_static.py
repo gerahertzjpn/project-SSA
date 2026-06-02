@@ -27,6 +27,7 @@ def test_viewer_assets_exist_and_are_wired():
     assert 'id="seedInput"' in index
     assert 'id="playerModelGrid"' in index
     assert 'id="generateMatchesBtn"' in index
+    assert 'id="reconnectApiBtn"' in index
     assert 'id="generationSpinner"' in index
 
 
@@ -61,6 +62,9 @@ def test_viewer_loads_compact_replay_schema():
     assert "generateMatches" in script
     assert "/api/models" in script
     assert "/api/generate-replays" in script
+    assert "API_PORTS" in script
+    assert "apiBaseCandidates" in script
+    assert "replayFetchUrl" in script
     assert "DEFAULT_UI_RUNS" in script
     assert "displayUnitCode" in script
     assert "requestAnimationFrame" in script
@@ -86,6 +90,7 @@ def test_viewer_layout_has_arena_layers():
     assert ".model-row" in styles
     assert ".generation-status" in styles
     assert ".spinner.active" in styles
+    assert ".mini-command" in styles
     assert ".state-node-card" in styles
     assert ".state-force-card" in styles
     assert ".state-move-card" in styles
@@ -107,5 +112,19 @@ def test_viewer_generation_server_is_ui_limited_only():
     assert "/api/generate-replays" in server
     assert "clear_replays()" in server
     assert "REPLAY_NAME" in server
+    assert "Access-Control-Allow-Origin" in server
+    assert "do_OPTIONS" in server
     assert "player_models=player_models" in server
     assert "MAX_UI_RUNS" not in runner
+
+
+def test_viewer_has_one_click_windows_launcher():
+    batch = (ROOT / "start_viewer.bat").read_text(encoding="utf-8")
+    script = (ROOT / "start_viewer.ps1").read_text(encoding="utf-8")
+
+    assert "ExecutionPolicy Bypass" in batch
+    assert "start_viewer.ps1" in batch
+    assert "viewer/server.py" in script
+    assert "8001..8010" in script
+    assert "-WindowStyle Hidden" in script
+    assert "viewer/index.html" in script
