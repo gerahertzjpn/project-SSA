@@ -312,8 +312,8 @@ def action_label(action_index: int) -> str:
         return f"{action_index}:HOLD"
     if spec.kind == "PRODUCE" and spec.unit_type is not None:
         return f"{action_index}:PRODUCE:{spec.unit_type.value}"
-    if spec.kind == "MOVE" and spec.destination:
-        return f"{action_index}:MOVE:{spec.intent}:{spec.destination}"
+    if spec.kind == "MOVE" and spec.source and spec.destination:
+        return f"{action_index}:MOVE:{spec.intent}:{spec.source}->{spec.destination}"
     return f"{action_index}:{spec.kind}"
 
 

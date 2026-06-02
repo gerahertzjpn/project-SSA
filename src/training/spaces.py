@@ -9,32 +9,39 @@ import numpy as np
 from src.core.constants import (
     BARON_HP,
     CORE_HP,
+    DEATH_TIME_START_TICK,
     PLAYER_IDS,
     TEAM_A_PLAYERS,
     TEAM_B_PLAYERS,
     TICK_LIMIT,
+    TRAVEL_TIME,
     UNIT_COST,
     UnitType,
     ActionType,
 )
 from src.core.engine import Action
 from src.core.map import ADJACENCY, ALL_NODES, NODE_TYPES, NodeType
+from src.core.units import UNIT_STATS
 
 
-OBSERVATION_VERSION = "train_obs_v0.2"
+OBSERVATION_VERSION = "train_obs_v0.3"
 
 UNIT_ORDER = (UnitType.VANGUARD, UnitType.RANGER, UnitType.SKIRMISHER)
 RELATIONS = ("self", "ally", "enemy", "neutral")
 MOVE_INTENTS = ("CAPTURE", "TRANSIT")
-GLOBAL_FEATURES = 11
-NODE_FEATURES = 38
+GLOBAL_FEATURES = 14
+NODE_FEATURES = 41
 OBSERVATION_DIM = GLOBAL_FEATURES + len(ALL_NODES) * NODE_FEATURES
+NODE_HALF_CROSSING_TICKS = float(TRAVEL_TIME) / 2.0
+ROUTE_EDGE_NORM = max(1, len(ALL_NODES) - 1)
+ROUTE_TICK_NORM = float(TICK_LIMIT)
 
 
 @dataclass(frozen=True)
 class ActionSpec:
     kind: str
     unit_type: Optional[UnitType] = None
+    source: Optional[str] = None
     destination: Optional[str] = None
     intent: str = "CAPTURE"
 
@@ -43,9 +50,11 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     (ActionSpec("HOLD"),)
     + tuple(ActionSpec("PRODUCE", unit_type=unit_type) for unit_type in UNIT_ORDER)
     + tuple(
-        ActionSpec("MOVE", destination=node_id, intent=intent)
+        ActionSpec("MOVE", source=source_id, destination=destination_id, intent=intent)
         for intent in MOVE_INTENTS
-        for node_id in ALL_NODES
+        for source_id in ALL_NODES
+        for destination_id in ALL_NODES
+        if source_id != destination_id
     )
 )
 ACTION_DIM = len(ACTION_SPECS)
@@ -141,6 +150,31 @@ def _source_units_for_player(node: dict, player_id: str) -> dict:
     return (node.get("visiting_units", {}) or {}).get(player_id, {})
 
 
+def group_speed(units: dict | None) -> float:
+    speeds = []
+    for unit_type, count in (units or {}).items():
+        if int(count or 0) <= 0:
+            continue
+        unit_key = unit_type.value if isinstance(unit_type, UnitType) else unit_type
+        unit_enum = UnitType.RANGER if unit_key == "ARCHER" else UnitType(unit_key)
+        speeds.append(float(UNIT_STATS[unit_enum]["speed"]))
+    return min(speeds) if speeds else 1.0
+
+
+def estimate_route_ticks(path: list[str], speed: float) -> float:
+    if len(path) <= 1:
+        return 0.0
+    edge_count = len(path) - 1
+    intermediate_count = max(0, len(path) - 2)
+    base_ticks = (
+        NODE_HALF_CROSSING_TICKS
+        + float(TRAVEL_TIME) * edge_count
+        + float(TRAVEL_TIME) * intermediate_count
+        + NODE_HALF_CROSSING_TICKS
+    )
+    return base_ticks / max(0.001, float(speed))
+
+
 def movable_sources(obs: dict, player_id: str) -> list[str]:
     tick = int(obs.get("tick", 0) or 0)
     sources = []
@@ -167,6 +201,33 @@ def select_source_for_destination(obs: dict, player_id: str, destination: str) -
     return candidates[0][3]
 
 
+def route_metrics_for_node(obs: dict, player_id: str, destination: str) -> tuple[float, float, float]:
+    candidates = []
+    for source in movable_sources(obs, player_id):
+        units = _source_units_for_player(obs["nodes"][source], player_id)
+        if source == destination:
+            candidates.append((0.0, 0.0, -unit_total(units), ALL_NODES.index(source)))
+            continue
+        route = find_route_obs(player_id, source, destination, obs)
+        if not route:
+            continue
+        speed = group_speed(units)
+        edges = float(len(route) - 1)
+        ticks = estimate_route_ticks(route, speed)
+        candidates.append((ticks, edges, -unit_total(units), ALL_NODES.index(source)))
+
+    if not candidates:
+        return 0.0, 1.0, 1.0
+
+    candidates.sort()
+    ticks, edges, _, _ = candidates[0]
+    return (
+        1.0,
+        min(1.0, edges / float(ROUTE_EDGE_NORM)),
+        min(1.0, ticks / ROUTE_TICK_NORM),
+    )
+
+
 def _intent_allowed(spec: ActionSpec, obs: dict, player_id: str) -> bool:
     if spec.kind != "MOVE":
         return True
@@ -190,10 +251,12 @@ def legal_action_mask(obs: dict, player_id: str) -> np.ndarray:
     for index, spec in enumerate(ACTION_SPECS):
         if spec.kind == "PRODUCE" and spec.unit_type is not None:
             mask[index] = resources >= UNIT_COST[spec.unit_type]
-        elif spec.kind == "MOVE" and spec.destination:
+        elif spec.kind == "MOVE" and spec.source and spec.destination:
             if not _intent_allowed(spec, obs, player_id):
                 continue
-            mask[index] = select_source_for_destination(obs, player_id, spec.destination) is not None
+            if spec.source not in movable_sources(obs, player_id):
+                continue
+            mask[index] = find_route_obs(player_id, spec.source, spec.destination, obs) is not None
     return mask
 
 
@@ -208,15 +271,12 @@ def decode_action(action_index: int, obs: dict, player_id: str) -> Action:
         if legal_action_mask(obs, player_id)[action_index]:
             return Action(ActionType.PRODUCE, unit_type=spec.unit_type)
         return Action(ActionType.HOLD)
-    if spec.kind == "MOVE" and spec.destination:
+    if spec.kind == "MOVE" and spec.source and spec.destination:
         if not legal_action_mask(obs, player_id)[action_index]:
-            return Action(ActionType.HOLD)
-        source = select_source_for_destination(obs, player_id, spec.destination)
-        if source is None:
             return Action(ActionType.HOLD)
         return Action(
             ActionType.MOVE,
-            source=source,
+            source=spec.source,
             destination=spec.destination,
             intent=spec.intent,
         )
@@ -310,6 +370,9 @@ def encode_observation(obs: dict, player_id: str) -> np.ndarray:
 
     features: list[float] = [
         float(obs.get("tick", 0) or 0) / float(TICK_LIMIT),
+        max(0.0, float(TICK_LIMIT - int(obs.get("tick", 0) or 0))) / float(TICK_LIMIT),
+        max(0.0, float(DEATH_TIME_START_TICK - int(obs.get("tick", 0) or 0))) / float(TICK_LIMIT),
+        1.0 if int(obs.get("tick", 0) or 0) >= DEATH_TIME_START_TICK else 0.0,
         float(obs.get("resources", 0.0) or 0.0) / 100.0,
         own_resources / 300.0,
         enemy_resources / 300.0,
@@ -329,6 +392,7 @@ def encode_observation(obs: dict, player_id: str) -> np.ndarray:
     for node_id in ALL_NODES:
         node = obs["nodes"][node_id]
         node_type = NODE_TYPES[node_id]
+        route_reachable, route_edges, route_ticks = route_metrics_for_node(obs, player_id, node_id)
         features.extend([
             1.0 if node_type == NodeType.CORE else 0.0,
             1.0 if node_type == NodeType.CONTROL_POINT else 0.0,
@@ -356,6 +420,9 @@ def encode_observation(obs: dict, player_id: str) -> np.ndarray:
             float(node.get("neutral_hp", 0) or 0) / 10.0,
             float(node.get("neutral_income", 0) or 0) / 10.0,
             float(node.get("core_hp", 0.0) or 0.0) / float(CORE_HP),
+            route_reachable,
+            route_edges,
+            route_ticks,
             min(1.0, ready_remaining / 10.0),
             1.0 if own_team in aggro else 0.0,
             1.0 if any(team in aggro for team in {"TEAM_A", "TEAM_B"} - {own_team}) else 0.0,

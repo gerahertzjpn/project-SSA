@@ -76,19 +76,24 @@ Fixed discrete action space:
 
 - `0`: `HOLD`
 - `1..3`: produce `VANGUARD`, `RANGER`, `SKIRMISHER`
-- remaining actions: `MOVE` to each graph node in two intent modes:
+- remaining actions: `MOVE` from a graph node to another graph node in two intent modes:
   `CAPTURE` and `TRANSIT`
 
 Current size:
 
-- `ACTION_DIM = 30`
+- `ACTION_DIM = 316`
 
-Move source selection is deterministic:
+Move source selection is explicit:
 
-- choose a controllable source node with units;
-- source must be ready this tick;
-- route must be legal;
-- prefer more units, then shorter route, then stable node order.
+- the source node is part of the `MOVE` action;
+- the source must contain controllable units for the controlled player;
+- the source must be ready this tick;
+- the source-to-destination route must be legal.
+
+The current single-head action model also serializes economy and maneuver: one
+tick can be `PRODUCE` or `MOVE`, not both. If the agent struggles to combine
+production with map pressure, the first candidate fix is a factorized policy
+interface with separate production and movement heads.
 
 Legal action masks are provided by `legal_action_mask(obs, player_id)`.
 Illegal decoded actions fall back to `HOLD`.
@@ -97,15 +102,17 @@ Illegal decoded actions fall back to `HOLD`.
 
 Current vector:
 
-- `OBSERVATION_VERSION = train_obs_v0.2`
-- `OBSERVATION_DIM = 505`
+- `OBSERVATION_VERSION = train_obs_v0.3`
+- `OBSERVATION_DIM = 547`
 - dtype: `float32`
 
 The vector includes:
 
-- tick/resources/team/alive/global battle counts;
+- tick/time remaining/death-time timing/resources/team/alive/global battle counts;
 - per-node type and owner relation;
 - per-node self/ally/enemy/neutral unit counts;
+- per-node reachability, route distance, and estimated travel time from the
+  current controllable force;
 - neutral HP/income/aggro;
 - persistent core HP;
 - ready lock signal;
@@ -184,7 +191,7 @@ Expected properties:
 
 - JSON output;
 - `kind` is `random_rollout_smoke_no_training`;
-- all observations have dimension `505`;
+- all observations have dimension `547`;
 - no replay JSON is stored in engine memory during the rollout.
 
 Full verification:
@@ -213,3 +220,5 @@ Only after this works should we move toward 3v3 multi-agent self-play.
   before `TrainingEnv` used real death-time finalization at `TICK_LIMIT`.
   Its 300-tick games were reported as `truncated` draws, so that run is a
   diagnostic artifact only and must not be treated as a valid learning result.
+- All checkpoints from before `train_obs_v0.3` and source-aware `MOVE` actions
+  are incompatible with the current policy interface and must not be resumed.

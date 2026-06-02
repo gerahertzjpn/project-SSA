@@ -13,6 +13,7 @@ from src.core.engine import Action, GameEngine
 from src.core.state import make_initial_state
 from src.training.spaces import (
     ACTION_DIM,
+    OBSERVATION_VERSION,
     decode_action,
     encode_observation,
     legal_action_mask,
@@ -222,5 +223,5 @@ class TrainingEnv:
             "controlled_player": self.config.controlled_player,
             "legal_actions": int(mask.sum()),
             "reward_components": reward_components,
-            "observation_version": "train_obs_v0.2",
+            "observation_version": OBSERVATION_VERSION,
         }
