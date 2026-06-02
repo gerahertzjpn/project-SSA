@@ -141,15 +141,10 @@ class GameEngine:
                 continue
             phased_groups.append(group)
 
-        remaining: list[MovingGroup] = []
-        for group in phased_groups:
-            battle = self._edge_battle_for_group(group)
-            if battle and self._group_reached_edge_battle(group, battle):
-                tick_events.append(self._join_battle(battle, group, reinforced=True))
-            else:
-                remaining.append(group)
+        remaining = self._join_reached_edge_battles(phased_groups, tick_events)
 
         remaining = self._create_edge_collisions(remaining, tick_events)
+        remaining = self._join_reached_edge_battles(remaining, tick_events)
 
         still_moving: list[MovingGroup] = []
         for group in remaining:
@@ -163,6 +158,20 @@ class GameEngine:
                 still_moving.append(group)
 
         state.moving_groups = still_moving
+
+    def _join_reached_edge_battles(
+        self,
+        groups: list[MovingGroup],
+        tick_events: list,
+    ) -> list[MovingGroup]:
+        remaining: list[MovingGroup] = []
+        for group in groups:
+            battle = self._edge_battle_for_group(group)
+            if battle and self._group_reached_edge_battle(group, battle):
+                tick_events.append(self._join_battle(battle, group, reinforced=True))
+            else:
+                remaining.append(group)
+        return remaining
 
     def _create_edge_collisions(
         self,

@@ -59,6 +59,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - Neutral nodes are valid transit nodes even while neutral guards are alive; passing through does not aggro guards by itself.
 - Units that arrive at a node or survive a node battle receive a one-tick ready lock. They can be observed on that node before they can be moved to the next edge.
 - Node battles stay 1D, but player units now enter from the side implied by their route. Stationed owner/visitor units reuse their remembered `unit_entry_side` instead of always falling back to TEAM_A left / TEAM_B right.
+- Edge battles block transit on that edge. Any moving group that reaches an active edge battle is automatically pulled into it from the side implied by its `src -> dst` route; moving through an edge battle is not allowed.
 - Battle and event cards use fixed heights with internal scroll areas so UI height does not jump when event counts change.
 
 ## Current Control Model
@@ -69,6 +70,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - A `MOVE` takes all currently controllable units for that player from the source node. There is no partial split or squad selection yet.
 - A `MOVE` destination may be farther than one edge. The engine builds the shortest valid route automatically.
 - Valid route destinations are neutral nodes, allied nodes, Lord, and enemy nodes that are adjacent to a neutral/allied transit node. Enemy nodes and living neutral Lord are valid targets, but not valid transit hubs.
+- Active edge battle ids such as `A1|CP1` are not valid `MOVE` destinations. Units can only join an edge battle by already moving along that edge and reaching the battle position.
 - Friendly reinforcements merge into node-level units; on a friendly node owned by another player, practical control transfers to the node owner. Visitor units on neutral/passive nodes keep player identity until moved or pulled into battle.
 - Node combat is a 1D left/right abstraction derived from node order and remembered entry side. The map can have several graph entrances, but combat intentionally collapses them to exactly left or right; it does not preserve four separate entry channels.
 

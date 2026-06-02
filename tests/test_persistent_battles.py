@@ -130,6 +130,81 @@ def test_reinforcement_joins_edge_battle():
     )
 
 
+def test_edge_battle_created_this_tick_catches_same_edge_groups():
+    state = make_initial_state(seed=32)
+    state.moving_groups = [
+        MovingGroup(
+            player_id="A1",
+            team="TEAM_A",
+            units={UnitType.VANGUARD.value: 2},
+            src="A1",
+            dst="CP1",
+            arrival_tick=state.tick + 1,
+            started_tick=state.tick,
+            travel_ticks=10,
+            progress=0.45,
+            intent="CAPTURE",
+        ),
+        MovingGroup(
+            player_id="B1",
+            team="TEAM_B",
+            units={UnitType.VANGUARD.value: 2},
+            src="CP1",
+            dst="A1",
+            arrival_tick=state.tick + 1,
+            started_tick=state.tick,
+            travel_ticks=10,
+            progress=0.45,
+            intent="CAPTURE",
+        ),
+        MovingGroup(
+            player_id="A2",
+            team="TEAM_A",
+            units={UnitType.SKIRMISHER.value: 1},
+            src="A1",
+            dst="CP1",
+            arrival_tick=state.tick + 1,
+            started_tick=state.tick,
+            travel_ticks=10,
+            progress=0.95,
+            intent="CAPTURE",
+        ),
+    ]
+    engine = GameEngine(state, make_bots())
+
+    engine.tick()
+
+    battle = next(b for b in state.active_battles.values() if b.location_kind == "edge")
+    assert battle.location_id == "A1|CP1"
+    assert sorted(battle.participant_entry_sides) == ["A1", "A2", "B1"]
+    assert battle.participant_entry_sides["A1"] == "attacker"
+    assert battle.participant_entry_sides["A2"] == "attacker"
+    assert battle.participant_entry_sides["B1"] == "defender"
+    assert state.moving_groups == []
+    assert any(
+        event.get("type") == "BATTLE_REINFORCEMENT"
+        and event.get("battle_type") == "edge_battle"
+        and event.get("player") == "A2"
+        for event in engine.replay_ticks[-1]["events"]
+    )
+
+
+def test_move_destination_cannot_be_edge_battle_id():
+    state = make_initial_state(seed=33)
+    state.nodes["A1"].units = {UnitType.VANGUARD.value: 2}
+    engine = GameEngine(
+        state,
+        make_bots({
+            "A1": [Action(ActionType.MOVE, source="A1", destination="A1|CP1")],
+        }),
+    )
+
+    engine.tick()
+
+    assert state.nodes["A1"].units == {UnitType.VANGUARD.value: 2}
+    assert state.moving_groups == []
+
+
 def test_reinforcement_joins_node_battle():
     state = make_initial_state(seed=31)
     state.nodes["A1"].units = {UnitType.VANGUARD.value: 8}
