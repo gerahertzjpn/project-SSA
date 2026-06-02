@@ -102,7 +102,9 @@ class TrainingEnv:
         self.control_bot.set_action(action)
 
         self.engine.tick()
-        if self.state.tick >= self.config.max_ticks and self.state.winner is None:
+        if self.state.winner is None and self.state.tick >= TICK_LIMIT:
+            self.engine.run()
+        elif self.state.tick >= self.config.max_ticks and self.state.winner is None:
             self.state.winner = "DRAW"
             self.state.winner_type = "truncated"
 
@@ -111,8 +113,10 @@ class TrainingEnv:
         shaping = (shaped_score - self._previous_score) * self.config.shaping_weight
         self._previous_score = shaped_score
 
-        terminal = self.state.winner in {"TEAM_A", "TEAM_B"}
-        truncated = self.state.winner == "DRAW" or self.state.tick >= self.config.max_ticks
+        terminal = self.state.winner in {"TEAM_A", "TEAM_B"} or (
+            self.state.winner == "DRAW" and self.state.winner_type != "truncated"
+        )
+        truncated = self.state.winner_type == "truncated"
         terminal_reward = self._terminal_reward()
         reward = float(shaping + terminal_reward)
         self._done = terminal or truncated

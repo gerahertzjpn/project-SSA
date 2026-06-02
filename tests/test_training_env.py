@@ -2,6 +2,7 @@ import numpy as np
 
 from src.training import ACTION_DIM, OBSERVATION_DIM, TrainingEnv, TrainingEnvConfig
 from src.training.rollout import run_random_rollouts
+from src.core.constants import PLAYER_IDS, TICK_LIMIT
 
 
 def test_training_env_reset_step_and_mask_are_valid():
@@ -54,3 +55,37 @@ def test_random_rollout_smoke_is_deterministic_for_same_seed():
     assert first["kind"] == "random_rollout_smoke_no_training"
     assert first["episodes"] == 3
     assert all(item["observation_dim"] == OBSERVATION_DIM for item in first["results"])
+
+
+def test_training_env_finalizes_death_time_at_real_tick_limit():
+    env = TrainingEnv(TrainingEnvConfig(seed=123, max_ticks=TICK_LIMIT))
+    env.reset()
+    assert env.engine is not None
+    assert env.state is not None
+
+    env.engine.bots = {}
+    env.state.tick = TICK_LIMIT - 1
+    env.state.core_combat_damage = 1.0
+    env.state.core_damage_by_team = {"TEAM_A": 1.0, "TEAM_B": 0.0}
+    for player_id in PLAYER_IDS:
+        env.state.players[player_id].alive = True
+        env.state.players[player_id].core_hp = 50.0
+
+    _, _, terminal, truncated, info = env.step(0)
+
+    assert terminal is True
+    assert truncated is False
+    assert info["winner"] == "TEAM_A"
+    assert info["winner_type"] == "death_time"
+
+
+def test_training_env_short_max_tick_limit_is_truncated():
+    env = TrainingEnv(TrainingEnvConfig(seed=124, max_ticks=1))
+    env.reset()
+
+    _, _, terminal, truncated, info = env.step(0)
+
+    assert terminal is False
+    assert truncated is True
+    assert info["winner"] == "DRAW"
+    assert info["winner_type"] == "truncated"

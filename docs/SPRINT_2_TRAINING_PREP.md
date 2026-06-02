@@ -148,6 +148,9 @@ Current trainer rules:
 - training rollouts are stochastic policy samples;
 - eval rollouts use deterministic `argmax` actions;
 - eval metrics are logged separately from training reward;
+- `TrainingEnv` must use the same real `TICK_LIMIT` death-time finalization as
+  `GameEngine.run()`; artificial `truncated` draws are allowed only for
+  short smoke `max_ticks` below the real tick limit;
 - train/eval summaries log action distributions, including dominant action rate,
   so an untrained argmax policy collapsing to `HOLD` is visible immediately;
 - eval uses 50 episodes by default; smaller values are smoke-only and should not
@@ -203,3 +206,10 @@ Recommended next step after trainer smoke:
 4. Run evaluation without learning against scripted baseline.
 
 Only after this works should we move toward 3v3 multi-agent self-play.
+
+## Invalidated Runs
+
+- `training_runs/sprint2_first_train` was run on the latest simulation code, but
+  before `TrainingEnv` used real death-time finalization at `TICK_LIMIT`.
+  Its 300-tick games were reported as `truncated` draws, so that run is a
+  diagnostic artifact only and must not be treated as a valid learning result.
