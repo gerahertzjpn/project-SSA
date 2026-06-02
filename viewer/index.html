@@ -56,12 +56,33 @@
       <aside class="side-panel">
         <div class="panel-tabs" role="tablist" aria-label="Replay panels">
           <button class="panel-tab" type="button" role="tab" data-tab="replay" aria-controls="tabReplay" aria-selected="false">Replay</button>
+          <button class="panel-tab" type="button" role="tab" data-tab="generate" aria-controls="tabGenerate" aria-selected="false">Generate</button>
           <button class="panel-tab" type="button" role="tab" data-tab="players" aria-controls="tabPlayers" aria-selected="false">Players</button>
           <button class="panel-tab" type="button" role="tab" data-tab="state" aria-controls="tabState" aria-selected="false">State</button>
           <button class="panel-tab active" type="button" role="tab" data-tab="battles" aria-controls="tabBattles" aria-selected="true">Battles</button>
           <button class="panel-tab" type="button" role="tab" data-tab="events" aria-controls="tabEvents" aria-selected="false">Events</button>
         </div>
 
+        <section id="tabGenerate" class="side-tab generator-panel" data-tab-panel="generate" role="tabpanel" aria-label="Replay generation">
+          <h2>Generate</h2>
+          <div class="generator-status-row">
+            <span id="generationSpinner" class="spinner" aria-hidden="true"></span>
+            <span id="generationStatus" class="generation-status" aria-live="polite">Generation API</span>
+          </div>
+          <div class="generator-grid">
+            <label class="field">
+              <span>Matches</span>
+              <input id="matchCountInput" type="number" min="1" max="100" value="20" inputmode="numeric">
+            </label>
+            <label class="field">
+              <span>Seed</span>
+              <input id="seedInput" type="number" value="20260602" inputmode="numeric">
+            </label>
+          </div>
+          <div id="playerModelGrid" class="model-grid" aria-label="Player models"></div>
+          <button id="generateMatchesBtn" class="command generate-button" type="button" disabled>Generate Matches</button>
+          <div id="generatorSummary" class="generator-summary" aria-live="polite"></div>
+        </section>
         <section id="tabReplay" class="side-tab diagnostics" data-tab-panel="replay" role="tabpanel" aria-label="Replay diagnostics">
           <h2>Replay</h2>
           <div id="diagnosticsGrid" class="diagnostics-grid"></div>

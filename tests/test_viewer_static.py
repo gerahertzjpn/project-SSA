@@ -19,9 +19,15 @@ def test_viewer_assets_exist_and_are_wired():
     assert 'id="lordLayer"' in index
     assert 'role="tablist"' in index
     assert 'data-tab="battles"' in index
+    assert 'data-tab="generate"' in index
     assert 'data-tab="state"' in index
     assert 'data-tab-panel="events"' in index
     assert 'id="stateList"' in index
+    assert 'id="matchCountInput"' in index
+    assert 'id="seedInput"' in index
+    assert 'id="playerModelGrid"' in index
+    assert 'id="generateMatchesBtn"' in index
+    assert 'id="generationSpinner"' in index
 
 
 def test_viewer_loads_compact_replay_schema():
@@ -50,6 +56,12 @@ def test_viewer_loads_compact_replay_schema():
     assert "attackLinks" in script
     assert "attackSummaryMarkup" in script
     assert "setActiveTab" in script
+    assert "initGenerator" in script
+    assert "populatePlayerModelSelects" in script
+    assert "generateMatches" in script
+    assert "/api/models" in script
+    assert "/api/generate-replays" in script
+    assert "DEFAULT_UI_RUNS" in script
     assert "displayUnitCode" in script
     assert "requestAnimationFrame" in script
     assert "frame" not in script
@@ -70,6 +82,10 @@ def test_viewer_layout_has_arena_layers():
     assert ".attack-link.ranged" in styles
     assert ".panel-tab" in styles
     assert ".side-tab.active" in styles
+    assert ".generator-panel" in styles
+    assert ".model-row" in styles
+    assert ".generation-status" in styles
+    assert ".spinner.active" in styles
     assert ".state-node-card" in styles
     assert ".state-force-card" in styles
     assert ".state-move-card" in styles
@@ -81,3 +97,15 @@ def test_viewer_layout_has_arena_layers():
     assert "@media (max-height: 700px)" in styles
     assert "@media (max-height: 560px)" in styles
     assert "grid-template-rows: minmax(0, 1fr) 54px" in styles
+
+
+def test_viewer_generation_server_is_ui_limited_only():
+    server = (VIEWER / "server.py").read_text(encoding="utf-8")
+    runner = (ROOT / "src" / "core" / "runner.py").read_text(encoding="utf-8")
+
+    assert "MAX_UI_RUNS = 100" in server
+    assert "/api/generate-replays" in server
+    assert "clear_replays()" in server
+    assert "REPLAY_NAME" in server
+    assert "player_models=player_models" in server
+    assert "MAX_UI_RUNS" not in runner

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from src.bots.random_bot import RandomBot
 from src.bots.scripted_bot import ScriptedBot
+from src.bots.policy_bot import PolicyBot, default_policy_checkpoint
 from src.core.constants import PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS
 from src.core.engine import GameEngine
 from src.core.replay import save_replay
@@ -57,10 +59,33 @@ def make_bots(bot_type: str, seed_offset: int = 0) -> dict:
     bots = {}
     for index, player_id in enumerate(PLAYER_IDS):
         team = "TEAM_A" if player_id in TEAM_A_PLAYERS else "TEAM_B"
-        if bot_type == "scripted":
-            bots[player_id] = ScriptedBot(player_id, team)
+        bots[player_id] = make_bot(bot_type, player_id, team, seed=index + seed_offset)
+    return bots
+
+
+def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
+    if model_id == "scripted":
+        return ScriptedBot(player_id, team)
+    if model_id == "random":
+        return RandomBot(player_id, team, seed=seed)
+    if model_id in {"ppo_random_v1", "ppo_random_v1_latest"}:
+        if model_id == "ppo_random_v1_latest":
+            latest = Path("training_runs/sprint2_random_first_real_v1/checkpoints/latest.pt")
+            checkpoint = latest if latest.exists() else None
         else:
-            bots[player_id] = RandomBot(player_id, team, seed=index + seed_offset)
+            checkpoint = default_policy_checkpoint()
+        if checkpoint is None:
+            raise ValueError("PPO random v1 checkpoint is not available")
+        return PolicyBot(player_id, team, checkpoint_path=checkpoint, deterministic=True)
+    raise ValueError(f"Unknown bot model: {model_id}")
+
+
+def make_bots_from_models(player_models: dict[str, str], seed_offset: int = 0) -> dict:
+    bots = {}
+    for index, player_id in enumerate(PLAYER_IDS):
+        team = "TEAM_A" if player_id in TEAM_A_PLAYERS else "TEAM_B"
+        model_id = player_models.get(player_id, "random")
+        bots[player_id] = make_bot(model_id, player_id, team, seed=index + seed_offset)
     return bots
 
 
@@ -77,13 +102,18 @@ def run_match(
     replay_path: Optional[str] = None,
     mode: str = "replay",
     pretty_replay: bool = False,
+    player_models: Optional[dict[str, str]] = None,
 ) -> MatchResult:
     profile = generation_profile(mode)
     if profile.save_replay and replay_path is None:
         raise ValueError("replay_path is required in replay generation mode")
 
     state = make_initial_state(seed=seed)
-    bots = make_bots(bot_type, seed_offset=seed * 10)
+    bots = (
+        make_bots_from_models(player_models, seed_offset=seed * 10)
+        if player_models is not None
+        else make_bots(bot_type, seed_offset=seed * 10)
+    )
     engine = GameEngine(
         state,
         bots,
@@ -100,6 +130,8 @@ def run_match(
             path=replay_path,
             extra_meta={
                 "generation_mode": profile.mode,
+                "bot_type": bot_type,
+                "player_models": dict(player_models or {}),
                 "winner_type": state.winner_type,
                 "core_combat_damage": round(state.core_combat_damage, 3),
                 "core_damage_by_team": {

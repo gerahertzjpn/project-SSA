@@ -186,6 +186,32 @@ def test_replay_profile_writes_replay_metadata(tmp_path: Path):
     assert len(replay["ticks"]) == result.total_ticks
 
 
+def test_replay_profile_accepts_per_player_models(tmp_path: Path):
+    replay_path = tmp_path / "mixed_replay.json"
+    player_models = {
+        "A1": "scripted",
+        "A2": "random",
+        "A3": "random",
+        "B1": "random",
+        "B2": "scripted",
+        "B3": "random",
+    }
+
+    result = run_match(
+        seed=17,
+        bot_type="mixed",
+        replay_path=str(replay_path),
+        mode="replay",
+        player_models=player_models,
+    )
+    replay = load_replay(str(replay_path))
+
+    assert result.mode == "replay"
+    assert replay["meta"]["bot_type"] == "mixed"
+    assert replay["meta"]["player_models"] == player_models
+    assert len(replay["ticks"]) == result.total_ticks
+
+
 def test_training_profile_requires_no_replay_path(tmp_path: Path):
     result = run_match(
         seed=5,

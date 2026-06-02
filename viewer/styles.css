@@ -126,6 +126,11 @@ select {
   cursor: pointer;
 }
 
+.command:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
 .file-button input {
   display: none;
 }
@@ -443,7 +448,7 @@ select {
 .panel-tabs {
   border-bottom: 1px solid var(--line);
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
   padding: 10px;
 }
@@ -486,6 +491,136 @@ select {
 
 .side-tab h2 {
   flex: 0 0 auto;
+}
+
+.generator-panel {
+  gap: 10px;
+  overflow: auto;
+}
+
+.generator-status-row {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 6px;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 2px solid #38404a;
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  opacity: 0.35;
+}
+
+.spinner.active {
+  opacity: 1;
+  animation: spin 700ms linear infinite;
+}
+
+.generation-status,
+.generator-summary {
+  min-width: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.generation-status[data-kind="ok"] {
+  color: var(--green);
+}
+
+.generation-status[data-kind="loading"] {
+  color: var(--gold);
+}
+
+.generation-status[data-kind="error"],
+.generation-status[data-kind="validation"] {
+  color: #ff9a9a;
+}
+
+.generator-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.field {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 6px;
+  padding: 8px;
+  min-width: 0;
+}
+
+.field span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 5px;
+}
+
+.field input,
+.model-row select {
+  width: 100%;
+  min-width: 0;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--text);
+  padding: 0 8px;
+}
+
+.model-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.model-row {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 6px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px;
+}
+
+.model-row.team-a {
+  border-left: 4px solid var(--red);
+}
+
+.model-row.team-b {
+  border-left: 4px solid var(--blue);
+}
+
+.model-row span {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.generate-button {
+  width: 100%;
+  min-height: 38px;
+}
+
+.generator-summary {
+  min-height: 36px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  padding: 8px;
+  font-variant-numeric: tabular-nums;
 }
 
 .diagnostics-grid {
@@ -1058,6 +1193,12 @@ select {
   100% {
     background: #101318;
     transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 

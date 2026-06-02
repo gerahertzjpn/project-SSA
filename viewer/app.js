@@ -28,9 +28,16 @@ const EDGES = [
 
 const CORE_NODES = new Set(["A1", "A2", "A3", "B1", "B2", "B3"]);
 const CP_NODES = new Set(["CP1", "CP2", "CP3", "CP4", "CP5", "CP6"]);
+const PLAYER_IDS = ["A1", "A2", "A3", "B1", "B2", "B3"];
 const CORE_MAX_HP = 50;
 const LORD_MAX_HP = 150;
-const SAMPLE_REPLAYS = Array.from({ length: 20 }, (_, index) => ({
+const DEFAULT_UI_RUNS = 20;
+const DEFAULT_GENERATION_SEED = 20260602;
+const FALLBACK_MODELS = [
+  { id: "random", label: "Random bot" },
+  { id: "scripted", label: "Scripted bot" },
+];
+const SAMPLE_REPLAYS = Array.from({ length: DEFAULT_UI_RUNS }, (_, index) => ({
   label: `replay_${index}.json`,
   path: `../replays_viewer_debug_smoke/replay_${index}.json`,
 }));
@@ -42,6 +49,11 @@ const state = {
   raf: null,
   stepStartedAt: 0,
   activeTab: "battles",
+  samples: [...SAMPLE_REPLAYS],
+  models: [...FALLBACK_MODELS],
+  maxUiRuns: 100,
+  apiAvailable: false,
+  generating: false,
 };
 
 const els = {
@@ -67,6 +79,13 @@ const els = {
   stateList: document.getElementById("stateList"),
   battleList: document.getElementById("battleList"),
   eventList: document.getElementById("eventList"),
+  matchCountInput: document.getElementById("matchCountInput"),
+  seedInput: document.getElementById("seedInput"),
+  playerModelGrid: document.getElementById("playerModelGrid"),
+  generateMatchesBtn: document.getElementById("generateMatchesBtn"),
+  generationStatus: document.getElementById("generationStatus"),
+  generationSpinner: document.getElementById("generationSpinner"),
+  generatorSummary: document.getElementById("generatorSummary"),
   panelTabs: Array.from(document.querySelectorAll(".panel-tab")),
   tabPanels: Array.from(document.querySelectorAll("[data-tab-panel]")),
 };
@@ -75,12 +94,14 @@ function setup() {
   drawEdges();
   populateSamples();
   bindControls();
+  initGenerator();
   renderEmpty();
 }
 
-function populateSamples() {
+function populateSamples(samples = state.samples) {
+  state.samples = samples?.length ? samples : [...SAMPLE_REPLAYS];
   els.sampleSelect.innerHTML = "";
-  for (const sample of SAMPLE_REPLAYS) {
+  for (const sample of state.samples) {
     const option = document.createElement("option");
     option.value = sample.path;
     option.textContent = sample.label;
@@ -95,6 +116,9 @@ function bindControls() {
   els.nextBtn.addEventListener("click", () => seekTo(state.tick + 1));
   els.playBtn.addEventListener("click", togglePlayback);
   els.tickSlider.addEventListener("input", (event) => seekTo(Number(event.target.value)));
+  els.matchCountInput.addEventListener("input", validateGeneratorControls);
+  els.seedInput.addEventListener("input", validateGeneratorControls);
+  els.generateMatchesBtn.addEventListener("click", generateMatches);
   els.panelTabs.forEach((button, index) => {
     button.addEventListener("click", () => setActiveTab(button.dataset.tab));
     button.addEventListener("keydown", (event) => handleTabKey(event, index));
@@ -137,6 +161,174 @@ function handleTabKey(event, index) {
   setActiveTab(next.dataset.tab);
 }
 
+async function initGenerator() {
+  populatePlayerModelSelects(state.models, PLAYER_IDS);
+  validateGeneratorControls();
+  setGeneratorStatus("Connecting...");
+
+  try {
+    const response = await fetch("/api/models", { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+    const payload = await response.json();
+    state.apiAvailable = true;
+    state.models = payload.models?.length ? payload.models : [...FALLBACK_MODELS];
+    state.maxUiRuns = Number(payload.max_ui_runs || 100);
+    els.matchCountInput.max = String(state.maxUiRuns);
+    populatePlayerModelSelects(state.models, payload.players?.length ? payload.players : PLAYER_IDS);
+    if (payload.replays?.length) {
+      populateSamples(payload.replays);
+    }
+    setGeneratorStatus(`Ready | max ${state.maxUiRuns}`);
+  } catch (error) {
+    state.apiAvailable = false;
+    setGeneratorStatus("Generation API offline", "error");
+  }
+
+  validateGeneratorControls();
+}
+
+function populatePlayerModelSelects(models = FALLBACK_MODELS, players = PLAYER_IDS) {
+  els.playerModelGrid.innerHTML = "";
+  const choices = models.length ? models : FALLBACK_MODELS;
+
+  for (const playerId of players) {
+    const row = document.createElement("label");
+    row.className = `model-row ${teamClass(playerId)}`;
+
+    const name = document.createElement("span");
+    name.textContent = playerId;
+
+    const select = document.createElement("select");
+    select.dataset.player = playerId;
+    select.setAttribute("aria-label", `${playerId} model`);
+    select.addEventListener("change", validateGeneratorControls);
+
+    for (const model of choices) {
+      const option = document.createElement("option");
+      option.value = model.id;
+      option.textContent = model.label;
+      select.appendChild(option);
+    }
+
+    row.appendChild(name);
+    row.appendChild(select);
+    els.playerModelGrid.appendChild(row);
+  }
+}
+
+function validateGeneratorControls() {
+  const runs = Number(els.matchCountInput.value);
+  const validRuns = Number.isInteger(runs) && runs >= 1 && runs <= state.maxUiRuns;
+  const validSeed = Number.isFinite(Number(els.seedInput.value));
+  const canGenerate = state.apiAvailable && !state.generating && validRuns && validSeed;
+  els.generateMatchesBtn.disabled = !canGenerate;
+
+  if (state.generating) {
+    return false;
+  }
+  if (!validRuns) {
+    setGeneratorStatus(`UI max ${state.maxUiRuns} matches`, "validation");
+    return false;
+  }
+  if (!validSeed) {
+    setGeneratorStatus("Seed is invalid", "validation");
+    return false;
+  }
+  if (!state.apiAvailable) {
+    setGeneratorStatus("Generation API offline", "error");
+    return false;
+  }
+  if (els.generationStatus.dataset.kind === "validation") {
+    setGeneratorStatus(`Ready | max ${state.maxUiRuns}`);
+  }
+  return true;
+}
+
+function playerModelSelection() {
+  const players = {};
+  for (const select of els.playerModelGrid.querySelectorAll("select[data-player]")) {
+    players[select.dataset.player] = select.value;
+  }
+  return players;
+}
+
+async function generateMatches() {
+  if (!validateGeneratorControls()) {
+    return;
+  }
+
+  const runs = Number(els.matchCountInput.value);
+  const seed = Number(els.seedInput.value || DEFAULT_GENERATION_SEED);
+  const payload = {
+    runs,
+    seed,
+    players: playerModelSelection(),
+  };
+
+  state.generating = true;
+  setGeneratorLoading(true);
+  setGeneratorStatus(`Generating ${runs} matches...`, "loading");
+  els.generatorSummary.textContent = "";
+  validateGeneratorControls();
+
+  try {
+    const response = await fetch("/api/generate-replays", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || `${response.status} ${response.statusText}`);
+    }
+
+    const replays = data.replays?.length ? data.replays : [];
+    populateSamples(replays.length ? replays : SAMPLE_REPLAYS);
+    setGeneratorStatus("Generation complete", "ok");
+    els.generatorSummary.textContent = generationSummary(data);
+
+    if (replays[0]) {
+      els.sampleSelect.value = replays[0].path;
+      await loadReplayPath(replays[0].path, replays[0].label);
+    }
+  } catch (error) {
+    setGeneratorStatus(error.message || "Generation failed", "error");
+  } finally {
+    state.generating = false;
+    setGeneratorLoading(false);
+    validateGeneratorControls();
+  }
+}
+
+function generationSummary(data = {}) {
+  const winners = countSummary(data.winners);
+  const types = countSummary(data.winner_types);
+  return [
+    `${data.runs || 0} matches`,
+    winners ? `winners ${winners}` : "",
+    types ? `types ${types}` : "",
+  ].filter(Boolean).join(" | ");
+}
+
+function countSummary(values = {}) {
+  return Object.entries(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}:${value}`)
+    .join(" ");
+}
+
+function setGeneratorLoading(loading) {
+  els.generationSpinner.classList.toggle("active", Boolean(loading));
+  els.generateMatchesBtn.setAttribute("aria-busy", loading ? "true" : "false");
+}
+
+function setGeneratorStatus(text, kind = "") {
+  els.generationStatus.textContent = text;
+  els.generationStatus.dataset.kind = kind;
+}
+
 function drawEdges() {
   els.edgeLayer.innerHTML = "";
   for (const [src, dst] of EDGES) {
@@ -153,16 +345,21 @@ function drawEdges() {
 
 async function loadSampleReplay() {
   try {
-    const path = els.sampleSelect.value || SAMPLE_REPLAYS[0].path;
-    const response = await fetch(path, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
-    }
-    const replay = await response.json();
-    setReplay(replay, path.replace("../", ""));
+    const fallback = state.samples[0] || SAMPLE_REPLAYS[0];
+    const path = els.sampleSelect.value || fallback.path;
+    await loadReplayPath(path);
   } catch (error) {
     els.replayMeta.textContent = "Sample доступен при запуске через локальный сервер";
   }
+}
+
+async function loadReplayPath(path, label = "") {
+  const response = await fetch(path, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+  const replay = await response.json();
+  setReplay(replay, label || path.replace("../", ""));
 }
 
 function loadFileReplay(event) {
