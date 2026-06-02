@@ -283,8 +283,24 @@ def test_long_move_builds_shortest_route_and_walks_through_node():
     assert group.dst == "CP3"
 
 
-def test_guarded_neutrals_are_targets_not_transit_nodes():
+def test_guarded_neutrals_are_valid_transit_nodes():
     state = make_initial_state(seed=19)
+    engine = GameEngine(state, make_bots())
+
+    assert state.nodes["CP1"].owner == "NEUTRAL"
+    assert state.nodes["CP1"].neutral_hp > 0
+    assert state.nodes["CP3"].owner == "NEUTRAL"
+    assert state.nodes["CP3"].neutral_hp > 0
+
+    assert engine._find_route("A1", "A1", "CP3") == ["A1", "CP1", "CP3"]
+
+
+def test_enemy_frontline_limits_closed_core_to_adjacent_targets():
+    state = make_initial_state(seed=19)
+    state.nodes["CP1"].owner = "B1"
+    state.nodes["CP1"].neutral_hp = 0
+    state.nodes["CP2"].owner = "B1"
+    state.nodes["CP2"].neutral_hp = 0
     engine = GameEngine(state, make_bots())
 
     reachable = {

@@ -67,7 +67,7 @@ class RandomBot(Bot):
                 return False
             owner = nodes[node_id]["owner"]
             if owner == "NEUTRAL":
-                return int(nodes[node_id].get("neutral_hp", 0) or 0) <= 0
+                return True
             return is_friendly(owner)
 
         def is_destination(node_id: str, via_node: str) -> bool:

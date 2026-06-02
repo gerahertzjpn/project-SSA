@@ -125,7 +125,7 @@ class ScriptedBot(Bot):
             return False
         owner = nodes[node_id]["owner"]
         if owner == "NEUTRAL":
-            return int(nodes[node_id].get("neutral_hp", 0) or 0) <= 0
+            return True
         return self._is_friendly_owner(player_id, owner)
 
     def _is_friendly_owner(self, player_id: str, owner: str) -> bool:

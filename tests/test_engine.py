@@ -62,8 +62,25 @@ def test_neutral_nodes_start_with_guards():
         assert state.nodes[cp].owner == "NEUTRAL"
 
 
-def test_random_bot_closed_core_only_sees_adjacent_guarded_targets():
+def test_random_bot_can_route_through_guarded_neutral_line():
     state = make_initial_state(seed=0)
+    engine = GameEngine(state, {})
+    obs = engine._observe("A1")
+    bot = RandomBot("A1", "TEAM_A", seed=0)
+
+    targets = bot._accessible_targets("A1", obs["nodes"], obs["baron"])
+
+    assert "CP3" in targets
+    assert "B1" in targets
+    assert set(targets) != {"CP1", "CP2"}
+
+
+def test_random_bot_enemy_frontline_only_exposes_adjacent_targets():
+    state = make_initial_state(seed=0)
+    state.nodes["CP1"].owner = "B1"
+    state.nodes["CP1"].neutral_hp = 0
+    state.nodes["CP2"].owner = "B1"
+    state.nodes["CP2"].neutral_hp = 0
     engine = GameEngine(state, {})
     obs = engine._observe("A1")
     bot = RandomBot("A1", "TEAM_A", seed=0)
