@@ -1,7 +1,7 @@
 # Sprint 2 Training Prep
 
-This sprint prepares the first RL training run. It does **not** train a neural
-network yet.
+This sprint prepares and smoke-tests the first RL training run. Large training
+runs should start only after the trainer, eval, checkpoint, and resume loop pass.
 
 ## Current Scope
 
@@ -12,6 +12,8 @@ network yet.
 - Replay recording is disabled by default for training rollouts, so long runs do
   not accumulate replay JSON in memory.
 - Combat trace recording is disabled by default for training rollouts.
+- A first masked PPO runner is available for smoke training against scripted or
+  random baseline bots.
 
 ## Generation Modes
 
@@ -123,12 +125,49 @@ Default reward:
 This is deliberately conservative. The first real training should check a
 learning curve and baseline comparison before treating reward weights as valid.
 
+## First-Run Failure Mode To Watch
+
+Track win-rate against the scripted baseline separately from reward.
+
+Main trap:
+
+- shaped reward goes up;
+- real wins do not improve.
+
+That is reward-hacking, not useful learning. A run is considered promising only
+when both are true:
+
+- average reward improves;
+- eval win-rate against the scripted baseline rises above random/legal policy
+  behavior and stabilizes.
+
+Current trainer rules:
+
+- training rollouts are stochastic policy samples;
+- eval rollouts use deterministic `argmax` actions;
+- eval metrics are logged separately from training reward;
+- random-legal baseline eval is logged at the start of a fresh run;
+- checkpoint/resume must be verified by launching a new process with
+  `--resume`, not just by checking that a file exists.
+
 ## Smoke Commands
 
 Training environment smoke, no learning:
 
 ```powershell
 python scripts/training_smoke.py --episodes 3 --seed 20260602 --max-ticks 60
+```
+
+First trainer smoke:
+
+```powershell
+python scripts/train_policy.py --run-dir training_runs/first_smoke --overwrite --updates 3 --workers 4 --rollout-steps 300 --eval-episodes 4
+```
+
+Checkpoint/resume verification:
+
+```powershell
+python scripts/train_policy.py --run-dir training_runs/first_smoke --resume training_runs/first_smoke/checkpoints/latest.pt --updates 1 --workers 2 --rollout-steps 120 --eval-episodes 2
 ```
 
 Expected properties:
@@ -148,13 +187,12 @@ python -m pytest -q
 
 Do not start by tuning a large multi-agent run.
 
-Recommended next step:
+Recommended next step after trainer smoke:
 
-1. Wrap `TrainingEnv` with the chosen trainer (CleanRL/SB3/Gymnasium adapter).
-2. Train only one controlled player against scripted/random baselines.
-3. Log episode return, win/draw/loss rate, entropy, action distribution, and
+1. Train only one controlled player against scripted/random baselines.
+2. Log episode return, win/draw/loss rate, entropy, action distribution, and
    invalid-action rate.
-4. Save checkpoint and verify resume.
-5. Run evaluation without learning against scripted baseline.
+3. Save checkpoint and verify resume.
+4. Run evaluation without learning against scripted baseline.
 
 Only after this works should we move toward 3v3 multi-agent self-play.

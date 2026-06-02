@@ -1,8 +1,7 @@
-"""Training-prep utilities for RL experiments.
+"""Training utilities for RL experiments.
 
-This package intentionally does not train a neural network. It provides the
-stable action/observation/reward plumbing that a future PPO/CleanRL/SB3 runner
-can consume.
+The package exposes the stable action/observation/reward plumbing plus a small
+masked PPO runner used for the first Sprint 2 smoke training runs.
 """
 
 from .spaces import (
@@ -16,6 +15,8 @@ from .spaces import (
     legal_action_mask,
 )
 from .env import TrainingEnv, TrainingEnvConfig
+from .policy import MaskedActorCritic
+from .ppo_trainer import PPOConfig
 
 __all__ = [
     "ACTION_DIM",
@@ -24,6 +25,8 @@ __all__ = [
     "OBSERVATION_VERSION",
     "TrainingEnv",
     "TrainingEnvConfig",
+    "MaskedActorCritic",
+    "PPOConfig",
     "decode_action",
     "encode_observation",
     "find_route_obs",
