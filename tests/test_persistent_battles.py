@@ -30,6 +30,10 @@ def run_ticks(engine, count):
         engine.tick()
 
 
+DIRECT_MOVE_TICKS = TRAVEL_TIME * 2 + 1
+EDGE_COLLISION_TICKS = TRAVEL_TIME + 1
+
+
 def test_battle_is_persistent_not_instant():
     state = make_initial_state(seed=1)
     state.nodes["A1"].units = {UnitType.VANGUARD.value: 8}
@@ -45,7 +49,7 @@ def test_battle_is_persistent_not_instant():
     )
 
     engine.tick()
-    run_ticks(engine, TRAVEL_TIME)
+    run_ticks(engine, DIRECT_MOVE_TICKS)
 
     battle = state.active_battles.get("node:CP1")
     assert battle is not None
@@ -74,7 +78,7 @@ def test_opposing_groups_create_persistent_edge_battle():
     )
 
     engine.tick()
-    run_ticks(engine, 2)
+    run_ticks(engine, EDGE_COLLISION_TICKS)
 
     edge_battles = [
         battle for battle in state.active_battles.values()
@@ -99,7 +103,7 @@ def test_reinforcement_joins_edge_battle():
         }),
     )
     engine.tick()
-    run_ticks(engine, 2)
+    run_ticks(engine, EDGE_COLLISION_TICKS)
 
     battle = next(b for b in state.active_battles.values() if b.location_kind == "edge")
     before = len(battle.units)
@@ -140,7 +144,7 @@ def test_reinforcement_joins_node_battle():
         }),
     )
     engine.tick()
-    run_ticks(engine, TRAVEL_TIME)
+    run_ticks(engine, DIRECT_MOVE_TICKS)
 
     battle = state.active_battles["node:CP1"]
     before = len(battle.units)
@@ -186,7 +190,7 @@ def test_neutrals_passive_until_attacked():
     )
 
     engine.tick()
-    run_ticks(engine, TRAVEL_TIME)
+    run_ticks(engine, DIRECT_MOVE_TICKS)
 
     assert state.nodes["CP1"].neutral_hp == 5
     assert "A1" in state.nodes["CP1"].visiting_units
@@ -204,8 +208,7 @@ def test_arrived_units_cannot_leave_node_until_next_tick():
         make_bots({
             "A1": [
                 Action(ActionType.MOVE, source="A1", destination="CP1"),
-                Action(ActionType.HOLD),
-                Action(ActionType.HOLD),
+                *[Action(ActionType.HOLD) for _ in range(DIRECT_MOVE_TICKS - 1)],
                 Action(ActionType.MOVE, source="CP1", destination="CP3"),
                 Action(ActionType.MOVE, source="CP1", destination="CP3"),
             ],
@@ -213,7 +216,7 @@ def test_arrived_units_cannot_leave_node_until_next_tick():
     )
 
     engine.tick()
-    run_ticks(engine, TRAVEL_TIME)
+    run_ticks(engine, DIRECT_MOVE_TICKS)
 
     assert state.nodes["CP1"].owner == "A1"
     assert state.nodes["CP1"].units == {UnitType.VANGUARD.value: 2}
@@ -243,10 +246,64 @@ def test_node_remembers_arrival_side_for_stationed_units():
     )
 
     engine.tick()
-    run_ticks(engine, TRAVEL_TIME)
+    run_ticks(engine, DIRECT_MOVE_TICKS)
 
     assert state.nodes["CP3"].owner == "B1"
     assert state.nodes["CP3"].unit_entry_side["B1"] == "attacker"
+
+
+def test_long_move_builds_shortest_route_and_walks_through_node():
+    state = make_initial_state(seed=17)
+    state.nodes["A3"].units = {UnitType.VANGUARD.value: 2}
+    state.nodes["CP1"].owner = "NEUTRAL"
+    state.nodes["CP1"].neutral_hp = 0
+    state.nodes["CP3"].owner = "NEUTRAL"
+    state.nodes["CP3"].neutral_hp = 0
+
+    engine = GameEngine(
+        state,
+        make_bots({
+            "A3": [Action(ActionType.MOVE, source="A3", destination="CP3")],
+        }),
+    )
+
+    engine.tick()
+    group = state.moving_groups[0]
+
+    assert group.path == ["A3", "CP1", "CP3"]
+    assert group.final_dst == "CP3"
+    assert group.phase == "node_exit"
+
+    run_ticks(engine, TRAVEL_TIME + 2)
+    group = state.moving_groups[0]
+
+    assert group.phase == "node_transit"
+    assert group.segment_node == "CP1"
+    assert group.src == "A3"
+    assert group.dst == "CP3"
+
+
+def test_movement_speed_uses_slowest_unit_in_group():
+    state = make_initial_state(seed=18)
+    state.nodes["A1"].units = {UnitType.SKIRMISHER.value: 2}
+    state.nodes["A2"].units = {UnitType.SKIRMISHER.value: 2, UnitType.RANGER.value: 1}
+    state.nodes["CP1"].owner = "NEUTRAL"
+    state.nodes["CP1"].neutral_hp = 0
+
+    engine = GameEngine(
+        state,
+        make_bots({
+            "A1": [Action(ActionType.MOVE, source="A1", destination="CP1")],
+            "A2": [Action(ActionType.MOVE, source="A2", destination="CP1")],
+        }),
+    )
+
+    engine.tick()
+    groups = {group.player_id: group for group in state.moving_groups}
+
+    assert groups["A1"].speed == 1.5
+    assert groups["A2"].speed == 0.5
+    assert groups["A1"].travel_ticks < groups["A2"].travel_ticks
 
 
 def test_stationed_units_use_saved_entry_side_in_node_battle():
@@ -267,7 +324,7 @@ def test_stationed_units_use_saved_entry_side_in_node_battle():
     )
 
     engine.tick()
-    run_ticks(engine, TRAVEL_TIME)
+    run_ticks(engine, DIRECT_MOVE_TICKS)
 
     battle = state.active_battles["node:CP3"]
     b_unit = next(unit for unit in battle.units if unit.team == "B1")
@@ -298,7 +355,7 @@ def test_neutral_aggro_set():
     )
 
     engine.tick()
-    run_ticks(engine, TRAVEL_TIME)
+    run_ticks(engine, DIRECT_MOVE_TICKS)
 
     battle = state.active_battles["node:CP1"]
     assert battle.neutral_aggro_teams == {"TEAM_A"}
@@ -370,7 +427,7 @@ def test_replay_has_node_and_edge_battle_events():
         }),
     )
     engine.tick()
-    run_ticks(engine, 2)
+    run_ticks(engine, EDGE_COLLISION_TICKS)
 
     event_types = [
         event.get("battle_type")
@@ -392,7 +449,7 @@ def test_replay_has_node_and_edge_battle_events():
         }),
     )
     engine.tick()
-    run_ticks(engine, TRAVEL_TIME)
+    run_ticks(engine, DIRECT_MOVE_TICKS)
 
     event_types = [
         event.get("battle_type")

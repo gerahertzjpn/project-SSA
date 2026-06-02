@@ -43,12 +43,7 @@ class ScriptedBot(Bot):
         if best_src is None:
             return Action(action_type=ActionType.HOLD)
 
-        # Find the next hop toward target from best_src
-        next_hop = self._next_hop(best_src, target, nodes, player_id)
-        if next_hop is None:
-            return Action(action_type=ActionType.HOLD)
-
-        return Action(action_type=ActionType.MOVE, source=best_src, destination=next_hop)
+        return Action(action_type=ActionType.MOVE, source=best_src, destination=target)
 
     def _find_target(self, player_id: str, core_node: str, nodes: dict) -> str | None:
         """Find nearest neutral CP or enemy node. BFS from core."""

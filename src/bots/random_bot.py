@@ -27,9 +27,9 @@ class RandomBot(Bot):
         movable_nodes = []
         for node_id, node_data in nodes.items():
             if node_data["owner"] == self.player_id and sum(node_data["units"].values()) > 0:
-                neighbors = ADJACENCY.get(node_id, [])
-                if neighbors:
-                    movable_nodes.append((node_id, neighbors))
+                targets = self._accessible_targets(node_id, nodes)
+                if targets:
+                    movable_nodes.append((node_id, targets))
 
         if movable_nodes:
             choices.append(ActionType.MOVE)
@@ -45,3 +45,20 @@ class RandomBot(Bot):
             return Action(action_type=ActionType.MOVE, source=src, destination=dst)
 
         return Action(action_type=ActionType.HOLD)
+
+    def _accessible_targets(self, src: str, nodes: dict) -> list[str]:
+        def is_transit(node_id: str) -> bool:
+            owner = nodes[node_id]["owner"]
+            return owner == "NEUTRAL" or owner.startswith(self.player_id[0])
+
+        targets = []
+        for node_id, node_data in nodes.items():
+            if node_id == src:
+                continue
+            owner = node_data["owner"]
+            if node_id == "Baron" or owner == "NEUTRAL" or owner.startswith(self.player_id[0]):
+                targets.append(node_id)
+                continue
+            if any(is_transit(neighbor) for neighbor in ADJACENCY.get(node_id, [])):
+                targets.append(node_id)
+        return targets

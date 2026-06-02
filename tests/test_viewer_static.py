@@ -39,6 +39,8 @@ def test_viewer_loads_compact_replay_schema():
     assert "stateForceCards" in script
     assert "forceStatus" in script
     assert "movingGroupCard" in script
+    assert "movingGroupPosition" in script
+    assert "phaseLabel" in script
     assert "attackLinks" in script
     assert "attackSummaryMarkup" in script
     assert "setActiveTab" in script

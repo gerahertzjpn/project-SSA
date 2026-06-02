@@ -8,10 +8,12 @@ from src.core.combat import (
     COMBAT_MOVE_SPEED,
     DEFENDER_SIDE,
     build_core_unit,
+    build_player_units,
     build_neutral_units,
     resolve_combat,
     resolve_combat_with_core,
     resolve_baron_combat,
+    tick_battle_units,
 )
 from src.core.constants import TRAVEL_TIME, UnitType
 
@@ -171,3 +173,13 @@ def test_cores_are_on_team_side_with_high_range():
 
 def test_combat_line_crossing_matches_empty_edge_travel_time():
     assert COMBAT_MOVE_SPEED * TRAVEL_TIME == DEFENDER_SIDE - ATTACKER_SIDE
+
+
+def test_combat_approach_uses_unit_speed():
+    slow = build_player_units({UnitType.RANGER.value: 1}, "A1", "attacker")[0]
+    fast = build_player_units({UnitType.SKIRMISHER.value: 1}, "A2", "attacker")[0]
+    target = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
+
+    tick_battle_units([slow, fast, target], record_trace=False)
+
+    assert fast.pos > slow.pos

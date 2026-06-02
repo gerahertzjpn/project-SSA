@@ -39,9 +39,15 @@ class MovingGroup:
     dst: str
     arrival_tick: int
     started_tick: int = 0
-    travel_ticks: int = 1
+    travel_ticks: float = 1.0
     progress: float = 0.0
     intent: str = "CAPTURE"  # CAPTURE/ATTACK engages neutrals; TRANSIT passes passive neutrals
+    path: list[str] = field(default_factory=list)
+    segment_index: int = 0
+    phase: str = "edge"  # node_exit | edge | node_transit | node_enter
+    segment_node: Optional[str] = None
+    speed: float = 1.0
+    final_dst: Optional[str] = None
 
     def total_units(self) -> int:
         return sum(self.units.values())
@@ -75,6 +81,10 @@ class Battle:
     participant_routes: dict = field(default_factory=dict)  # player_id -> (src, dst)
     participant_intents: dict = field(default_factory=dict)  # player_id -> movement intent
     participant_entry_sides: dict = field(default_factory=dict)  # player_id -> attacker/defender
+    participant_paths: dict = field(default_factory=dict)  # player_id -> full movement path
+    participant_segment_indices: dict = field(default_factory=dict)  # player_id -> segment index at battle join
+    participant_speeds: dict = field(default_factory=dict)  # player_id -> movement speed
+    participant_final_dsts: dict = field(default_factory=dict)  # player_id -> requested destination
     edge_endpoints: Optional[tuple[str, str]] = None
     edge_position: float = 0.5
     neutral_aggro_teams: set[str] = field(default_factory=set)

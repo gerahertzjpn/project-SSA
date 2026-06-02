@@ -45,9 +45,12 @@ def make_node_battle_engine():
     return state, engine
 
 
+DIRECT_MOVE_TICKS = TRAVEL_TIME * 2 + 1
+
+
 def test_save_replay_writes_versioned_schema(tmp_path):
     state, engine = make_node_battle_engine()
-    for _ in range(TRAVEL_TIME + 1):
+    for _ in range(DIRECT_MOVE_TICKS + 1):
         engine.tick()
 
     path = tmp_path / "replay.json"
@@ -68,7 +71,7 @@ def test_save_replay_writes_versioned_schema(tmp_path):
 
 def test_engine_replay_uses_compact_battle_tick_summary():
     _, engine = make_node_battle_engine()
-    for _ in range(TRAVEL_TIME + 2):
+    for _ in range(DIRECT_MOVE_TICKS + 2):
         engine.tick()
 
     battle_tick = next(
@@ -89,7 +92,7 @@ def test_engine_replay_uses_compact_battle_tick_summary():
 
 def test_active_battle_snapshot_uses_side_summary():
     _, engine = make_node_battle_engine()
-    for _ in range(TRAVEL_TIME + 1):
+    for _ in range(DIRECT_MOVE_TICKS + 1):
         engine.tick()
 
     snapshots = [

@@ -177,7 +177,7 @@ def _move_toward_target(unit: UnitInstance, target: Optional[UnitInstance]) -> N
     if dist <= unit.range:
         return
     direction = 1.0 if target.pos > unit.pos else -1.0
-    step = min(COMBAT_MOVE_SPEED, max(0.0, dist - unit.range))
+    step = min(COMBAT_MOVE_SPEED * unit.speed, max(0.0, dist - unit.range))
     unit.pos += direction * step
 
 

@@ -6,7 +6,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 
 ## Replay schema used
 
-- `schema_version`: `0.4.1`
+- `schema_version`: `0.5.0`
 - `combat_trace_format`: `compact_v3`
 - sample path: `replays_viewer_debug_smoke/replay_0.json`
 - active battle formation rows are `[uid, team, unit_code, hp, max_hp, pos, range]`
@@ -27,7 +27,8 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - `nodes[*].unit_ready_tick` marks units that arrived/resolved this tick and cannot leave that node until the next tick.
 - `nodes[*].unit_entry_side` records the last 1D combat side (`attacker`/left or `defender`/right) used by stationed units for each player.
 - `nodes[*].neutral_hp` is shown on control points as a small neutral guard badge.
-- `moving_groups` are shown as route dots interpolated from `src` to `dst` using `progress`.
+- `moving_groups` are shown as route dots using current movement phase: `node_exit`, `edge`, `node_transit`, or `node_enter`.
+- `moving_groups[*].path` is the full planned route, while `src`/`dst` describe the current phase endpoints.
 - `active_battles[*].location_kind == "node"` is shown on the node.
 - `active_battles[*].location_kind == "edge"` is shown on the edge midpoint/position.
 - `active_battles[*].formation` is shown as a compact 1D combat line inside each battle card.
@@ -43,17 +44,21 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - Neutral guard and Lord combat units are centered exactly at combat position `10.0`, not placed on the defender/right side.
 - Neutral guards are represented as a group of neutral units with medium range (`3.0`). Once aggroed by an attack/capture, the whole neutral group attacks.
 - TEAM_A cores are placed on the left side of the combat line, TEAM_B cores on the right side. Cores have high attack range.
-- Combat approach movement uses the same line-crossing duration as empty-edge movement: crossing the full combat line takes `TRAVEL_TIME` world ticks. Attack cadence and damage are not accelerated.
+- Combat approach movement uses unit speed. Speed `1.0` crosses the full combat line in `TRAVEL_TIME` world ticks; faster/slower units scale from that baseline. Attack cadence and damage are not accelerated.
+- Route movement speed is based on the slowest unit in the moving group. Edge travel, empty node crossing, source exit, and final node entry all scale from that same speed.
+- A source node exit or final node entry costs half of a full node crossing. Passing through an intermediate node costs one full node crossing.
 - Units that arrive at a node or survive a node battle receive a one-tick ready lock. They can be observed on that node before they can be moved to the next edge.
 - Node battles stay 1D, but player units now enter from the side implied by their route. Stationed owner/visitor units reuse their remembered `unit_entry_side` instead of always falling back to TEAM_A left / TEAM_B right.
 - Battle and event cards use fixed heights with internal scroll areas so UI height does not jump when event counts change.
 
 ## Current Control Model
 
-- Action space is `HOLD`, `PRODUCE`, and one-edge `MOVE`.
+- Action space is `HOLD`, `PRODUCE`, and routed `MOVE`.
 - Sending units to hold a node is currently represented as `MOVE` to that node, then no follow-up `MOVE`; arrived units stand at the abstract node center and receive a one-tick ready lock.
 - The current bots can leave units in place by choosing `HOLD`, but there is no dedicated high-level `DEFEND_POINT` or persistent garrison intent yet.
 - A `MOVE` takes all currently controllable units for that player from the source node. There is no partial split or squad selection yet.
+- A `MOVE` destination may be farther than one edge. The engine builds the shortest valid route automatically.
+- Valid route destinations are neutral nodes, allied nodes, Lord, and enemy nodes that are adjacent to a neutral/allied transit node. Enemy nodes are valid targets, but not valid transit hubs.
 - Friendly reinforcements merge into node-level units; on a friendly node owned by another player, practical control transfers to the node owner. Visitor units on neutral/passive nodes keep player identity until moved or pulled into battle.
 - Node combat is a 1D left/right abstraction derived from node order and remembered entry side. The map can have several graph entrances, but combat intentionally collapses them to exactly left or right; it does not preserve four separate entry channels.
 

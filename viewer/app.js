@@ -374,7 +374,7 @@ function renderRoutes(tick, nextTick, alpha) {
       Number(nextGroup?.progress ?? fallbackProgress ?? 0),
       alpha,
     );
-    const pos = interpolate(group.src, group.dst, progress);
+    const pos = movingGroupPosition(group, progress);
     if (!pos) {
       continue;
     }
@@ -382,7 +382,7 @@ function renderRoutes(tick, nextTick, alpha) {
     marker.className = `route ${teamClass(group.player)}`;
     marker.style.left = `${pos[0]}px`;
     marker.style.top = `${pos[1]}px`;
-    marker.title = `${group.player}: ${group.src} -> ${group.dst} (${group.intent})`;
+    marker.title = `${group.player}: ${routeText(group)} (${phaseLabel(group.phase)})`;
     els.routeLayer.appendChild(marker);
   }
 }
@@ -578,12 +578,12 @@ function movingGroupCard(group, label, nextTick, alpha) {
     <div class="state-move-card ${teamClass(group.player)}">
       <div class="state-card-head">
         <strong>${group.player}</strong>
-        <span>${label} ${percent}%</span>
+        <span>${label} ${phaseLabel(group.phase)} ${percent}%</span>
       </div>
-      <div class="state-route-text">${displayLocation(group.src)} -> ${displayLocation(group.dst)}</div>
+      <div class="state-route-text">${routeText(group)}</div>
       <div class="state-progress"><span style="width: ${percent}%"></span></div>
       <div class="state-card-meta">
-        <span>${intent}</span>
+        <span>${intent} · speed ${formatNumber(group.speed || 1)}</span>
         <span>${eta}</span>
       </div>
       <div class="state-unit-row">${unitChips(group.units)}</div>
@@ -859,6 +859,62 @@ function interpolate(src, dst, progress) {
   ];
 }
 
+function movingGroupPosition(group, progress) {
+  if (group.phase === "edge" || !group.phase) {
+    return interpolate(group.src, group.dst, progress);
+  }
+
+  const nodeId = group.segment_node || (group.phase === "node_exit" ? group.src : group.dst);
+  const point = nodePhasePoint(nodeId, group.src, group.dst, group.phase, progress);
+  return point ? scalePoint(point) : interpolate(group.src, group.dst, progress);
+}
+
+function nodePhasePoint(nodeId, src, dst, phase, progress) {
+  const node = NODE_POSITIONS[nodeId];
+  if (!node) {
+    return null;
+  }
+
+  const offset = 24;
+  const t = Math.max(0, Math.min(1, Number(progress) || 0));
+  const fromVec = directionFromNode(nodeId, src);
+  const toVec = directionFromNode(nodeId, dst);
+
+  if (phase === "node_exit") {
+    return [
+      node[0] + toVec[0] * offset * t,
+      node[1] + toVec[1] * offset * t,
+    ];
+  }
+
+  if (phase === "node_enter") {
+    return [
+      node[0] + fromVec[0] * offset * (1 - t),
+      node[1] + fromVec[1] * offset * (1 - t),
+    ];
+  }
+
+  const start = [node[0] + fromVec[0] * offset, node[1] + fromVec[1] * offset];
+  const end = [node[0] + toVec[0] * offset, node[1] + toVec[1] * offset];
+  return [
+    start[0] + (end[0] - start[0]) * t,
+    start[1] + (end[1] - start[1]) * t,
+  ];
+}
+
+function directionFromNode(nodeId, otherId) {
+  const node = NODE_POSITIONS[nodeId];
+  const other = NODE_POSITIONS[otherId];
+  if (!node || !other || nodeId === otherId) {
+    return [0, 0];
+  }
+
+  const dx = other[0] - node[0];
+  const dy = other[1] - node[1];
+  const length = Math.max(1, Math.hypot(dx, dy));
+  return [dx / length, dy / length];
+}
+
 function scalePoint(point) {
   if (!point) {
     return null;
@@ -884,6 +940,20 @@ function displayNodeLabel(id) {
 
 function displayLocation(id) {
   return String(id || "").replace("Baron", "Lord");
+}
+
+function routeText(group) {
+  const path = group.path?.length ? group.path : [group.src, group.dst];
+  return path.map(displayLocation).join(" -> ");
+}
+
+function phaseLabel(phase) {
+  return {
+    node_exit: "exit",
+    edge: "edge",
+    node_transit: "inside",
+    node_enter: "enter",
+  }[phase] || "move";
 }
 
 function displayForceLabel(id) {

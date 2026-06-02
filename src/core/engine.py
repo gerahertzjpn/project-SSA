@@ -12,6 +12,8 @@ Tick order:
 8. Tick snapshot is written to the replay buffer.
 """
 
+import math
+from collections import deque
 from dataclasses import dataclass
 from typing import Optional
 
@@ -26,10 +28,15 @@ from .combat import (
     tick_battle_units, has_hostile_units, count_survivors_by_player,
 )
 from .production import apply_production, collect_income
+from .units import UNIT_STATS
 
 
 def unit_total(units: dict) -> int:
     return sum(int(count or 0) for count in (units or {}).values())
+
+
+NODE_CROSSING_TICKS = float(TRAVEL_TIME)
+NODE_HALF_CROSSING_TICKS = NODE_CROSSING_TICKS / 2.0
 
 
 @dataclass
@@ -106,8 +113,19 @@ class GameEngine:
         for group in state.moving_groups:
             group.progress = min(1.0, group.progress + 1.0 / max(1, group.travel_ticks))
 
-        remaining: list[MovingGroup] = []
+        phased_groups: list[MovingGroup] = []
         for group in state.moving_groups:
+            if group.progress >= 1.0 and group.phase != "edge":
+                event, keep_moving = self._complete_group_segment(group)
+                if event:
+                    tick_events.append(event)
+                if keep_moving:
+                    phased_groups.append(group)
+                continue
+            phased_groups.append(group)
+
+        remaining: list[MovingGroup] = []
+        for group in phased_groups:
             battle = self._edge_battle_for_group(group)
             if battle and self._group_reached_edge_battle(group, battle):
                 tick_events.append(self._join_battle(battle, group, reinforced=True))
@@ -119,9 +137,11 @@ class GameEngine:
         still_moving: list[MovingGroup] = []
         for group in remaining:
             if group.progress >= 1.0:
-                event = self._resolve_arrival(group)
+                event, keep_moving = self._complete_group_segment(group)
                 if event:
                     tick_events.append(event)
+                if keep_moving:
+                    still_moving.append(group)
             else:
                 still_moving.append(group)
 
@@ -161,6 +181,8 @@ class GameEngine:
         return [group for idx, group in enumerate(groups) if idx not in used]
 
     def _groups_collide_on_edge(self, first: MovingGroup, second: MovingGroup) -> bool:
+        if first.phase != "edge" or second.phase != "edge":
+            return False
         if first.src != second.dst or first.dst != second.src:
             return False
         if first.team == second.team:
@@ -188,6 +210,8 @@ class GameEngine:
         return battle
 
     def _edge_battle_for_group(self, group: MovingGroup) -> Optional[Battle]:
+        if group.phase != "edge":
+            return None
         return self.state.active_battles.get(self._edge_key(group.src, group.dst))
 
     def _group_reached_edge_battle(self, group: MovingGroup, battle: Battle) -> bool:
@@ -200,11 +224,13 @@ class GameEngine:
 
         if dst is None or src not in state.nodes:
             return None
-        if dst not in ADJACENCY.get(src, []):
+        path = self._find_route(player_id, src, dst)
+        if not path:
             return None
 
         if (
-            dst == "Baron"
+            len(path) == 2
+            and dst == "Baron"
             and action.intent.upper() == "TRANSIT"
             and state.nodes["Baron"].owner == "NEUTRAL"
             and state.baron.hp > 0
@@ -222,18 +248,23 @@ class GameEngine:
         if not units_to_send:
             return None
 
+        speed = self._group_speed(units_to_send)
         group = MovingGroup(
             player_id=player_id,
             team=get_team(player_id),
             units=units_to_send,
             src=src,
-            dst=dst,
-            arrival_tick=state.tick + TRAVEL_TIME,
+            dst=path[1],
+            arrival_tick=self._estimate_arrival_tick(state.tick, path, speed),
             started_tick=state.tick,
-            travel_ticks=TRAVEL_TIME,
+            travel_ticks=1.0,
             progress=0.0,
             intent=action.intent.upper(),
+            path=path,
+            speed=speed,
+            final_dst=dst,
         )
+        self._set_group_segment(group, 0, progress=0.0)
         state.moving_groups.append(group)
 
         return {
@@ -241,8 +272,11 @@ class GameEngine:
             "player": player_id,
             "src": src,
             "dst": dst,
+            "path": path,
             "units": units_to_send,
             "intent": group.intent,
+            "speed": round(speed, 3),
+            "arrives": group.arrival_tick,
         }
 
     def _take_units_for_move(self, player_id: str, node: NodeState) -> dict:
@@ -259,6 +293,196 @@ class GameEngine:
             node.unit_entry_side.pop(player_id, None)
             return node.visiting_units.pop(player_id)
         return {}
+
+    def _find_route(self, player_id: str, src: str, dst: str) -> Optional[list[str]]:
+        if dst not in self.state.nodes:
+            return None
+        if src == dst:
+            return None
+
+        visited = {src}
+        queue = deque([[src]])
+
+        while queue:
+            path = queue.popleft()
+            node_id = path[-1]
+            for neighbor in ADJACENCY.get(node_id, []):
+                if neighbor in visited:
+                    continue
+                next_path = path + [neighbor]
+                if neighbor == dst and self._is_accessible_destination(player_id, neighbor, node_id):
+                    return next_path
+                if self._is_transit_node(player_id, neighbor):
+                    visited.add(neighbor)
+                    queue.append(next_path)
+
+        return None
+
+    def _is_accessible_destination(self, player_id: str, node_id: str, via_node: str) -> bool:
+        node = self.state.nodes[node_id]
+        if node_id == "Baron":
+            return True
+        if node.owner == "NEUTRAL":
+            return True
+        if get_team(node.owner) == get_team(player_id):
+            return True
+        return self._is_transit_node(player_id, via_node)
+
+    def _is_transit_node(self, player_id: str, node_id: str) -> bool:
+        if node_id == "Baron" and self.state.nodes["Baron"].owner == "NEUTRAL" and self.state.baron.hp > 0:
+            return False
+        node = self.state.nodes[node_id]
+        return node.owner == "NEUTRAL" or get_team(node.owner) == get_team(player_id)
+
+    def _group_speed(self, units: dict) -> float:
+        speeds = []
+        for unit_type, count in (units or {}).items():
+            if int(count or 0) > 0:
+                unit_key = unit_type.value if isinstance(unit_type, UnitType) else unit_type
+                unit_enum = UnitType.RANGER if unit_key == "ARCHER" else UnitType(unit_key)
+                speeds.append(float(UNIT_STATS[unit_enum]["speed"]))
+        return min(speeds) if speeds else 1.0
+
+    def _movement_segments(self, path: list[str], speed: float) -> list[dict]:
+        segments = []
+        for index, node_id in enumerate(path):
+            if index == 0:
+                segments.append({
+                    "phase": "node_exit",
+                    "src": node_id,
+                    "dst": path[index + 1],
+                    "node": node_id,
+                    "ticks": NODE_HALF_CROSSING_TICKS / speed,
+                })
+                continue
+
+            prev_node = path[index - 1]
+            segments.append({
+                "phase": "edge",
+                "src": prev_node,
+                "dst": node_id,
+                "node": None,
+                "ticks": float(TRAVEL_TIME) / speed,
+            })
+
+            if index == len(path) - 1:
+                segments.append({
+                    "phase": "node_enter",
+                    "src": prev_node,
+                    "dst": node_id,
+                    "node": node_id,
+                    "ticks": NODE_HALF_CROSSING_TICKS / speed,
+                })
+            else:
+                segments.append({
+                    "phase": "node_transit",
+                    "src": prev_node,
+                    "dst": path[index + 1],
+                    "node": node_id,
+                    "ticks": NODE_CROSSING_TICKS / speed,
+                })
+        return segments
+
+    def _set_group_segment(self, group: MovingGroup, segment_index: int, progress: float = 0.0) -> None:
+        segments = self._movement_segments(group.path, group.speed)
+        segment = segments[segment_index]
+        group.segment_index = segment_index
+        group.phase = segment["phase"]
+        group.src = segment["src"]
+        group.dst = segment["dst"]
+        group.segment_node = segment["node"]
+        group.travel_ticks = max(0.001, segment["ticks"])
+        group.progress = progress
+        group.arrival_tick = self._estimate_arrival_tick(self.state.tick, group.path, group.speed, group.segment_index, group.progress)
+
+    def _estimate_arrival_tick(
+        self,
+        current_tick: int,
+        path: list[str],
+        speed: float,
+        segment_index: int = 0,
+        progress: float = 0.0,
+    ) -> int:
+        segments = self._movement_segments(path, speed)
+        remaining = 0.0
+        for index, segment in enumerate(segments[segment_index:], start=segment_index):
+            ticks = float(segment["ticks"])
+            remaining += ticks * (1.0 - progress if index == segment_index else 1.0)
+        return current_tick + max(1, math.ceil(remaining))
+
+    def _complete_group_segment(self, group: MovingGroup) -> tuple[Optional[dict], bool]:
+        if group.phase == "node_enter":
+            return self._resolve_arrival(group), False
+
+        next_index = group.segment_index + 1
+        segments = self._movement_segments(group.path, group.speed)
+        if next_index >= len(segments):
+            return self._resolve_arrival(group), False
+
+        if group.phase == "edge" and segments[next_index]["phase"] == "node_transit":
+            event = self._handle_transit_checkpoint(group)
+            if event:
+                return event, False
+
+        self._set_group_segment(group, next_index, progress=0.0)
+        return None, True
+
+    def _handle_transit_checkpoint(self, group: MovingGroup) -> Optional[dict]:
+        node_id = group.dst
+        if self._node_key(node_id) in self.state.active_battles:
+            battle = self.state.active_battles[self._node_key(node_id)]
+            return self._join_battle(battle, group, reinforced=True)
+
+        node_type = NODE_TYPES[node_id]
+        if node_type == NodeType.BARON and self.state.nodes["Baron"].owner == "NEUTRAL" and self.state.baron.hp > 0:
+            self._return_group_to_source(group)
+            return {
+                "type": "BARON_BLOCKED",
+                "player": group.player_id,
+                "src": group.src,
+                "dst": node_id,
+                "reason": "living_lord_blocks_transit",
+            }
+
+        node = self.state.nodes[node_id]
+        if node.neutral_hp > 0:
+            if self._has_enemy_visitors(node, group.player_id):
+                return self._start_node_battle(
+                    group=group,
+                    node_id=node_id,
+                    objective="pvp",
+                    include_visitors=True,
+                )
+            return None
+
+        if node.owner == "NEUTRAL":
+            if self._has_enemy_visitors(node, group.player_id):
+                return self._start_node_battle(
+                    group=group,
+                    node_id=node_id,
+                    objective="pvp",
+                    include_visitors=True,
+                )
+            return None
+
+        if get_team(node.owner) == get_team(group.player_id):
+            if self._has_enemy_visitors(node, group.player_id):
+                return self._start_node_battle(
+                    group=group,
+                    node_id=node_id,
+                    objective="pvp",
+                    include_owner_units=True,
+                    include_visitors=True,
+                )
+            return None
+
+        return self._start_node_battle(
+            group=group,
+            node_id=node_id,
+            objective="pvp",
+            include_owner_units=True,
+            include_visitors=True,
+        )
 
     # ------------------------------------------------------------------
     # Arrivals and node battles
@@ -513,14 +737,18 @@ class GameEngine:
         }
 
     def _join_battle(self, battle: Battle, group: MovingGroup, reinforced: bool) -> dict:
-        self._add_player_units_to_battle(
-            battle,
-            player_id=group.player_id,
-            units=group.units,
-            src=group.src,
-            dst=group.dst,
-            intent=group.intent,
-        )
+        self._current_group = group
+        try:
+            self._add_player_units_to_battle(
+                battle,
+                player_id=group.player_id,
+                units=group.units,
+                src=group.src,
+                dst=group.dst,
+                intent=group.intent,
+            )
+        finally:
+            self._current_group = None
         if battle.objective == "neutral" and group.intent.upper() in {"CAPTURE", "ATTACK"}:
             self._aggro_neutrals(battle, group.player_id, battle.location_id)
 
@@ -552,6 +780,12 @@ class GameEngine:
         battle.participant_routes[player_id] = (src, dst)
         battle.participant_intents[player_id] = intent
         battle.participant_entry_sides[player_id] = entry_side
+        if battle.location_kind == "edge":
+            current_group = getattr(self, "_current_group", None)
+            battle.participant_paths[player_id] = list(getattr(current_group, "path", []) or [src, dst])
+            battle.participant_segment_indices[player_id] = getattr(current_group, "segment_index", 0)
+            battle.participant_speeds[player_id] = getattr(current_group, "speed", 1.0)
+            battle.participant_final_dsts[player_id] = getattr(current_group, "final_dst", dst) or dst
 
     def _aggro_neutrals(self, battle: Battle, player_id: str, node_id: str) -> None:
         team = get_team(player_id)
@@ -713,20 +947,36 @@ class GameEngine:
             src, dst = battle.participant_routes.get(player_id, (None, None))
             if src is None or dst is None:
                 continue
+            path = list(battle.participant_paths.get(player_id, [src, dst]))
+            speed = float(battle.participant_speeds.get(player_id, self._group_speed(units)))
+            segment_index = int(battle.participant_segment_indices.get(player_id, 0))
             group = MovingGroup(
                 player_id=player_id,
                 team=get_team(player_id),
                 units=units,
                 src=src,
                 dst=dst,
-                arrival_tick=self.state.tick + 2,
+                arrival_tick=self._estimate_arrival_tick(
+                    self.state.tick,
+                    path,
+                    speed,
+                    segment_index,
+                    battle.edge_position,
+                ),
                 started_tick=self.state.tick,
-                travel_ticks=TRAVEL_TIME,
+                travel_ticks=float(TRAVEL_TIME) / speed,
                 progress=battle.edge_position,
                 intent=battle.participant_intents.get(player_id, "CAPTURE"),
+                path=path,
+                segment_index=segment_index,
+                phase="edge",
+                segment_node=None,
+                speed=speed,
+                final_dst=battle.participant_final_dsts.get(player_id, dst),
             )
+            self._set_group_segment(group, segment_index, progress=battle.edge_position)
             self.state.moving_groups.append(group)
-            continuing.append({"player": player_id, "src": src, "dst": dst, "units": units})
+            continuing.append({"player": player_id, "src": src, "dst": dst, "path": path, "units": units})
 
         return self._resolution_event(battle, self._strongest_survivor(survivors_by_player), {
             "result": "EDGE_RESOLVED",
@@ -962,6 +1212,13 @@ class GameEngine:
                     "units": dict(group.units),
                     "src": group.src,
                     "dst": group.dst,
+                    "final_dst": group.final_dst or group.dst,
+                    "path": list(group.path or [group.src, group.dst]),
+                    "phase": group.phase,
+                    "segment_node": group.segment_node,
+                    "segment_index": group.segment_index,
+                    "speed": round(group.speed, 3),
+                    "travel_ticks": round(group.travel_ticks, 3),
                     "arrives": group.arrival_tick,
                     "progress": round(group.progress, 3),
                     "intent": group.intent,
@@ -1002,6 +1259,13 @@ class GameEngine:
                     "units": dict(group.units),
                     "src": group.src,
                     "dst": group.dst,
+                    "final_dst": group.final_dst or group.dst,
+                    "path": list(group.path or [group.src, group.dst]),
+                    "phase": group.phase,
+                    "segment_node": group.segment_node,
+                    "segment_index": group.segment_index,
+                    "speed": round(group.speed, 3),
+                    "travel_ticks": round(group.travel_ticks, 3),
                     "arrives": group.arrival_tick,
                     "progress": round(group.progress, 3),
                     "intent": group.intent,
