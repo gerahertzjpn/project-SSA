@@ -287,6 +287,13 @@ Early resumed eval checkpoints:
 | 130 | `98%` | `2%` | `0%` | `68%` | `30%` | Strong but worse finish profile than 100/120. |
 | 140 | `98%` | `2%` | `0%` | `82%` | `16%` | Best normal-win profile so far. |
 | 150 | `96%` | `4%` | `0%` | `58%` | `38%` | Regression in finish profile. |
+| 160 | `96%` | `4%` | `0%` | `70%` | `26%` | Working checkpoint, not a top candidate. |
+| 170 | `92%` | `6%` | `2%` | `76%` | `16%` | Lower raw win-rate. |
+| 180 | `90%` | `10%` | `0%` | `64%` | `26%` | Late-training dip. |
+| 190 | `100%` | `0%` | `0%` | `52%` | `48%` | Perfect raw win-rate but too death-time heavy. |
+| 200 | `94%` | `6%` | `0%` | `72%` | `22%` | Better finish profile than 190 but lower raw win. |
+| 210 | `96%` | `4%` | `0%` | `76%` | `20%` | Solid, not top. |
+| 220 | `100%` | `0%` | `0%` | `90%` | `10%` | Best candidate so far by win and finish profile. |
 
 Current interpretation:
 
@@ -298,6 +305,8 @@ Current interpretation:
   perfect win-rate with fewer death-time wins and shorter mean episode length.
 - Update `140` is also a serious candidate because its normal-win share is
   higher than update `100`, despite a slightly lower raw win-rate.
+- Update `220` is now the strongest visible candidate: perfect argmax win-rate,
+  high normal-win share, low death-time share, and shorter games.
 - A1 argmax has become heavily concentrated on `PRODUCE:SKIRMISHER`; this must
   be checked in stochastic eval and multi-seed sweeps before accepting the
   checkpoint for league use.
