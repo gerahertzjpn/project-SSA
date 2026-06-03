@@ -73,3 +73,48 @@ Decision:
 - The first Sprint 3 infrastructure requirement is met: three controlled
   teammates can act on the same world tick without converting 3v3 into three
   sequential single-agent turns.
+
+## 2. Team PPO, CLI, Resume, Eval, Diagnostics
+
+Implemented:
+
+- `src/training/team_ppo_trainer.py`
+- `scripts/train_team_policy.py`
+- `scripts/evaluate_team_checkpoints.py`
+- `scripts/analyze_team_coordination.py`
+- `tests/test_team_ppo_trainer.py`
+
+Key design:
+
+- Three separate policies/optimizers are trained for `A1`, `A2`, and `A3`.
+- Rollouts are collected from one synchronized team environment.
+- Checkpoints store separate `policy_states` and `optimizer_states` per player.
+- Sprint 2 accepted checkpoint can warm-start all three team policies.
+- Eval supports argmax and stochastic modes, plus random-legal and scripted
+  controls.
+- Coordination diagnostics track duplicate move targets, movement into current
+  node battles, idle-with-units, action distributions, and basic Lord impact.
+
+Test/smoke commands:
+
+```powershell
+python -m pytest tests/test_team_training_env.py tests/test_team_ppo_trainer.py -q
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_smoke --overwrite --updates 1 --workers 2 --rollout-steps 32 --eval-episodes 2 --eval-interval 1 --checkpoint-interval 1 --random-baseline-episodes 2 --ally-init training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt --opponent-bot scripted --seed 20260603 --torch-threads 1 --hidden-size 128
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_smoke --resume training_runs/sprint3_team_smoke/checkpoints/latest.pt --updates 1 --workers 2 --rollout-steps 32 --eval-episodes 2 --eval-interval 1 --checkpoint-interval 1 --random-baseline-episodes 0 --opponent-bot scripted --seed 20260603 --torch-threads 1 --hidden-size 128
+python scripts/evaluate_team_checkpoints.py --run-dir training_runs/sprint3_team_smoke --updates latest --modes argmax,stochastic --seed-bases 20260603 --episodes-per-seed 2 --workers 2 --torch-threads 1 --opponent-bot scripted --include-random-legal --include-scripted-control --out-dir training_runs/evals/sprint3_team_smoke_eval
+python scripts/analyze_team_coordination.py --checkpoint training_runs/sprint3_team_smoke/checkpoints/latest.pt --episodes 2 --seed 20260603 --mode argmax --opponent-bot scripted --out analysis/sprint3_team_smoke_coordination.json
+```
+
+Results:
+
+- Team env/trainer tests: `12 passed`
+- Team trainer smoke wrote `training_runs/sprint3_team_smoke/checkpoints/latest.pt`
+- Resume smoke started from `start_update: 2`
+- Team eval smoke wrote `training_runs/evals/sprint3_team_smoke_eval/summary.json`
+- Coordination smoke wrote `analysis/sprint3_team_smoke_coordination.json`
+
+Decision:
+
+- The Sprint 3 training/eval process path is alive end-to-end on tiny settings.
+- Next step is a full test suite run before starting the first real 16-worker
+  team training run.

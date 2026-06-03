@@ -18,6 +18,7 @@ from .env import TrainingEnv, TrainingEnvConfig
 from .team_env import TeamTrainingEnv, TeamTrainingEnvConfig
 from .policy import MaskedActorCritic
 from .ppo_trainer import PPOConfig
+from .team_ppo_trainer import TeamPPOConfig
 
 __all__ = [
     "ACTION_DIM",
@@ -30,6 +31,7 @@ __all__ = [
     "TeamTrainingEnvConfig",
     "MaskedActorCritic",
     "PPOConfig",
+    "TeamPPOConfig",
     "decode_action",
     "encode_observation",
     "find_route_obs",
