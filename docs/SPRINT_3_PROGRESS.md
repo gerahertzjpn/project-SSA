@@ -379,3 +379,102 @@ Next action:
   checkpoints `220`, `240`, `250`, `260`, `270`, plus controls.
 - Select a checkpoint by scripted performance and stability, not by training
   recency.
+
+## 9. Candidate Eval Sweep
+
+Run:
+
+```powershell
+python scripts/evaluate_team_checkpoints.py --run-dir training_runs/sprint3_team_scripted_warm_v1 --updates 220,240,250,260,270 --modes argmax,stochastic --seed-bases 20260603,20270603,20280603 --episodes-per-seed 50 --workers 16 --torch-threads 1 --opponent-bot scripted --ally-bot scripted --include-random-legal --include-scripted-control --out-dir training_runs/evals/sprint3_team_scripted_warm_v1_candidates
+```
+
+Scope:
+
+- `150` episodes per checkpoint/mode (`3` seed blocks x `50` episodes).
+- Both argmax eval and stochastic eval.
+- Scripted-control and random-legal controls included.
+
+Controls:
+
+| Control | Win | Loss | Draw | Normal Wins | Death-Time Wins | Mean Steps |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Scripted team | `36.7%` | `57.3%` | `6.0%` | `0.0%` | `36.7%` | `300.00` |
+| Random-legal team | `22.0%` | `71.3%` | `6.7%` | `0.0%` | `22.0%` | `299.85` |
+
+Checkpoint sweep:
+
+| Update | Mode | Win | Loss | Draw | Normal Wins | Death-Time Wins | Mean Steps | Sequence Diversity | Opening Diversity |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `220` | argmax | `100.0%` | `0.0%` | `0.0%` | `94.0%` | `6.0%` | `174.93` | `100.0%` | `40.7%` |
+| `220` | stochastic | `95.3%` | `4.7%` | `0.0%` | `78.7%` | `16.7%` | `200.35` | `100.0%` | `100.0%` |
+| `240` | argmax | `100.0%` | `0.0%` | `0.0%` | `96.7%` | `3.3%` | `143.55` | `99.3%` | `43.3%` |
+| `240` | stochastic | `95.3%` | `4.7%` | `0.0%` | `85.3%` | `10.0%` | `187.55` | `100.0%` | `100.0%` |
+| `250` | argmax | `96.7%` | `3.3%` | `0.0%` | `91.3%` | `5.3%` | `159.65` | `100.0%` | `75.3%` |
+| `250` | stochastic | `96.0%` | `4.0%` | `0.0%` | `84.7%` | `11.3%` | `195.59` | `100.0%` | `100.0%` |
+| `260` | argmax | `98.7%` | `1.3%` | `0.0%` | `96.0%` | `2.7%` | `151.59` | `100.0%` | `74.0%` |
+| `260` | stochastic | `95.3%` | `4.7%` | `0.0%` | `83.3%` | `12.0%` | `190.96` | `100.0%` | `100.0%` |
+| `270` | argmax | `97.3%` | `2.7%` | `0.0%` | `90.0%` | `7.3%` | `155.99` | `99.3%` | `68.7%` |
+| `270` | stochastic | `97.3%` | `2.7%` | `0.0%` | `88.0%` | `9.3%` | `183.08` | `100.0%` | `100.0%` |
+
+Decision:
+
+- Best checkpoint: `checkpoint_update_240.pt`.
+- Reason:
+  - Best argmax gate: `100%` win, `0%` loss, `96.7%` normal wins.
+  - Fastest argmax games among top candidates: `143.55` mean ticks.
+  - Stochastic mode does not collapse: `95.3%` win, `85.3%` normal wins,
+    `100%` opening diversity.
+  - It beats both controls by a very large margin.
+- Backup checkpoint: `checkpoint_update_220.pt`.
+- Late checkpoints `250-270` are viable but not preferred:
+  - `270` has the best stochastic win-rate among candidates, but its argmax
+    gate is weaker and A3 shows a clear HOLD concentration risk.
+  - `260` is close, but still loses in argmax and has worse stochastic
+    normal-win share than `240`.
+
+## 10. Coordination Analysis For Update 240
+
+Runs:
+
+```powershell
+python scripts/analyze_team_coordination.py --checkpoint training_runs/sprint3_team_scripted_warm_v1/checkpoints/checkpoint_update_240.pt --episodes 150 --seed 20260603 --mode argmax --opponent-bot scripted --ally-bot scripted --out training_runs/evals/sprint3_team_scripted_warm_v1_candidates/coordination_update_240_argmax.json
+python scripts/analyze_team_coordination.py --checkpoint training_runs/sprint3_team_scripted_warm_v1/checkpoints/checkpoint_update_240.pt --episodes 150 --seed 20260603 --mode stochastic --opponent-bot scripted --ally-bot scripted --out training_runs/evals/sprint3_team_scripted_warm_v1_candidates/coordination_update_240_stochastic.json
+```
+
+Results:
+
+| Mode | Win | Loss | Draw | Normal Wins | Death-Time Wins | Mean Ticks | Duplicate Target Rate | Mean Unique Move Destinations | Node Battle Move Rate |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| argmax | `99.3%` | `0.7%` | `0.0%` | `96.7%` | `3.3%` | `140.17` | `13.2%` | `1.71` | `25.7%` |
+| stochastic | `96.0%` | `4.0%` | `0.0%` | `82.0%` | `18.0%` | `195.79` | `6.7%` | `1.56` | `18.9%` |
+
+Lord notes:
+
+- Argmax:
+  - Neutral Lord kill rate: `38.7%`.
+  - Spawn rate: `38.0%`.
+  - Owner counts after neutral kill: `TEAM_B=57`, `NONE=1`.
+  - Expended rate: `18.7%`.
+  - Mean neutral kill tick: `70.98`.
+- Stochastic:
+  - Neutral Lord kill rate: `76.0%`.
+  - Spawn rate: `76.0%`.
+  - Owner counts after neutral kill: `TEAM_B=114`.
+  - Expended rate: `59.3%`.
+  - Mean neutral kill tick: `80.25`.
+
+Interpretation:
+
+- Update `240` wins mostly through normal victory, not reward-only shaping and
+  not death-time farming.
+- Stochastic league-style play remains strong, but it is visibly less clean than
+  argmax: more death-time wins and longer games.
+- A notable strategic smell remains: in the coordination sample, the resurrected
+  Lord is mostly awarded to `TEAM_B`, yet the learned `TEAM_A` policy still wins
+  heavily. This may mean the policy is strong enough to win without Lord control,
+  or that scripted `TEAM_B` spends Lord advantage poorly.
+- The current Sprint 3 gate for "synchronized 3-agent policy can learn and beat
+  scripted reliably under corrected rules" is satisfied by update `240`.
+- Before starting league/self-play work, keep `checkpoint_update_240.pt` as the
+  accepted warm-start checkpoint and monitor Lord-control incentives in future
+  mixed-policy training.
