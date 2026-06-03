@@ -13,7 +13,7 @@ from .constants import (
 # skirmishers close quickly and kill rangers, vanguards absorb skirmisher hits.
 UNIT_STATS: dict[UnitType, dict] = {
     UnitType.VANGUARD: {
-        "hp": 10,
+        "hp": 13,
         "atk": 2,
         "range": 1.0,
         "speed": 1.0,  # positions per combat tick
@@ -22,9 +22,9 @@ UNIT_STATS: dict[UnitType, dict] = {
     },
     UnitType.RANGER: {
         "hp": 3,
-        "atk": 5,
+        "atk": 7,
         "range": 3.0,
-        "speed": 0.75,
+        "speed": 1.0,
         "slot": "back",
         "base_pos": 0.8,
     },
@@ -32,7 +32,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "hp": 6,
         "atk": 3,
         "range": 1.5,
-        "speed": 1.5,
+        "speed": 3.0,
         "slot": "mid",
         "base_pos": 1.9,
     },

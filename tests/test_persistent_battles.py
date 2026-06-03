@@ -422,8 +422,8 @@ def test_movement_speed_uses_slowest_unit_in_group():
     engine.tick()
     groups = {group.player_id: group for group in state.moving_groups}
 
-    assert groups["A1"].speed == 1.5
-    assert groups["A2"].speed == 0.75
+    assert groups["A1"].speed == 3.0
+    assert groups["A2"].speed == 1.0
     assert groups["A1"].travel_ticks < groups["A2"].travel_ticks
 
 
