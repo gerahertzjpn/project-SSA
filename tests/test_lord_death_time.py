@@ -2,10 +2,12 @@ from src.core.combat import build_core_unit, build_neutral_units, build_player_u
 from src.core.constants import (
     BARON_HP,
     CORE_HP,
-    DEATH_TIME_CORE_DAMAGE_PER_TICK,
+    DEATH_TIME_CORE_DAMAGE_TOTAL,
+    DEATH_TIME_DAMAGE_TICKS,
     DEATH_TIME_START_TICK,
     TICK_LIMIT,
     UnitType,
+    death_time_core_damage_for_tick,
 )
 from src.core.engine import Action, GameEngine
 from src.core.state import Battle, make_initial_state
@@ -31,7 +33,15 @@ def test_death_time_damage_leaves_full_core_at_one_hp_before_final():
 
     assert state.winner is None
     assert all(round(player.core_hp, 6) == 1.0 for player in state.players.values())
-    assert DEATH_TIME_CORE_DAMAGE_PER_TICK == (CORE_HP - 1) / (TICK_LIMIT - DEATH_TIME_START_TICK)
+    damages = [
+        death_time_core_damage_for_tick(tick)
+        for tick in range(DEATH_TIME_START_TICK, TICK_LIMIT)
+    ]
+    assert DEATH_TIME_DAMAGE_TICKS == TICK_LIMIT - DEATH_TIME_START_TICK
+    assert DEATH_TIME_CORE_DAMAGE_TOTAL == CORE_HP - 1
+    assert sum(damages) == CORE_HP - 1
+    assert all(isinstance(damage, int) for damage in damages)
+    assert max(damages) - min(damages) <= 1
 
 
 def test_tick_limit_draws_only_when_no_core_combat_damage():

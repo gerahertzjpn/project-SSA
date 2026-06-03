@@ -54,12 +54,12 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - Neutral Lord HP persists across failed attempts to kill it.
 - Killing the neutral Lord spawns an allied `LORD` unit with full HP on the same node. It automatically pushes along a shortest route toward a random living enemy core and fights enemies encountered on the way.
 - The allied `LORD` keeps one persistent HP pool across all push fights. If it dies during the push, it does not resurrect again. If it destroys its first core, it disappears regardless of remaining HP.
-- Neutral guards are represented as a stationary centered group with Ranger-equivalent range (`3.0`) and total attack equal to `1.5 * guard strength`. Once aggroed by an attack/capture, the whole neutral group attacks.
+- Neutral guards are represented as a stationary centered group with Ranger-equivalent range (`3.0`) and total attack equal to `2 * guard strength`. Once aggroed by an attack/capture, the whole neutral group attacks.
 - Current neutral aggro is intent-based: `CAPTURE`/`ATTACK` starts neutral aggro immediately, while `TRANSIT` does not. Future damage-triggered aggro is tracked in `docs/SPRINT_2_TRAINING_PREP.md`.
 - TEAM_A cores are placed on the left side of the combat line, TEAM_B cores on the right side. Cores have high attack range.
 - Core stats are `80hp`, `6 atk`, and high attack range (`12.0`).
 - A destroyed core becomes permanently `NEUTRAL` and cannot be captured again. Units standing in a destroyed core are tracked as `visiting_units` by their real player; they must never be merged into `node.units` under the neutral core owner.
-- Death Time starts at tick `270`: all living cores take fixed damage each tick through tick `299`, leaving a full-health core at `1hp`. At tick `300`, final lethal damage resolves the match by the number of own cores that survived until the final hit, then total core HP/damage tie-breakers. Draw is reserved for games with no non-death-time core damage.
+- Death Time starts at tick `270`: all living cores take integer scheduled damage each tick through tick `299`, with the per-tick damage distributed so a full-health core is left at exactly `1hp`. At tick `300`, final lethal damage resolves the match by the number of own cores that survived until the final hit, then total core HP/damage tie-breakers. Draw is reserved for games with no non-death-time core damage.
 - Combat approach movement uses unit speed. Speed `1.0` crosses the full combat line in `TRAVEL_TIME` world ticks; faster/slower units scale from that baseline. Attack cadence and damage are not accelerated.
 - Route movement speed is based on the slowest unit in the moving group. Edge travel, empty node crossing, source exit, and final node entry all scale from that same speed.
 - A source node exit or final node entry costs half of a full node crossing. Passing through an intermediate node costs one full node crossing.

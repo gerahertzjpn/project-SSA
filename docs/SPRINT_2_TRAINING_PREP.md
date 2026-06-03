@@ -76,8 +76,10 @@ Pre-training balance pass before the next large run:
 
 - core stats are `80hp`, `6 atk`, range `12.0`;
 - neutral Lord stats are `120hp`, `16 atk`, attack rate `3`, range `11.0`;
-- neutral guard total attack is `1.5 * guard strength`;
+- neutral guard total attack is `2 * guard strength`;
 - neutral point income is scaled from guard strength: `1..7 -> 1,1,2,2,3,3,4`.
+- death-time core damage is integer-scheduled across ticks `270..299` so a
+  full-health core reaches exactly `1hp` before the final tick-300 lethal hit.
 
 This ruleset supersedes earlier Sprint 3 checkpoints. Any new large run should
 start from fresh checkpoints unless the checkpoint metadata and notes explicitly

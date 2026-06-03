@@ -155,7 +155,7 @@ def rules_meta() -> dict:
         "baron_hp": BARON_HP,
         "baron_atk": BARON_ATK,
         "baron_attack_rate": BARON_ATTACK_RATE,
-        "neutral_guard_total_atk": "1.5 * guard_strength",
+        "neutral_guard_total_atk": "2 * guard_strength",
         "neutral_income": "ceil(guard_strength / 2)",
         "lord_attack_range": LORD_ATTACK_RANGE,
         "core_attack_range": CORE_ATTACK_RANGE,

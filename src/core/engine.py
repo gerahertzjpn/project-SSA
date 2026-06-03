@@ -20,7 +20,7 @@ from typing import Optional
 from .constants import (
     ActionType, UnitType, TICK_LIMIT, TRAVEL_TIME, EDGE_COLLISION_THRESHOLD,
     MAX_COMBAT_TICKS, TEAM_A_PLAYERS, TEAM_B_PLAYERS, CORE_HP,
-    DEATH_TIME_START_TICK, DEATH_TIME_CORE_DAMAGE_PER_TICK,
+    DEATH_TIME_START_TICK, death_time_core_damage_for_tick,
 )
 from .state import GameState, MovingGroup, NodeState, Battle, get_enemy_team, get_team
 from .map import ADJACENCY, NODE_TYPES, NodeType
@@ -1503,7 +1503,7 @@ class GameEngine:
             if not player.alive or player.core_hp <= 0:
                 continue
             before = float(player.core_hp)
-            player.core_hp = max(0.0, before - DEATH_TIME_CORE_DAMAGE_PER_TICK)
+            player.core_hp = max(0.0, before - death_time_core_damage_for_tick(self.state.tick))
             damage = before - player.core_hp
             if damage <= 0:
                 continue

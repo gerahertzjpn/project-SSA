@@ -13,7 +13,8 @@ game rules.
 
 Current pre-training balance pass is documented in `docs/BALANCE_AUDIT.md`.
 The active ruleset for the next large run uses core `80hp/6 atk`, neutral guard
-damage `1.5 * strength`, and neutral income `ceil(strength / 2)`.
+damage `2 * strength`, integer death-time core damage, and neutral income
+`ceil(strength / 2)`.
 
 ## Non-Negotiables
 

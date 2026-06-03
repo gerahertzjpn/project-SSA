@@ -41,7 +41,18 @@ UNIT_COST = {
 CORE_HP = 80
 CORE_ATK = 6
 DEATH_TIME_START_TICK = 270
-DEATH_TIME_CORE_DAMAGE_PER_TICK = (CORE_HP - 1) / (TICK_LIMIT - DEATH_TIME_START_TICK)
+DEATH_TIME_DAMAGE_TICKS = TICK_LIMIT - DEATH_TIME_START_TICK
+DEATH_TIME_CORE_DAMAGE_TOTAL = max(0, CORE_HP - 1)
+
+
+def death_time_core_damage_for_tick(tick: int) -> int:
+    if tick < DEATH_TIME_START_TICK or tick >= TICK_LIMIT:
+        return 0
+    elapsed = int(tick) - DEATH_TIME_START_TICK + 1
+    previous_elapsed = elapsed - 1
+    current_total = DEATH_TIME_CORE_DAMAGE_TOTAL * elapsed // DEATH_TIME_DAMAGE_TICKS
+    previous_total = DEATH_TIME_CORE_DAMAGE_TOTAL * previous_elapsed // DEATH_TIME_DAMAGE_TICKS
+    return max(0, current_total - previous_total)
 
 TRAVEL_TIME = 3  # world ticks per edge; enables mid-edge collision checks
 EDGE_COLLISION_THRESHOLD = 0.05
