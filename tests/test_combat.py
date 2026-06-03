@@ -254,6 +254,32 @@ def test_fast_opposing_units_stop_at_range_instead_of_crossing_mid_tick():
     assert any(item["attacks"] for item in next_frame)
 
 
+def test_simultaneous_attack_targeting_is_independent_of_processing_side(monkeypatch):
+    monkeypatch.setitem(UNIT_STATS[UnitType.VANGUARD], "hp", 22)
+    monkeypatch.setitem(UNIT_STATS[UnitType.VANGUARD], "atk", 5)
+    monkeypatch.setitem(UNIT_STATS[UnitType.VANGUARD], "speed", 1.0)
+    monkeypatch.setitem(UNIT_STATS[UnitType.RANGER], "hp", 1)
+    monkeypatch.setitem(UNIT_STATS[UnitType.RANGER], "atk", 1)
+    monkeypatch.setitem(UNIT_STATS[UnitType.RANGER], "speed", 1.0)
+
+    rangers_left, _, _, _ = resolve_combat(
+        attacker_units={UnitType.RANGER.value: 10},
+        attacker_team="A1",
+        defender_units={UnitType.VANGUARD.value: 16},
+        defender_team="B1",
+        record_trace=False,
+    )
+    vanguards_left, _, _, _ = resolve_combat(
+        attacker_units={UnitType.VANGUARD.value: 16},
+        attacker_team="A1",
+        defender_units={UnitType.RANGER.value: 10},
+        defender_team="B1",
+        record_trace=False,
+    )
+
+    assert set(rangers_left) == set(vanguards_left)
+
+
 @pytest.mark.parametrize(
     ("left_units", "right_units"),
     [

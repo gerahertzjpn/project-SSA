@@ -45,6 +45,7 @@ NEUTRAL_RANGE = float(UNIT_STATS[UnitType.RANGER]["range"])
 LORD_RANGE = LORD_ATTACK_RANGE
 CORE_RANGE = CORE_ATTACK_RANGE
 LORD_CONTACT_RANGE = 0.5
+RANGE_EPSILON = 1e-5
 
 _SLOT_ORDER = {
     UnitType.VANGUARD.value: 0,
@@ -207,7 +208,7 @@ def _find_target(
         if e.hp - pending.get(e.uid, 0.0) <= 0:
             continue
         dist = abs(_unit_pos(unit, positions) - _unit_pos(e, positions))
-        if dist <= unit.range and dist < best_dist:
+        if dist <= unit.range + RANGE_EPSILON and dist < best_dist:
             best_dist = dist
             best = e
     return best
@@ -246,7 +247,7 @@ def _next_position_toward_target(
     unit_pos = _unit_pos(unit, positions)
     target_pos = _unit_pos(target, positions)
     dist = abs(target_pos - unit_pos)
-    if dist <= unit.range:
+    if dist <= unit.range + RANGE_EPSILON:
         return unit.pos
     direction = 1.0 if target_pos > unit_pos else -1.0
     step = min(COMBAT_MOVE_SPEED * unit.speed, max(0.0, dist - unit.range))
@@ -336,7 +337,7 @@ def _find_allied_lord_target(
         if other.hp - pending.get(other.uid, 0.0) <= 0:
             continue
         dist = abs(_unit_pos(unit, positions) - _unit_pos(other, positions))
-        if in_range_only and dist > unit.range:
+        if in_range_only and dist > unit.range + RANGE_EPSILON:
             continue
         if dist < best_dist:
             best_dist = dist
@@ -438,7 +439,7 @@ def _find_persistent_target(
         if other.hp - pending.get(other.uid, 0.0) <= 0:
             continue
         dist = abs(_unit_pos(unit, positions) - _unit_pos(other, positions))
-        if in_range_only and dist > unit.range:
+        if in_range_only and dist > unit.range + RANGE_EPSILON:
             continue
         if dist < best_dist:
             best_dist = dist
@@ -585,12 +586,14 @@ def tick_battle_units(
             unit.pos = planned_positions[unit.uid]
 
     pending: dict[int, float] = {}
+    targeting_pending: dict[str, dict[int, float]] = {}
     damage_log: dict[int, float] = {}
     target_log: dict[int, int] = {}
     attack_log: dict[int, list[tuple[int, float]]] = {}
     alive = [u for u in units if u.is_alive()]
 
     for unit in alive:
+        unit_targeting_pending = targeting_pending.setdefault(_combat_side(unit.team), {})
         for _ in range(_attack_rate(unit)):
             if _is_allied_lord(unit):
                 target = _find_allied_lord_target(
@@ -598,7 +601,7 @@ def tick_battle_units(
                     alive,
                     neutral_aggro_teams=neutral_aggro_teams,
                     in_range_only=True,
-                    pending=pending,
+                    pending=unit_targeting_pending,
                 )
             elif unit.uid in attack_ready:
                 target = _find_persistent_target(
@@ -606,13 +609,14 @@ def tick_battle_units(
                     alive,
                     neutral_aggro_teams=neutral_aggro_teams,
                     in_range_only=True,
-                    pending=pending,
+                    pending=unit_targeting_pending,
                 )
             else:
                 target = None
             if target is None:
                 break
             _queue_attack(unit, target, pending, damage_log, target_log, attack_log)
+            unit_targeting_pending[target.uid] = unit_targeting_pending.get(target.uid, 0.0) + unit.atk
 
     for unit in units:
         if unit.uid in pending:
@@ -739,33 +743,38 @@ def _run_combat(
                 u.pos = planned_positions[u.uid]
 
         pending: dict[int, float] = {}
+        targeting_pending: dict[str, dict[int, float]] = {}
         damage_log: dict[int, float] = {}
         target_log: dict[int, int] = {}
         attack_log: dict[int, list[tuple[int, float]]] = {}
 
         for u in alive_atk:
+            unit_targeting_pending = targeting_pending.setdefault(_combat_side(u.team), {})
             for _ in range(_attack_rate(u)):
                 if _is_allied_lord(u):
-                    t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=pending)
+                    t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=unit_targeting_pending)
                 elif u.uid in attack_ready_atk:
-                    t = _find_target(u, alive_def, pending=pending)
+                    t = _find_target(u, alive_def, pending=unit_targeting_pending)
                 else:
                     t = None
                 if not t:
                     break
                 _queue_attack(u, t, pending, damage_log, target_log, attack_log)
+                unit_targeting_pending[t.uid] = unit_targeting_pending.get(t.uid, 0.0) + u.atk
 
         for u in alive_def:
+            unit_targeting_pending = targeting_pending.setdefault(_combat_side(u.team), {})
             for _ in range(_attack_rate(u)):
                 if _is_allied_lord(u):
-                    t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=pending)
+                    t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=unit_targeting_pending)
                 elif u.uid in attack_ready_def:
-                    t = _find_target(u, alive_atk, pending=pending)
+                    t = _find_target(u, alive_atk, pending=unit_targeting_pending)
                 else:
                     t = None
                 if not t:
                     break
                 _queue_attack(u, t, pending, damage_log, target_log, attack_log)
+                unit_targeting_pending[t.uid] = unit_targeting_pending.get(t.uid, 0.0) + u.atk
 
         for unit in all_units:
             if unit.uid in pending:
