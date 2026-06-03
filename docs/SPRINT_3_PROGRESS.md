@@ -282,6 +282,11 @@ Early resumed eval checkpoints:
 | 70 | `100%` | `0%` | `0%` | `58%` | `42%` | First perfect 50-episode argmax eval. |
 | 80 | `98%` | `2%` | `0%` | `68%` | `30%` | More normal wins; shorter games. |
 | 100 | `100%` | `0%` | `0%` | `76%` | `24%` | Best visible finish profile so far. |
+| 110 | `84%` | `12%` | `4%` | `54%` | `30%` | Dip; reinforces need for sweep-based selection. |
+| 120 | `98%` | `2%` | `0%` | `74%` | `24%` | Strong, close to update 100. |
+| 130 | `98%` | `2%` | `0%` | `68%` | `30%` | Strong but worse finish profile than 100/120. |
+| 140 | `98%` | `2%` | `0%` | `82%` | `16%` | Best normal-win profile so far. |
+| 150 | `96%` | `4%` | `0%` | `58%` | `38%` | Regression in finish profile. |
 
 Current interpretation:
 
@@ -291,6 +296,8 @@ Current interpretation:
   checkpoint; update `40` is already a good example of why.
 - Update `100` is the best current candidate by argmax eval because it combines
   perfect win-rate with fewer death-time wins and shorter mean episode length.
+- Update `140` is also a serious candidate because its normal-win share is
+  higher than update `100`, despite a slightly lower raw win-rate.
 - A1 argmax has become heavily concentrated on `PRODUCE:SKIRMISHER`; this must
   be checked in stochastic eval and multi-seed sweeps before accepting the
   checkpoint for league use.
