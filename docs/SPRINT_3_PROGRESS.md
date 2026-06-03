@@ -294,6 +294,8 @@ Early resumed eval checkpoints:
 | 200 | `94%` | `6%` | `0%` | `72%` | `22%` | Better finish profile than 190 but lower raw win. |
 | 210 | `96%` | `4%` | `0%` | `76%` | `20%` | Solid, not top. |
 | 220 | `100%` | `0%` | `0%` | `90%` | `10%` | Best candidate so far by win and finish profile. |
+| 230 | `100%` | `0%` | `0%` | `78%` | `22%` | Perfect raw win-rate, worse finish profile than 220. |
+| 240 | `100%` | `0%` | `0%` | `98%` | `2%` | New best visible candidate; much faster games. |
 
 Current interpretation:
 
@@ -307,6 +309,8 @@ Current interpretation:
   higher than update `100`, despite a slightly lower raw win-rate.
 - Update `220` is now the strongest visible candidate: perfect argmax win-rate,
   high normal-win share, low death-time share, and shorter games.
+- Update `240` supersedes update `220` in the single seed-block view: it keeps
+  perfect argmax win-rate and almost eliminates death-time wins.
 - A1 argmax has become heavily concentrated on `PRODUCE:SKIRMISHER`; this must
   be checked in stochastic eval and multi-seed sweeps before accepting the
   checkpoint for league use.
