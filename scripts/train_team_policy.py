@@ -21,6 +21,7 @@ from src.training.team_ppo_trainer import (
     append_jsonl,
     collect_team_rollouts,
     evaluate_random_legal_team,
+    evaluate_random_legal_team_parallel,
     evaluate_team_policies,
     latest_metrics,
     load_single_policy_into_team,
@@ -193,10 +194,11 @@ def main() -> None:
     })
 
     if start_update == 1 and args.random_baseline_episodes > 0:
-        random_eval = evaluate_random_legal_team(
+        random_eval = evaluate_random_legal_team_parallel(
             config,
             episodes=args.random_baseline_episodes,
             seed=config.seed + 900_000_000,
+            workers=config.workers,
         )
         item = {
             "kind": "random_legal_team_baseline_eval",

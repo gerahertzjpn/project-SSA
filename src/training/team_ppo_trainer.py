@@ -484,6 +484,105 @@ def evaluate_random_legal_team(config: TeamPPOConfig, episodes: int, seed: int) 
     return summary
 
 
+def _random_legal_team_worker(request: dict) -> dict:
+    np.random.seed(int(request["worker_seed"]))
+    config = TeamPPOConfig(**request["config"])
+    rng = np.random.default_rng(int(request["worker_seed"]))
+    episode_summaries = []
+    actions_by_player = {player_id: [] for player_id in config.controlled_players}
+    masks_by_player = {player_id: [] for player_id in config.controlled_players}
+
+    for env_seed in request["env_seeds"]:
+        env = TeamTrainingEnv(_env_config(config, int(env_seed)))
+        _, _ = env.reset(seed=int(env_seed))
+        done = False
+        return_sums = {player_id: 0.0 for player_id in config.controlled_players}
+        shaping_sums = {player_id: 0.0 for player_id in config.controlled_players}
+        terminal_sums = {player_id: 0.0 for player_id in config.controlled_players}
+        steps = 0
+
+        while not done:
+            masks = env.action_masks()
+            selected_actions = {}
+            for player_id, mask in masks.items():
+                legal = np.flatnonzero(mask)
+                action = int(rng.choice(legal)) if len(legal) else 0
+                selected_actions[player_id] = action
+                actions_by_player[player_id].append(action)
+                masks_by_player[player_id].append(mask)
+            result = env.step(selected_actions)
+            for player_id in config.controlled_players:
+                reward_components = result.info.get("reward_components", {}).get(player_id, {}) or {}
+                return_sums[player_id] += float(result.rewards[player_id])
+                shaping_sums[player_id] += float(reward_components.get("shaping", 0.0) or 0.0)
+                terminal_sums[player_id] += float(reward_components.get("terminal", 0.0) or 0.0)
+            steps += 1
+            done = bool(result.terminal or result.truncated)
+
+        episode_summaries.append(_team_episode_summary(
+            return_sums=return_sums,
+            shaping_sums=shaping_sums,
+            terminal_sums=terminal_sums,
+            steps=steps,
+            winner=result.info.get("winner") or "DRAW",
+            winner_type=result.info.get("winner_type") or "unknown",
+            controlled_team=env.controlled_team,
+        ))
+
+    return {
+        "episodes": episode_summaries,
+        "actions_by_player": actions_by_player,
+        "masks_by_player": masks_by_player,
+    }
+
+
+def evaluate_random_legal_team_parallel(
+    config: TeamPPOConfig,
+    episodes: int,
+    seed: int,
+    workers: int,
+) -> dict:
+    if episodes <= 0:
+        return evaluate_random_legal_team(config, episodes=0, seed=seed)
+    if workers <= 1 or episodes <= 1:
+        return evaluate_random_legal_team(config, episodes=episodes, seed=seed)
+
+    env_seeds = [int(seed + index) for index in range(episodes)]
+    chunk_count = max(1, min(int(workers), len(env_seeds)))
+    chunks = [env_seeds[index::chunk_count] for index in range(chunk_count)]
+    requests = [
+        {
+            "config": asdict(config),
+            "env_seeds": chunk,
+            "worker_seed": int(seed + worker_index * 9973),
+        }
+        for worker_index, chunk in enumerate(chunks)
+    ]
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=chunk_count) as pool:
+        results = pool.map(_random_legal_team_worker, requests)
+
+    episode_summaries = []
+    actions_by_player = {player_id: [] for player_id in config.controlled_players}
+    masks_by_player = {player_id: [] for player_id in config.controlled_players}
+    for result in results:
+        episode_summaries.extend(result["episodes"])
+        for player_id in config.controlled_players:
+            actions_by_player[player_id].extend(result["actions_by_player"][player_id])
+            masks_by_player[player_id].extend(result["masks_by_player"][player_id])
+
+    summary = summarize_training_episodes(episode_summaries)
+    summary["mode"] = "random_legal_team"
+    summary["agents"] = {
+        player_id: {
+            "action_distribution": summarize_action_distribution(actions_by_player[player_id], masks_by_player[player_id]),
+        }
+        for player_id in config.controlled_players
+    }
+    summary["episodes_detail"] = episode_summaries
+    return summary
+
+
 def evaluate_scripted_control_team(config: TeamPPOConfig, episodes: int, seed: int) -> dict:
     from src.core.runner import run_match
 

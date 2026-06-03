@@ -134,3 +134,41 @@ Result:
 Decision:
 
 - Safe to start the first real Sprint 3 team training run from a fixed commit.
+
+## 4. Baseline Performance Fix
+
+First real run attempt:
+
+```powershell
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_scripted_warm_v1 --overwrite --updates 300 --workers 16 --rollout-steps 512 --eval-episodes 50 --eval-interval 10 --checkpoint-interval 10 --random-baseline-episodes 50 --ally-init training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt --opponent-bot scripted --seed 20260603 --torch-threads 1
+```
+
+Observation:
+
+- The process started correctly from clean commit `6d4e8a2`, but the initial
+  random-legal baseline produced no output for several minutes.
+- Root cause: team random-legal baseline in `train_team_policy.py` was
+  sequential, unlike rollout collection and checkpoint eval.
+
+Fix:
+
+- Added `evaluate_random_legal_team_parallel(...)`.
+- `train_team_policy.py` now uses the parallel baseline path.
+
+Verification:
+
+```powershell
+python -m py_compile src/training/team_ppo_trainer.py scripts/train_team_policy.py
+python -m pytest tests/test_team_ppo_trainer.py -q
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_baseline_smoke --overwrite --updates 0 --workers 4 --rollout-steps 32 --eval-episodes 2 --random-baseline-episodes 4 --ally-init training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt --opponent-bot scripted --seed 20260603 --torch-threads 1
+```
+
+Results:
+
+- `tests/test_team_ppo_trainer.py`: `5 passed`
+- Baseline smoke completed and wrote
+  `training_runs/sprint3_team_baseline_smoke/metrics.jsonl`
+
+Decision:
+
+- Restart the real run after committing this performance fix.
