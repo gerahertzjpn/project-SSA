@@ -247,7 +247,7 @@ def test_fast_opposing_units_stop_at_range_instead_of_crossing_mid_tick():
 
     assert skirmisher.pos < vanguard.pos
     assert vanguard.pos - skirmisher.pos <= skirmisher.range + 1e-5
-    assert all(not item["attacks"] for item in frame)
+    assert any(item["attacks"] for item in frame)
 
     next_frame = tick_battle_units([skirmisher, vanguard], record_trace=True)
 
@@ -363,6 +363,44 @@ def test_regular_unit_moves_without_attacking_when_target_starts_out_of_range():
     assert ranger.pos > ATTACKER_SIDE
     assert target.hp == before_hp
     assert ranger_frame["attacks"] == []
+
+
+def test_melee_unit_can_attack_after_closing_distance():
+    skirmisher = build_player_units({UnitType.SKIRMISHER.value: 1}, "A1", "attacker")[0]
+    target = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
+    target.pos = skirmisher.pos + skirmisher.range + 1.0
+    target.speed = 0.0
+    target.range = 0.0
+    before_pos = skirmisher.pos
+    before_hp = target.hp
+
+    frame = tick_battle_units([skirmisher, target], record_trace=True)
+    skirmisher_frame = next(item for item in frame if item["uid"] == skirmisher.uid)
+
+    assert skirmisher.pos > before_pos
+    assert target.hp < before_hp
+    assert len(skirmisher_frame["attacks"]) == 1
+
+
+def test_melee_unit_attacks_instead_of_moving_when_target_starts_in_range():
+    vanguard = build_player_units({UnitType.VANGUARD.value: 1}, "A1", "attacker")[0]
+    close_target = build_player_units({UnitType.SKIRMISHER.value: 1}, "B1", "defender")[0]
+    far_target = build_player_units({UnitType.SKIRMISHER.value: 1}, "B2", "defender")[0]
+    close_target.pos = vanguard.pos + vanguard.range - 0.1
+    close_target.speed = 0.0
+    close_target.range = 0.0
+    far_target.pos = vanguard.pos + vanguard.range + 3.0
+    far_target.speed = 0.0
+    far_target.range = 0.0
+    before_pos = vanguard.pos
+    before_hp = close_target.hp
+
+    frame = tick_battle_units([vanguard, close_target, far_target], record_trace=True)
+    vanguard_frame = next(item for item in frame if item["uid"] == vanguard.uid)
+
+    assert vanguard.pos == before_pos
+    assert close_target.hp < before_hp
+    assert vanguard_frame["target"] == close_target.uid
 
 
 def test_regular_unit_stops_and_attacks_when_target_starts_in_range():

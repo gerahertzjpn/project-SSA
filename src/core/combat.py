@@ -451,6 +451,10 @@ def _attack_rate(unit: UnitInstance) -> int:
     return max(1, int(getattr(unit, "attack_rate", 1) or 1))
 
 
+def _can_attack_after_moving(unit: UnitInstance) -> bool:
+    return unit.unit_type in (UnitType.VANGUARD.value, UnitType.SKIRMISHER.value)
+
+
 def _queue_attack(
     unit: UnitInstance,
     target: UnitInstance,
@@ -603,7 +607,7 @@ def tick_battle_units(
                     in_range_only=True,
                     pending=unit_targeting_pending,
                 )
-            elif unit.uid in attack_ready:
+            elif unit.uid in attack_ready or _can_attack_after_moving(unit):
                 target = _find_persistent_target(
                     unit,
                     alive,
@@ -753,7 +757,7 @@ def _run_combat(
             for _ in range(_attack_rate(u)):
                 if _is_allied_lord(u):
                     t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=unit_targeting_pending)
-                elif u.uid in attack_ready_atk:
+                elif u.uid in attack_ready_atk or _can_attack_after_moving(u):
                     t = _find_target(u, alive_def, pending=unit_targeting_pending)
                 else:
                     t = None
@@ -767,7 +771,7 @@ def _run_combat(
             for _ in range(_attack_rate(u)):
                 if _is_allied_lord(u):
                     t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=unit_targeting_pending)
-                elif u.uid in attack_ready_def:
+                elif u.uid in attack_ready_def or _can_attack_after_moving(u):
                     t = _find_target(u, alive_atk, pending=unit_targeting_pending)
                 else:
                     t = None
