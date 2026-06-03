@@ -253,6 +253,47 @@ def _next_position_toward_target(
     return unit_pos + direction * step
 
 
+def _clamp_next_position_to_moving_target(
+    unit: UnitInstance,
+    target: Optional[UnitInstance],
+    start_positions: dict[int, float],
+    raw_positions: dict[int, float],
+    desired_range: Optional[float] = None,
+) -> float:
+    raw_unit_pos = float(raw_positions.get(unit.uid, unit.pos))
+    if target is None:
+        return raw_unit_pos
+
+    start_unit_pos = _unit_pos(unit, start_positions)
+    start_target_pos = _unit_pos(target, start_positions)
+    raw_target_pos = float(raw_positions.get(target.uid, start_target_pos))
+    direction = 1.0 if start_target_pos >= start_unit_pos else -1.0
+    attack_range = max(0.0, float(unit.range if desired_range is None else desired_range))
+    start_gap = (start_target_pos - start_unit_pos) * direction
+
+    if start_gap <= attack_range:
+        return start_unit_pos
+
+    end_gap = (raw_target_pos - raw_unit_pos) * direction
+    if end_gap > attack_range:
+        return raw_unit_pos
+
+    lo = 0.0
+    hi = 1.0
+    unit_delta = raw_unit_pos - start_unit_pos
+    target_delta = raw_target_pos - start_target_pos
+    for _ in range(24):
+        mid = (lo + hi) / 2.0
+        unit_pos = start_unit_pos + unit_delta * mid
+        target_pos = start_target_pos + target_delta * mid
+        gap = (target_pos - unit_pos) * direction
+        if gap <= attack_range:
+            hi = mid
+        else:
+            lo = mid
+    return start_unit_pos + unit_delta * hi
+
+
 def _move_toward_target(unit: UnitInstance, target: Optional[UnitInstance]) -> None:
     unit.pos = _next_position_toward_target(unit, target)
 
@@ -498,6 +539,7 @@ def tick_battle_units(
 
     start_positions = {unit.uid: unit.pos for unit in alive}
     planned_positions: dict[int, float] = {}
+    planned_targets: dict[int, Optional[UnitInstance]] = {}
     for unit in alive:
         if unit.speed <= 0:
             continue
@@ -520,10 +562,22 @@ def tick_battle_units(
         )
         if target is None:
             continue
+        planned_targets[unit.uid] = target
         planned_positions[unit.uid] = _next_position_toward_target(
             unit,
             target,
             positions=start_positions,
+        )
+
+    raw_positions = dict(planned_positions)
+    for unit in alive:
+        if unit.uid not in planned_positions:
+            continue
+        planned_positions[unit.uid] = _clamp_next_position_to_moving_target(
+            unit,
+            planned_targets.get(unit.uid),
+            start_positions,
+            raw_positions,
         )
 
     for unit in alive:
@@ -639,6 +693,7 @@ def _run_combat(
 
         start_positions = {u.uid: u.pos for u in alive_atk + alive_def}
         planned_positions: dict[int, float] = {}
+        planned_targets: dict[int, Optional[UnitInstance]] = {}
         for u in alive_atk:
             if _is_allied_lord(u):
                 planned_positions[u.uid] = _next_allied_lord_forward_position(
@@ -647,9 +702,11 @@ def _run_combat(
                     positions=start_positions,
                 )
             elif u.uid not in attack_ready_atk:
+                target = _nearest_target(u, alive_def, positions=start_positions)
+                planned_targets[u.uid] = target
                 planned_positions[u.uid] = _next_position_toward_target(
                     u,
-                    _nearest_target(u, alive_def, positions=start_positions),
+                    target,
                     positions=start_positions,
                 )
         for u in alive_def:
@@ -660,11 +717,23 @@ def _run_combat(
                     positions=start_positions,
                 )
             elif u.uid not in attack_ready_def:
+                target = _nearest_target(u, alive_atk, positions=start_positions)
+                planned_targets[u.uid] = target
                 planned_positions[u.uid] = _next_position_toward_target(
                     u,
-                    _nearest_target(u, alive_atk, positions=start_positions),
+                    target,
                     positions=start_positions,
                 )
+        raw_positions = dict(planned_positions)
+        for u in alive_atk + alive_def:
+            if u.uid not in planned_positions:
+                continue
+            planned_positions[u.uid] = _clamp_next_position_to_moving_target(
+                u,
+                planned_targets.get(u.uid),
+                start_positions,
+                raw_positions,
+            )
         for u in alive_atk + alive_def:
             if u.uid in planned_positions:
                 u.pos = planned_positions[u.uid]

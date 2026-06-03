@@ -42,14 +42,17 @@ Open issue after compact deployment fix:
 - Direct scenario `10 Skirmisher` entering from the left versus `10 Ranger`
   entering from the right currently ends with `9 Ranger` surviving.
 - `14 Skirmisher` (`42` resources) versus `10 Ranger` (`40` resources) still
-  loses, leaving roughly `7-8 Ranger`.
+  loses, leaving roughly `9 Ranger`.
 - `20 Skirmisher` (`60` resources) versus `10 Ranger` (`40` resources) also
-  loses, leaving roughly `3 Ranger`.
+  loses, leaving roughly `8 Ranger`.
+- `15 Vanguard` (`45` resources) versus `10 Ranger` (`40` resources) loses,
+  leaving roughly `9 Ranger`.
 - This result was measured after fixing compact combat deployment, where large
-  armies no longer spawn stretched through the whole `0..20` combat line. It
-  means the previous Skirmisher-over-Ranger result was contaminated by a
-  formation bug, and Ranger is again the main balance suspect before a large
-  training run.
+  armies no longer spawn stretched through the whole `0..20` combat line, and
+  after adding anti-crossing movement clamps so fast units cannot pass through
+  each other within one combat tick. It means the previous Skirmisher-over-Ranger
+  result was contaminated by movement/formation bugs, and Ranger is again the
+  main balance suspect before a large training run.
 
 Core:
 
@@ -97,6 +100,10 @@ Match stats after rebalance:
 - Combat deployments are compact: player units spawn inside a bounded side
   deployment band, and replay rows expose separate `sim_pos` and visual-only
   `render_pos`.
+- Combat movement is clamped against the moving target path: if a unit reaches
+  its attack range during a tick, it stops there instead of passing through the
+  target. It still cannot attack until the next combat tick if it started the
+  tick out of range.
 - Neutral Lord: `120hp`, `16 atk`, attack rate `3`, range `11.0`.
 - Neutral guards: `2hp` each.
 - Neutral guard total attack: `2 * guard_strength`.

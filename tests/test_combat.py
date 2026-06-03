@@ -235,6 +235,25 @@ def test_large_skirmisher_army_does_not_hit_rangers_on_spawn_tick():
     assert sum(unit.is_alive() for unit in units if unit.team == "B1") == 10
 
 
+def test_fast_opposing_units_stop_at_range_instead_of_crossing_mid_tick():
+    skirmisher = build_player_units({UnitType.SKIRMISHER.value: 1}, "A1", "attacker")[0]
+    vanguard = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
+    skirmisher.pos = ATTACKER_SIDE
+    vanguard.pos = DEFENDER_SIDE
+    skirmisher.speed = 2.3
+    vanguard.speed = 1.4
+
+    frame = tick_battle_units([skirmisher, vanguard], record_trace=True)
+
+    assert skirmisher.pos < vanguard.pos
+    assert vanguard.pos - skirmisher.pos <= skirmisher.range + 1e-5
+    assert all(not item["attacks"] for item in frame)
+
+    next_frame = tick_battle_units([skirmisher, vanguard], record_trace=True)
+
+    assert any(item["attacks"] for item in next_frame)
+
+
 @pytest.mark.parametrize(
     ("left_units", "right_units"),
     [
