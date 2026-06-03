@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.core.constants import ActionType, UnitType
+from src.core.constants import ActionType, CORE_HP, UnitType
 from src.core.combat import build_player_units
 from src.core.engine import GameEngine
 from src.core.state import Battle, MovingGroup, make_initial_state
@@ -192,7 +192,7 @@ def test_training_observation_exposes_per_core_hp_and_death_time_clock():
     b1_core_hp_offset = GLOBAL_FEATURES + ALL_NODES.index("B1") * NODE_FEATURES + 21
 
     assert vector[3] == 1.0
-    assert vector[b1_core_hp_offset] == np.float32(17.0 / 50.0)
+    assert vector[b1_core_hp_offset] == np.float32(17.0 / float(CORE_HP))
 
 
 def node_offset(node_id: str) -> int:

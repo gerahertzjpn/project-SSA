@@ -98,7 +98,7 @@ def _unit_type_enum(unit_type_val: str) -> UnitType:
 def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
     if neutral_hp <= 0:
         return []
-    total_atk = float(neutral_hp // 2 + 1 + neutral_hp // 4)
+    total_atk = max(1.0, float(neutral_hp) * 1.5)
     per_unit_atk = total_atk / neutral_hp
     return [
         UnitInstance(

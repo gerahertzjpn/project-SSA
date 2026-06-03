@@ -16,7 +16,7 @@ class NodeState:
     owner: str              # 'NEUTRAL' | player_id
     units: dict             # {UnitType.value: count}
     neutral_hp: int         # remaining neutral guards (0 = cleared)
-    neutral_income: int     # income per tick when captured (= original neutral strength)
+    neutral_income: int     # income per tick when captured (scaled from original neutral strength)
     neutral_aggro_teams: set[str] = field(default_factory=set)
     visiting_units: dict = field(default_factory=dict)  # player_id -> {UnitType.value: count}
     unit_ready_tick: dict = field(default_factory=dict)  # player_id -> first tick units may move again
@@ -149,7 +149,7 @@ def make_initial_state(seed: int = 42) -> GameState:
             owner="NEUTRAL",
             units={},
             neutral_hp=strength,
-            neutral_income=strength,
+            neutral_income=_neutral_income(strength),
         )
 
     nodes["Baron"] = NodeState(
@@ -207,6 +207,10 @@ def _roll_neutrals(rng) -> dict:
         "CP3": cp3,
         "CP4": cp4,
     }
+
+
+def _neutral_income(strength: int) -> int:
+    return max(1, (int(strength) + 1) // 2)
 
 
 def get_team(player_id: str) -> str:

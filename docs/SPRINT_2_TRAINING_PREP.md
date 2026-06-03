@@ -70,6 +70,19 @@ Future design candidate:
 This is intentionally **not changed now**. If we change it later, it is a
 simulation-rule change and old training checkpoints should be considered stale.
 
+## Current Balance Baseline
+
+Pre-training balance pass before the next large run:
+
+- core stats are `80hp`, `6 atk`, range `12.0`;
+- neutral Lord stats are `120hp`, `16 atk`, attack rate `3`, range `11.0`;
+- neutral guard total attack is `1.5 * guard strength`;
+- neutral point income is scaled from guard strength: `1..7 -> 1,1,2,2,3,3,4`.
+
+This ruleset supersedes earlier Sprint 3 checkpoints. Any new large run should
+start from fresh checkpoints unless the checkpoint metadata and notes explicitly
+say it was trained after this balance pass.
+
 ## Action Space
 
 Fixed discrete action space:

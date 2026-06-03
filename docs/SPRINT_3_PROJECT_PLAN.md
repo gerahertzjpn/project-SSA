@@ -11,6 +11,10 @@ Sprint 3 goal: move from one controlled player (`A1`) to three controlled
 teammates (`A1`, `A2`, `A3`) that learn coordinated 3v3 play under the current
 game rules.
 
+Current pre-training balance pass is documented in `docs/BALANCE_AUDIT.md`.
+The active ruleset for the next large run uses core `80hp/6 atk`, neutral guard
+damage `1.5 * strength`, and neutral income `ceil(strength / 2)`.
+
 ## Non-Negotiables
 
 - Do not treat reward alone as learning. Track real win-rate separately.

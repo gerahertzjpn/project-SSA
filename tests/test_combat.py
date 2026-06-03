@@ -198,7 +198,7 @@ def test_neutrals_are_centered_stationary_group_with_ranger_range():
     assert {unit.pos for unit in neutrals} == {CENTER_SIDE}
     assert {unit.speed for unit in neutrals} == {0.0}
     assert {unit.range for unit in neutrals} == {UNIT_STATS[UnitType.RANGER]["range"]}
-    assert sum(unit.atk for unit in neutrals) == 4.0
+    assert sum(unit.atk for unit in neutrals) == 7.5
 
 
 def test_cores_are_on_team_side_with_high_range():
