@@ -230,6 +230,7 @@ def main() -> None:
                     seed=config.seed + update * 50_000,
                     deterministic=True,
                     workers=config.workers,
+                    pool=pool,
                 )
 
             elapsed = time.perf_counter() - started

@@ -214,3 +214,42 @@ Decision:
 - Resume the real run from
   `training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt`
   (checkpoint update 10).
+
+## 6. Eval Pool Reuse Fix
+
+Observation during resumed real run:
+
+- Update 20 eval completed in `64.495s`, much faster than the old `344.577s`.
+- Update 20 argmax eval over 50 episodes:
+  - `84%` win
+  - `14%` loss
+  - `2%` draw
+  - `48%` normal wins
+  - `36%` death-time wins
+  - invalid action rate `0.0`
+- But Windows reported multiple `[WinError 1455]` pagefile errors while spawning
+  a second eval process pool on top of the already-live rollout pool.
+
+Fix:
+
+- `evaluate_team_policies_parallel(...)` now accepts an existing multiprocessing
+  pool.
+- `train_team_policy.py` passes the live rollout pool into eval, avoiding a
+  second wave of torch/CUDA process imports.
+
+Verification:
+
+```powershell
+python -m py_compile src/training/team_ppo_trainer.py scripts/train_team_policy.py
+python -m pytest tests/test_team_ppo_trainer.py -q
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_pool_reuse_smoke --overwrite --updates 1 --workers 4 --rollout-steps 32 --eval-episodes 4 --eval-interval 1 --checkpoint-interval 1 --random-baseline-episodes 0 --ally-init training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt --opponent-bot scripted --seed 20260603 --torch-threads 1
+```
+
+Results:
+
+- `tests/test_team_ppo_trainer.py`: `5 passed`
+- Pool reuse smoke completed without pagefile errors.
+
+Decision:
+
+- Resume the real run from checkpoint update 20.

@@ -508,6 +508,7 @@ def evaluate_team_policies_parallel(
     seed: int,
     deterministic: bool,
     workers: int,
+    pool: Optional[mp.pool.Pool] = None,
 ) -> dict:
     if episodes <= 0:
         return evaluate_team_policies(
@@ -547,9 +548,12 @@ def evaluate_team_policies_parallel(
         }
         for worker_index, chunk in enumerate(chunks)
     ]
-    ctx = mp.get_context("spawn")
-    with ctx.Pool(processes=chunk_count) as pool:
+    if pool is not None:
         results = pool.map(_team_policy_eval_worker, requests)
+    else:
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=chunk_count) as eval_pool:
+            results = eval_pool.map(_team_policy_eval_worker, requests)
 
     episode_summaries = []
     actions_by_player = {player_id: [] for player_id in config.controlled_players}
