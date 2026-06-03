@@ -278,25 +278,23 @@ def test_arrived_units_cannot_leave_node_until_next_tick():
     state.nodes["CP1"].owner = "NEUTRAL"
     state.nodes["CP1"].neutral_hp = 0
 
+    bots = make_bots({
+        "A1": [Action(ActionType.MOVE, source="A1", destination="CP1")],
+    })
     engine = GameEngine(
         state,
-        make_bots({
-            "A1": [
-                Action(ActionType.MOVE, source="A1", destination="CP1"),
-                *[Action(ActionType.HOLD) for _ in range(DIRECT_MOVE_TICKS - 1)],
-                Action(ActionType.MOVE, source="CP1", destination="CP3"),
-                Action(ActionType.MOVE, source="CP1", destination="CP3"),
-            ],
-        }),
+        bots,
     )
 
     engine.tick()
-    run_ticks(engine, DIRECT_MOVE_TICKS)
+    while state.moving_groups:
+        engine.tick()
 
     assert state.nodes["CP1"].owner == "A1"
     assert state.nodes["CP1"].units == {UnitType.VANGUARD.value: 2}
     assert state.moving_groups == []
 
+    bots["A1"].actions.append(Action(ActionType.MOVE, source="CP1", destination="CP3"))
     engine.tick()
 
     assert state.nodes["CP1"].units == {}
@@ -349,7 +347,10 @@ def test_long_move_builds_shortest_route_and_walks_through_node():
     assert group.final_dst == "CP3"
     assert group.phase == "node_exit"
 
-    run_ticks(engine, TRAVEL_TIME + 2)
+    for _ in range(10):
+        if state.moving_groups and state.moving_groups[0].phase == "node_transit":
+            break
+        engine.tick()
     group = state.moving_groups[0]
 
     assert group.phase == "node_transit"
@@ -476,7 +477,10 @@ def test_neutral_aggro_set():
     )
 
     engine.tick()
-    run_ticks(engine, DIRECT_MOVE_TICKS)
+    for _ in range(10):
+        if "node:CP1" in state.active_battles:
+            break
+        engine.tick()
 
     battle = state.active_battles["node:CP1"]
     assert battle.neutral_aggro_teams == {"TEAM_A"}

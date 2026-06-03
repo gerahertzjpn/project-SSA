@@ -13,10 +13,10 @@ from .constants import (
 # skirmishers close quickly and kill rangers, vanguards absorb skirmisher hits.
 UNIT_STATS: dict[UnitType, dict] = {
     UnitType.VANGUARD: {
-        "hp": 13,
+        "hp": 15,
         "atk": 2,
         "range": 1.0,
-        "speed": 1.0,  # positions per combat tick
+        "speed": 1.5,  # positions per combat tick
         "slot": "front",
         "base_pos": 3.2,  # starting position offset from own side
     },
