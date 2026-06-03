@@ -52,7 +52,7 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
                 pytest.skip(f"Playwright Chromium is not installed: {exc}")
 
             page = browser.new_page(viewport={"width": 1280, "height": 800})
-            page.goto(f"http://127.0.0.1:{port}/", wait_until="networkidle")
+            page.goto(f"http://127.0.0.1:{port}/viewer/index.html", wait_until="domcontentloaded")
             page.click("#loadSampleBtn")
             page.wait_for_function("document.querySelector('#replayMeta').textContent.includes('schema')")
             page.click('[data-tab="state"]')
@@ -106,7 +106,7 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
                         ).length,
                         nodeId,
                         nodeStackHidden: nodeId ? !document.querySelector(`.node[data-node-id="${nodeId}"] .stack`) : true,
-                        nodeTextHidden: nodeId ? !document.querySelector(`.node[data-node-id="${nodeId}"]`).textContent.trim() : true
+                        nodeLabelHidden: nodeId ? !document.querySelector(`.node[data-node-id="${nodeId}"] .node-label`)?.textContent.trim() : true
                     };
                 }"""
             )
@@ -119,6 +119,8 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
                     routes: document.querySelectorAll('.route').length,
                     stateCards: document.querySelectorAll('.state-node-card').length,
                     forceCards: document.querySelectorAll('.state-force-card').length,
+                    mapForces: document.querySelectorAll('.map-force').length,
+                    tunnelPaths: document.querySelectorAll('.edge-path.tunnel').length,
                     coreHpBars: document.querySelectorAll('.state-hp.core').length,
                     lordHpBars: document.querySelectorAll('.state-hp.lord').length,
                     activeTab: document.querySelector('.panel-tab.active')?.dataset.tab,
@@ -151,6 +153,8 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
         sample = pixels[::step]
 
         assert counts["nodes"] == 13
+        assert counts["mapForces"] > 0
+        assert counts["tunnelPaths"] == 12
         assert counts["stateCards"] > 0
         assert counts["forceCards"] > 0
         assert filter_check["afterNone"] == 0
@@ -168,7 +172,7 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
             assert lord_check["markers"] >= 1
             assert lord_check["routeDots"] == lord_check["nonLordEdgeGroups"]
             assert lord_check["nodeStackHidden"]
-            assert lord_check["nodeTextHidden"]
+            assert lord_check["nodeLabelHidden"]
         assert len(screenshot) > 50_000
         assert len(set(sample)) > 50
         assert sum(1 for red, green, blue in sample if red + green + blue > 90) > 1000

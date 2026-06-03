@@ -26,6 +26,33 @@ const EDGES = [
   ["CP5", "Baron"], ["CP6", "Baron"],
 ];
 
+const TUNNEL_EDGES = new Set([
+  "A1|CP1", "A1|CP2",
+  "A2|CP1", "A2|CP2",
+  "A3|CP1", "A3|CP2",
+  "B1|CP5", "B1|CP6",
+  "B2|CP5", "B2|CP6",
+  "B3|CP5", "B3|CP6",
+]);
+const NODE_FORCE_SLOTS = [
+  [0, -86], [94, -58], [108, 0], [94, 58],
+  [0, 86], [-94, 58], [-108, 0], [-94, -58],
+  [0, -118], [126, -76], [140, 0], [126, 76],
+  [0, 118], [-126, 76], [-140, 0], [-126, -76],
+];
+const CORE_FORCE_SLOTS_A = [
+  [94, -50], [104, 0], [94, 50], [42, -84],
+  [42, 84], [134, -78], [144, 78], [0, -96],
+];
+const CORE_FORCE_SLOTS_B = CORE_FORCE_SLOTS_A.map(([x, y]) => [-x, y]);
+const BARON_FORCE_SLOTS = [
+  [0, -98], [108, -54], [108, 54], [0, 98],
+  [-108, 54], [-108, -54], [142, 0], [-142, 0],
+];
+const MAP_EVENT_OFFSETS = [[0, -92], [76, -78], [-76, -78], [0, 92], [76, 78], [-76, 78]];
+const ROUTE_LANE_GAP = 18;
+const MAP_EVENT_LOOKBACK = 3;
+
 const CORE_NODES = new Set(["A1", "A2", "A3", "B1", "B2", "B3"]);
 const CP_NODES = new Set(["CP1", "CP2", "CP3", "CP4", "CP5", "CP6"]);
 const NODE_IDS = Object.keys(NODE_POSITIONS);
@@ -66,9 +93,11 @@ const els = {
   arena: document.getElementById("arena"),
   edgeLayer: document.getElementById("edgeLayer"),
   nodeLayer: document.getElementById("nodeLayer"),
+  mapForceLayer: document.getElementById("mapForceLayer"),
   routeLayer: document.getElementById("routeLayer"),
   battleLayer: document.getElementById("battleLayer"),
   lordLayer: document.getElementById("lordLayer"),
+  mapEventLayer: document.getElementById("mapEventLayer"),
   replayMeta: document.getElementById("replayMeta"),
   sampleSelect: document.getElementById("sampleSelect"),
   loadSampleBtn: document.getElementById("loadSampleBtn"),
@@ -465,15 +494,23 @@ function setGeneratorStatus(text, kind = "") {
 function drawEdges() {
   els.edgeLayer.innerHTML = "";
   for (const [src, dst] of EDGES) {
-    const [x1, y1] = NODE_POSITIONS[src];
-    const [x2, y2] = NODE_POSITIONS[dst];
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", x1);
-    line.setAttribute("y1", y1);
-    line.setAttribute("x2", x2);
-    line.setAttribute("y2", y2);
-    els.edgeLayer.appendChild(line);
+    const isTunnel = isTunnelEdge(src, dst);
+    appendEdgeLine(src, dst, `edge-foundation ${isTunnel ? "tunnel" : ""}`);
+    appendEdgeLine(src, dst, `edge-path ${isTunnel ? "tunnel" : ""}`);
   }
+}
+
+function appendEdgeLine(src, dst, className) {
+  const [x1, y1] = NODE_POSITIONS[src];
+  const [x2, y2] = NODE_POSITIONS[dst];
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", x1);
+  line.setAttribute("y1", y1);
+  line.setAttribute("x2", x2);
+  line.setAttribute("y2", y2);
+  line.setAttribute("class", className);
+  line.dataset.edge = edgeKey(src, dst);
+  els.edgeLayer.appendChild(line);
 }
 
 async function loadSampleReplay() {
@@ -608,6 +645,8 @@ function renderEmpty() {
   els.tickNow.textContent = "0";
   els.tickMax.textContent = "0";
   renderNodes(null);
+  renderMapForces(null);
+  renderMapEvents(null);
   renderLordOverlay([]);
 }
 
@@ -620,9 +659,11 @@ function renderTick(alpha = 0) {
   els.tickSlider.value = String(state.tick);
 
   renderNodes(tick, lordNodeIds);
+  renderMapForces(tick);
   renderRoutes(tick, nextTick, alpha);
-  renderBattles(tick);
+  renderBattles(tick, nextTick, alpha);
   renderLordOverlay(lordMarkers);
+  renderMapEvents(tick);
   renderDiagnostics(tick);
   renderPlayers(tick);
   renderStatePanel(tick, nextTick, alpha);
@@ -686,39 +727,150 @@ function renderNodes(tick, lordNodeIds = new Set()) {
     node.style.top = `${scaleY(y)}px`;
     node.dataset.nodeId = id;
     node.title = nodeTitle(id, nodeState);
-    node.textContent = lordNodeIds.has(id) ? "" : displayNodeLabel(id);
-
-    const total = nodeDisplayTotal(nodeState, tick, id);
-    if (total > 0 && !lordNodeIds.has(id)) {
-      const stack = document.createElement("span");
-      stack.className = "stack";
-      stack.textContent = String(total);
-      node.appendChild(stack);
-    }
-
-    if (CP_NODES.has(id) && Number(nodeState.neutral_hp || 0) > 0) {
-      const neutral = document.createElement("span");
-      neutral.className = "neutral-hp";
-      neutral.textContent = String(nodeState.neutral_hp);
-      node.appendChild(neutral);
-    }
+    node.innerHTML = mapNodeMarkup(id, nodeState, tick, lordNodeIds.has(id));
 
     els.nodeLayer.appendChild(node);
   }
+}
+
+function mapNodeMarkup(id, nodeState = {}, tick = {}, lordOccupied = false) {
+  const owner = nodeState.owner || "NEUTRAL";
+  const total = nodeDisplayTotal(nodeState, tick, id);
+  const neutralHp = Number(nodeState.neutral_hp || 0);
+  const coreBar = CORE_NODES.has(id) ? mapHpBar(
+    nodeCoreHp(id, nodeState, tick),
+    CORE_MAX_HP,
+    "core hp",
+    "core",
+  ) : "";
+  const neutralBadge = CP_NODES.has(id) && neutralHp > 0
+    ? `<span class="neutral-hp">N${formatNumber(neutralHp)}</span>`
+    : "";
+  const label = lordOccupied ? "" : displayNodeLabel(id);
+  const ownerLabel = owner === "NEUTRAL" ? "N" : owner;
+  const totalBadge = total > 0 && !lordOccupied ? `<span class="stack">${formatNumber(total)}</span>` : "";
+
+  return `
+    <span class="node-label">${label}</span>
+    <span class="node-owner">${ownerLabel}</span>
+    ${coreBar}
+    ${neutralBadge}
+    ${totalBadge}
+  `;
+}
+
+function renderMapForces(tick) {
+  els.mapForceLayer.innerHTML = "";
+  if (!tick) {
+    return;
+  }
+
+  for (const nodeId of NODE_IDS) {
+    const forces = mapForcesAtNode(nodeId, tick);
+    forces.forEach((force, index) => {
+      const pos = nodeForcePosition(nodeId, index);
+      if (!pos) {
+        return;
+      }
+
+      const marker = document.createElement("div");
+      marker.className = [
+        "map-force",
+        formationTeamClass(force.owner),
+        force.role || "",
+        force.units && hasLordUnit(force.units) ? "lord" : "",
+      ].filter(Boolean).join(" ");
+      marker.style.left = `${pos[0]}px`;
+      marker.style.top = `${pos[1]}px`;
+      marker.title = `${displayForceLabel(force.owner)} | ${force.status} | ${unitText(force.units)}`;
+      marker.innerHTML = `
+        <strong>${displayForceLabel(force.owner)}</strong>
+        <span>${unitText(force.units)}</span>
+        <small>${force.status}</small>
+      `;
+      els.mapForceLayer.appendChild(marker);
+    });
+  }
+}
+
+function mapForcesAtNode(nodeId, tick = {}) {
+  const node = tick.nodes?.[nodeId] || {};
+  const forces = [];
+  const inside = (tick.moving_groups || []).filter((group) => movementNodeId(group) === nodeId);
+  const battle = (tick.active_battles || []).find((item) => item.location_kind === "node" && item.location_id === nodeId);
+  const alliedLord = alliedLordBattleInfo(battle);
+
+  if (unitTotal(node.units) > 0) {
+    forces.push({
+      owner: node.owner || "NEUTRAL",
+      units: node.units,
+      status: "holding",
+      role: "holding",
+    });
+  }
+
+  for (const [player, units] of Object.entries(node.visiting_units || {})) {
+    if (unitTotal(units) > 0) {
+      forces.push({
+        owner: player,
+        units,
+        status: "waiting",
+        role: "visitor",
+      });
+    }
+  }
+
+  for (const group of inside) {
+    forces.push({
+      owner: group.player,
+      units: group.units,
+      status: `${phaseLabel(group.phase)} ${Math.round(Number(group.progress || 0) * 100)}%`,
+      role: "moving-inside",
+    });
+  }
+
+  if (Number(node.neutral_hp || 0) > 0) {
+    const aggro = (node.neutral_aggro_teams || []).length ? "aggro" : "passive";
+    forces.push({
+      owner: "NEUTRAL",
+      units: { NEUTRAL: node.neutral_hp },
+      status: aggro,
+      role: "neutral",
+    });
+  }
+
+  if (nodeId === "Baron" && Number(tick.baron?.hp || 0) > 0) {
+    forces.push({
+      owner: "LORD",
+      units: { LORD: 1 },
+      status: `${formatNumber(tick.baron.hp)}hp`,
+      role: "boss",
+    });
+  }
+
+  if (alliedLord) {
+    forces.push({
+      owner: alliedLord.owner,
+      units: { LORD: 1 },
+      status: `battle ${formatNumber(alliedLord.hp)}hp`,
+      role: "lord",
+    });
+  }
+
+  return forces.slice(0, NODE_FORCE_SLOTS.length);
 }
 
 function renderRoutes(tick, nextTick, alpha) {
   els.routeLayer.innerHTML = "";
   const nextGroups = [...(nextTick?.moving_groups || [])];
   const used = new Set();
+  const edgeGroups = (tick?.moving_groups || []).filter((group) => (
+    isEdgeMovement(group) && !hasLordUnit(group.units)
+  ));
+  const edgeTotals = edgeGroupTotals(edgeGroups);
+  const edgeIndexes = new Map();
 
-  for (const group of tick?.moving_groups || []) {
-    if (!isEdgeMovement(group)) {
-      continue;
-    }
-    if (hasLordUnit(group.units)) {
-      continue;
-    }
+  for (const group of edgeGroups) {
     const nextGroup = findNextGroup(group, nextGroups, used);
     const nextProgress = sameMovementSegment(group, nextGroup) ? nextGroup.progress : 1;
     const progress = interpolateValue(
@@ -726,15 +878,22 @@ function renderRoutes(tick, nextTick, alpha) {
       Number(nextProgress ?? 0),
       alpha,
     );
-    const pos = movingGroupPosition(group, progress);
+    const key = edgeKey(group.src, group.dst);
+    const laneIndex = edgeIndexes.get(key) || 0;
+    edgeIndexes.set(key, laneIndex + 1);
+    const pos = movingGroupPosition(group, progress, laneIndex, edgeTotals.get(key) || 1);
     if (!pos) {
       continue;
     }
     const marker = document.createElement("div");
-    marker.className = `route ${teamClass(group.player)}`;
+    marker.className = `route route-squad ${teamClass(group.player)} ${String(group.intent || "").toLowerCase()}`;
     marker.style.left = `${pos[0]}px`;
     marker.style.top = `${pos[1]}px`;
-    marker.title = `${group.player}: ${routeText(group)} (${phaseLabel(group.phase)})`;
+    marker.title = `${group.player}: ${routeText(group)} (${phaseLabel(group.phase)}) | ${unitText(group.units)}`;
+    marker.innerHTML = `
+      <strong>${group.player}</strong>
+      <span>${unitText(group.units)}</span>
+    `;
     els.routeLayer.appendChild(marker);
   }
 }
@@ -762,21 +921,200 @@ function renderLordOverlay(markers = []) {
   }
 }
 
-function renderBattles(tick) {
+function renderBattles(tick, nextTick, alpha = 0) {
   els.battleLayer.innerHTML = "";
-  for (const battle of tick?.active_battles || []) {
-    const pos = battlePosition(battle);
+  for (const [index, battle] of (tick?.active_battles || []).entries()) {
+    const pos = battleCardPosition(battle, index);
     if (!pos) {
       continue;
     }
     const marker = document.createElement("div");
-    marker.className = `battle-marker ${battle.location_kind === "edge" ? "edge" : ""}`;
+    const battleEvent = battleTickEvent(tick, battle);
+    const nextBattle = (nextTick?.active_battles || []).find((item) => item.battle_id === battle.battle_id);
+    marker.className = [
+      "battle-marker",
+      "map-battle-card",
+      battle.location_kind === "edge" ? "edge" : "",
+      battle.location_id === "Baron" ? "lord-fight" : "",
+    ].filter(Boolean).join(" ");
     marker.style.left = `${pos[0]}px`;
     marker.style.top = `${pos[1]}px`;
-    marker.textContent = battle.location_kind === "edge" ? "edge" : "node";
     marker.title = `${battle.battle_id} | ${battle.participants.join(", ")}`;
+    marker.innerHTML = mapBattleMarkup(battle, nextBattle, alpha, battleEvent);
     els.battleLayer.appendChild(marker);
   }
+}
+
+function mapBattleMarkup(battle, nextBattle, alpha, battleEvent = null) {
+  const attacks = battleEvent?.summary?.attacks || [];
+  const deaths = battleEvent?.summary?.deaths || {};
+  const location = displayLocation(battle.location_id);
+  return `
+    <div class="map-battle-head">
+      <strong>${battle.location_kind === "edge" ? "EDGE FIGHT" : location === "Lord" ? "LORD FIGHT" : "FIGHT"}</strong>
+      <span>${location}</span>
+    </div>
+    <div class="map-battle-sides">${mapBattleSides(battle.sides)}</div>
+    ${mapAttackLines(attacks)}
+    ${mapDeathLine(deaths)}
+    ${mapMiniFormation(battle.formation || [], nextBattle?.formation || [], alpha)}
+  `;
+}
+
+function mapBattleSides(sides = {}) {
+  const entries = Object.entries(sides || {});
+  if (!entries.length) {
+    return `<span class="muted">empty</span>`;
+  }
+
+  return entries.slice(0, 4).map(([side, info]) => `
+    <span class="map-battle-side ${formationTeamClass(side)}">
+      <b>${displayForceLabel(side)}</b>
+      <em>${unitText(info.units)}</em>
+      <i>${formatNumber(info.hp || 0)}hp</i>
+    </span>
+  `).join("");
+}
+
+function mapAttackLines(attacks = []) {
+  if (!attacks.length) {
+    return `<div class="map-battle-note">closing / out of range</div>`;
+  }
+
+  return `
+    <div class="map-battle-note">
+      ${attacks.slice(0, 2).map((attack) => (
+        `${attack[3]} ${displayUnitCode(attack[4])} -> ${attack[5]} ${displayUnitCode(attack[6])} ${formatNumber(attack[2])}`
+      )).join(" | ")}
+      ${attacks.length > 2 ? ` | +${attacks.length - 2}` : ""}
+    </div>
+  `;
+}
+
+function mapDeathLine(deaths = {}) {
+  const rows = Object.entries(deaths || {}).flatMap(([team, units]) => (
+    orderedUnitEntries(units).map(([type, count]) => `${team} -${unitCode(type)}${count}`)
+  ));
+  return rows.length ? `<div class="map-battle-deaths">${rows.slice(0, 3).join(" | ")}</div>` : "";
+}
+
+function mapMiniFormation(formation = [], nextFormation = [], alpha = 0) {
+  const stacks = formationStacks(interpolateFormation(formation, nextFormation, alpha)).slice(0, 8);
+  if (!stacks.length) {
+    return "";
+  }
+
+  const bounds = formationBounds(stacks);
+  return `
+    <div class="map-mini-formation">
+      ${stacks.map((stack) => {
+        const x = formationX(stack.pos, bounds);
+        const sideClass = formationTeamClass(stack.team);
+        return `<span class="${sideClass}" style="left:${x}%;" title="${stack.team} ${stack.type} x${stack.count}">${stack.type}${stack.count}</span>`;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderMapEvents(tick) {
+  els.mapEventLayer.innerHTML = "";
+  if (!state.replay || !tick) {
+    return;
+  }
+
+  const events = recentMapEvents(state.tick);
+  const perLocation = new Map();
+  for (const item of events) {
+    const pos = mapEventPosition(item.event);
+    if (!pos) {
+      continue;
+    }
+    const key = item.event.location_id || item.event.node || item.event.dst || item.event.src || "map";
+    const count = perLocation.get(key) || 0;
+    perLocation.set(key, count + 1);
+
+    const offset = MAP_EVENT_OFFSETS[count % MAP_EVENT_OFFSETS.length];
+    const marker = document.createElement("div");
+    marker.className = `map-event ${eventTeamClass(item.event)} ${item.ago > 0 ? "old" : ""}`;
+    marker.style.left = `${pos[0] + offset[0]}px`;
+    marker.style.top = `${pos[1] + offset[1]}px`;
+    marker.title = mapEventTitle(item.event);
+    marker.textContent = mapEventLabel(item.event);
+    els.mapEventLayer.appendChild(marker);
+  }
+}
+
+function recentMapEvents(tickIndex) {
+  const result = [];
+  const from = Math.max(0, tickIndex - MAP_EVENT_LOOKBACK);
+
+  for (let index = tickIndex; index >= from; index -= 1) {
+    const tick = state.replay?.ticks[index];
+    for (const event of [...(tick?.events || [])].reverse()) {
+      if (!isMapEvent(event)) {
+        continue;
+      }
+      result.push({ event, ago: tickIndex - index });
+    }
+  }
+
+  return result.slice(0, 10);
+}
+
+function isMapEvent(event = {}) {
+  if (event.type === "BATTLE_RESOLVED" || event.type === "CAPTURE") {
+    return true;
+  }
+  if (event.type === "BATTLE_STARTED" && (event.location_id === "Baron" || event.location_kind === "edge")) {
+    return true;
+  }
+  if (event.type === "BATTLE_TICK") {
+    return Boolean(Object.keys(event.summary?.deaths || {}).length);
+  }
+  return false;
+}
+
+function mapEventPosition(event = {}) {
+  if (event.location_kind === "edge" && event.location_id) {
+    const [src, dst] = String(event.location_id).split("|");
+    return interpolate(src, dst, Number(event.edge_position ?? 0.5));
+  }
+  const nodeId = event.location_id || event.node || event.dst || event.src;
+  return scalePoint(NODE_POSITIONS[nodeId]);
+}
+
+function mapEventLabel(event = {}) {
+  if (event.type === "BATTLE_RESOLVED") {
+    if (event.core_destroyed) {
+      return `core down ${event.winner || ""}`.trim();
+    }
+    if (event.baron_killed) {
+      return event.lord_spawned ? `lord -> ${event.winner || "?"}` : "lord down";
+    }
+    return `win ${event.winner || "?"}`;
+  }
+  if (event.type === "CAPTURE") {
+    return `${event.player || "?"} captured`;
+  }
+  if (event.type === "BATTLE_STARTED") {
+    return event.location_kind === "edge" ? "edge fight" : "lord fight";
+  }
+  if (event.type === "BATTLE_TICK") {
+    const deaths = Object.entries(event.summary?.deaths || {}).flatMap(([team, units]) => (
+      orderedUnitEntries(units).map(([type, count]) => `${team} -${unitCode(type)}${count}`)
+    ));
+    return deaths.slice(0, 2).join(" ");
+  }
+  return event.type || "event";
+}
+
+function mapEventTitle(event = {}) {
+  const location = displayLocation(event.location_id || event.node || event.dst || event.src || "");
+  return `${event.type || "event"} | ${location}`;
+}
+
+function eventTeamClass(event = {}) {
+  return teamClass(event.winner || event.player || event.core_owner || "");
 }
 
 function renderPlayers(tick) {
@@ -1286,6 +1624,27 @@ function battlePosition(battle) {
   return interpolate(src, dst, Number(battle.edge_position ?? 0.5));
 }
 
+function battleCardPosition(battle, index = 0) {
+  const base = battlePosition(battle);
+  if (!base) {
+    return null;
+  }
+
+  const arenaWidth = Math.max(1, els.arena.clientWidth);
+  const arenaHeight = Math.max(1, els.arena.clientHeight);
+  const vertical = battle.location_kind === "edge"
+    ? -58
+    : (base[1] < arenaHeight * 0.34 ? 78 : -78);
+  const horizontal = ((index % 3) - 1) * 42;
+  return clampMapPoint(
+    [base[0] + horizontal, base[1] + vertical],
+    90,
+    arenaWidth - 90,
+    64,
+    arenaHeight - 64,
+  );
+}
+
 function alliedLordMarkers(tick, nextTick, alpha = 0) {
   if (!tick) {
     return [];
@@ -1429,11 +1788,11 @@ function interpolate(src, dst, progress) {
   ];
 }
 
-function movingGroupPosition(group, progress) {
+function movingGroupPosition(group, progress, laneIndex = 0, laneTotal = 1) {
   if (!isEdgeMovement(group)) {
     return null;
   }
-  return interpolate(group.src, group.dst, progress);
+  return edgeOffsetPosition(group.src, group.dst, progress, laneIndex, laneTotal);
 }
 
 function nodePhasePoint(nodeId, src, dst, phase, progress) {
@@ -1480,6 +1839,94 @@ function directionFromNode(nodeId, otherId) {
   const dy = other[1] - node[1];
   const length = Math.max(1, Math.hypot(dx, dy));
   return [dx / length, dy / length];
+}
+
+function edgeOffsetPosition(src, dst, progress, laneIndex = 0, laneTotal = 1) {
+  const base = interpolate(src, dst, progress);
+  const a = scalePoint(NODE_POSITIONS[src]);
+  const b = scalePoint(NODE_POSITIONS[dst]);
+  if (!base || !a || !b) {
+    return base;
+  }
+
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const laneOffset = (Number(laneIndex) - (Math.max(1, Number(laneTotal)) - 1) / 2) * ROUTE_LANE_GAP;
+  return [
+    base[0] + (-dy / length) * laneOffset,
+    base[1] + (dx / length) * laneOffset,
+  ];
+}
+
+function edgeGroupTotals(groups = []) {
+  const totals = new Map();
+  for (const group of groups) {
+    const key = edgeKey(group.src, group.dst);
+    totals.set(key, (totals.get(key) || 0) + 1);
+  }
+  return totals;
+}
+
+function nodeForcePosition(nodeId, slotIndex = 0) {
+  const base = scalePoint(NODE_POSITIONS[nodeId]);
+  if (!base) {
+    return null;
+  }
+  const slots = nodeForceSlots(nodeId);
+  const slot = slots[slotIndex % slots.length];
+  return clampMapPoint(
+    [base[0] + slot[0], base[1] + slot[1]],
+    42,
+    Math.max(42, els.arena.clientWidth - 42),
+    24,
+    Math.max(24, els.arena.clientHeight - 24),
+  );
+}
+
+function nodeForceSlots(nodeId) {
+  if (nodeId === "Baron") {
+    return BARON_FORCE_SLOTS;
+  }
+  if (CORE_NODES.has(nodeId)) {
+    return String(nodeId).startsWith("A") ? CORE_FORCE_SLOTS_A : CORE_FORCE_SLOTS_B;
+  }
+  return NODE_FORCE_SLOTS;
+}
+
+function clampMapPoint(point, minX, maxX, minY, maxY) {
+  return [
+    Math.max(minX, Math.min(maxX, point[0])),
+    Math.max(minY, Math.min(maxY, point[1])),
+  ];
+}
+
+function edgeKey(src, dst) {
+  return [src, dst].sort().join("|");
+}
+
+function isTunnelEdge(src, dst) {
+  return TUNNEL_EDGES.has(edgeKey(src, dst));
+}
+
+function nodeCoreHp(nodeId, node = {}, tick = {}) {
+  const nodeHp = Number(node.core_hp);
+  const playerHp = Number(tick.players?.[nodeId]?.core_hp);
+  if (Number.isFinite(nodeHp)) {
+    return nodeHp;
+  }
+  return Number.isFinite(playerHp) ? playerHp : 0;
+}
+
+function mapHpBar(current, max, label, kind = "") {
+  const hp = Math.max(0, Number(current) || 0);
+  const maxHp = Math.max(1, Number(max) || 1);
+  const pct = Math.max(0, Math.min(100, (hp / maxHp) * 100));
+  return `
+    <span class="map-hp ${kind}" title="${label}: ${formatNumber(hp)}/${formatNumber(maxHp)}">
+      <span style="width:${pct}%;"></span>
+    </span>
+  `;
 }
 
 function scalePoint(point) {

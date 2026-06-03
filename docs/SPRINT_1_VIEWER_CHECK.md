@@ -6,7 +6,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 
 ## Replay schema used
 
-- `schema_version`: `0.5.0`
+- `schema_version`: `0.5.1`
 - `combat_trace_format`: `compact_v3`
 - sample path: `replays_viewer_debug_smoke/replay_0.json`
 - active battle formation rows are `[uid, team, unit_code, hp, max_hp, pos, range]`
@@ -23,19 +23,20 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 
 ## Visual mapping
 
-- `nodes[*].owner` controls node color: A players are red, B players are blue, neutral nodes are grey.
-- `nodes[*].units`, `nodes[*].visiting_units`, and moving groups currently inside a node phase are shown as stack counts on nodes.
+- The center panel is a map-first replay UI: nodes are rendered as rooms, edges are rendered as corridors, and core-to-CP1/CP2/CP5/CP6 passages are rendered as heavier tunnel corridors.
+- `nodes[*].owner` controls room color: A players are red, B players are blue, neutral nodes are grey/gold.
+- `nodes[*].units`, `nodes[*].visiting_units`, neutral guards, Lord guards, and moving groups currently inside a node phase are shown as separate force cards around the room, with fixed slots to avoid marker stacking.
 - `nodes[*].unit_ready_tick` marks units that arrived/resolved this tick and cannot leave that node until the next tick.
 - `nodes[*].unit_entry_side` records the last 1D combat side (`attacker`/left or `defender`/right) used by stationed units for each player.
 - `nodes[*].neutral_hp` is shown on control points as a small neutral guard badge.
-- `moving_groups` are shown as route dots only while they are on an `edge` phase. During `node_exit`, `node_transit`, or `node_enter`, the group is visually counted inside that node instead of being drawn on the graph edge.
+- `moving_groups` are shown as labeled route squad cards only while they are on an `edge` phase. Multiple squads on the same edge are offset into parallel lanes. During `node_exit`, `node_transit`, or `node_enter`, the group is visually counted inside that node instead of being drawn on the edge.
 - `moving_groups[*].path` is the full planned route, while `src`/`dst` describe the current phase endpoints.
-- `active_battles[*].location_kind == "node"` is shown on the node.
-- `active_battles[*].location_kind == "edge"` is shown on the edge midpoint/position.
+- `active_battles[*].location_kind == "node"` is shown as an in-map battle card near the node.
+- `active_battles[*].location_kind == "edge"` is shown as an in-map battle card near the edge midpoint/position.
 - `active_battles[*].formation` is shown as a compact 1D combat line inside each battle card.
 - `BATTLE_TICK.summary.attacks` is shown as colored attack links plus a short attack log; ranged attacks are dashed.
 - Recently resolved battles remain visible for a short replay lookback as faded cards, using the last active formation snapshot plus the final `BATTLE_TICK.summary`.
-- `events` are shown in the tick event list; `BATTLE_TICK.summary` is used instead of raw per-unit frames.
+- `events` are shown in the tick event list; important recent map events such as captures, core deaths, Lord resolution, edge-battle starts, and unit deaths are also shown as short-lived map callouts.
 - player alive/resources are shown from `players`.
 - Lord state is visible through the central legacy `Baron` node owner and replay event list.
 - Core HP is persistent and exposed as `nodes[*].core_hp` for core nodes and `players[*].core_hp`.

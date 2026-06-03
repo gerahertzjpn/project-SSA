@@ -16,7 +16,9 @@ def test_viewer_assets_exist_and_are_wired():
     assert 'id="sampleSelect"' in index
     assert 'id="diagnosticsGrid"' in index
     assert 'preserveAspectRatio="none"' in index
+    assert 'id="mapForceLayer"' in index
     assert 'id="lordLayer"' in index
+    assert 'id="mapEventLayer"' in index
     assert 'role="tablist"' in index
     assert 'data-tab="battles"' in index
     assert 'data-tab="generate"' in index
@@ -55,6 +57,11 @@ def test_viewer_loads_compact_replay_schema():
     assert "forceStatus" in script
     assert "movingGroupCard" in script
     assert "movingGroupPosition" in script
+    assert "renderMapForces" in script
+    assert "mapForcesAtNode" in script
+    assert "renderMapEvents" in script
+    assert "TUNNEL_EDGES" in script
+    assert "battleCardPosition" in script
     assert "movementSignature" in script
     assert "pathSignature" in script
     assert "started" in script
@@ -88,9 +95,15 @@ def test_viewer_layout_has_arena_layers():
 
     assert ".arena" in styles
     assert "#nodeLayer" in styles
+    assert "#mapForceLayer" in styles
     assert "#routeLayer" in styles
     assert "#battleLayer" in styles
     assert "#lordLayer" in styles
+    assert "#mapEventLayer" in styles
+    assert ".edge-path.tunnel" in styles
+    assert ".map-force" in styles
+    assert ".map-battle-card" in styles
+    assert ".map-event" in styles
     assert ".lord-marker" in styles
     assert ".formation" in styles
     assert ".formation-stack" in styles
