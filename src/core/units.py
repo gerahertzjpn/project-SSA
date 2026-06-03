@@ -29,7 +29,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "base_pos": 10,
     },
     UnitType.SKIRMISHER: {
-        "hp": 5,
+        "hp": 6,
         "atk": 3,
         "range": 1.5,
         "speed": 1.5,

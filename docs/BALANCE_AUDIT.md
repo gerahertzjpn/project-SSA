@@ -40,13 +40,16 @@ Ranger:
 Open issue:
 
 - Direct scenario `10 Skirmisher` entering from the left versus `10 Ranger`
-  entering from the right currently ends with `9 Ranger` surviving.
+  entering from the right currently ends with `8 Ranger` surviving after
+  raising Skirmisher HP to `6`.
 - Reversing sides gives the same Ranger-favored result.
-- Skirmishers only win the checked pure-army case when the formation is much
-  larger, e.g. `20 Skirmisher` versus `10 Ranger`.
-- This means the intended Skirmisher-over-Ranger counter is not reliable under
-  the current 1D formation/range rules and should be fixed before a large run if
-  Ranger-heavy policies reappear.
+- `10 Skirmisher` costs `30` resources while `10 Ranger` costs `40`; the
+  near-equal-cost pure-army check `14 Skirmisher` versus `10 Ranger` ends with
+  `3 Skirmisher` surviving.
+- This means Skirmishers can answer Rangers by budget, but the intended
+  Skirmisher-over-Ranger counter is still not reliable by equal headcount under
+  the current 1D formation/range rules and should be watched before a large run
+  if Ranger-heavy policies reappear.
 
 Core:
 
@@ -90,6 +93,7 @@ Match stats after rebalance:
 ## Applied ruleset
 
 - Core: `80hp`, `6 atk`, range `12.0`.
+- Skirmisher: `6hp`, `3 atk`, range `1.5`, speed `1.5`.
 - Neutral Lord: `120hp`, `16 atk`, attack rate `3`, range `11.0`.
 - Neutral guards: `2hp` each.
 - Neutral guard total attack: `2 * guard_strength`.
