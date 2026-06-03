@@ -278,6 +278,10 @@ Early resumed eval checkpoints:
 | 30 | `94%` | `6%` | `0%` | `46%` | `48%` | Pool reuse worked; no pagefile errors observed. |
 | 40 | `60%` | `20%` | `20%` | `6%` | `54%` | Bad/noisy checkpoint; keep watching trend. |
 | 50 | `96%` | `0%` | `4%` | `50%` | `46%` | Recovered strongly after update 40 dip. |
+| 60 | `98%` | `0%` | `2%` | `54%` | `44%` | Strong, still mixed normal/death-time wins. |
+| 70 | `100%` | `0%` | `0%` | `58%` | `42%` | First perfect 50-episode argmax eval. |
+| 80 | `98%` | `2%` | `0%` | `68%` | `30%` | More normal wins; shorter games. |
+| 100 | `100%` | `0%` | `0%` | `76%` | `24%` | Best visible finish profile so far. |
 
 Current interpretation:
 
@@ -285,3 +289,8 @@ Current interpretation:
 - Invalid action rate is still `0.0`.
 - Checkpoint selection must be based on eval sweeps, not simply the latest
   checkpoint; update `40` is already a good example of why.
+- Update `100` is the best current candidate by argmax eval because it combines
+  perfect win-rate with fewer death-time wins and shorter mean episode length.
+- A1 argmax has become heavily concentrated on `PRODUCE:SKIRMISHER`; this must
+  be checked in stochastic eval and multi-seed sweeps before accepting the
+  checkpoint for league use.
