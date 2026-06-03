@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Autobattler Game Viewer</title>
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=20260603-playback-generator">
 </head>
 <body>
   <main class="game-shell">
@@ -18,6 +18,7 @@
       <div class="controls">
         <select id="replaySelect" aria-label="Replay"></select>
         <button id="loadBtn" type="button">Load</button>
+        <button id="generatePanelBtn" type="button">Generate</button>
         <label class="file-button">
           JSON
           <input id="fileInput" type="file" accept="application/json,.json">
@@ -35,8 +36,8 @@
       <select id="speedSelect" aria-label="Playback speed">
         <option value="0.25">0.25x</option>
         <option value="0.5">0.5x</option>
-        <option value="1" selected>1x</option>
-        <option value="2">2x</option>
+        <option value="1">1x</option>
+        <option value="2" selected>2x</option>
         <option value="4">4x</option>
         <option value="8">8x</option>
       </select>
@@ -46,8 +47,29 @@
       <h2>Selection</h2>
       <div id="inspectBody">Click a room, squad, or fight.</div>
     </aside>
+
+    <aside id="generatePanel" class="hud generate-panel" aria-live="polite" hidden>
+      <div class="panel-head">
+        <h2>Generate</h2>
+        <button id="closeGenerateBtn" type="button" aria-label="Close generate panel">x</button>
+      </div>
+      <div id="generateStatus" class="status-line">Checking API...</div>
+      <div class="generator-grid">
+        <label class="field">
+          <span>Matches</span>
+          <input id="matchCountInput" type="number" min="1" max="100" value="20" inputmode="numeric">
+        </label>
+        <label class="field">
+          <span>Seed</span>
+          <input id="seedInput" type="number" value="20260602" inputmode="numeric">
+        </label>
+      </div>
+      <div id="playerModelGrid" class="model-grid"></div>
+      <button id="generateBtn" class="wide-button" type="button" disabled>Generate Replays</button>
+      <div id="generateSummary" class="status-line"></div>
+    </aside>
   </main>
 
-  <script src="./app.js"></script>
+  <script src="./app.js?v=20260603-playback-generator"></script>
 </body>
 </html>

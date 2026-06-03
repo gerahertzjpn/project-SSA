@@ -75,6 +75,15 @@ def test_game_viewer_loads_replay_and_renders_canvas():
             )
             page.click("#loadBtn")
             page.wait_for_function("state.replay && Number(document.querySelector('#tickMax').textContent) > 0")
+            page.click("#generatePanelBtn")
+            generate_panel = page.evaluate(
+                """() => ({
+                    hidden: document.querySelector('#generatePanel').hidden,
+                    disabled: document.querySelector('#generateBtn').disabled,
+                    status: document.querySelector('#generateStatus').textContent,
+                    rows: document.querySelectorAll('.model-row').length
+                })"""
+            )
             play_before = page.evaluate("({tick: state.tickFloat, text: document.querySelector('#playBtn').textContent})")
             page.click("#playBtn")
             page.wait_for_function("state.tickFloat > 0.5")
@@ -93,6 +102,10 @@ def test_game_viewer_loads_replay_and_renders_canvas():
         assert counts["canvasWidth"] > 0
         assert counts["canvasHeight"] > 0
         assert "schema" in counts["meta"]
+        assert not generate_panel["hidden"]
+        assert generate_panel["disabled"]
+        assert "API" in generate_panel["status"]
+        assert generate_panel["rows"] == 6
         assert play_before["tick"] == 0
         assert play_before["text"] == ">"
         assert play_after["tick"] > 0.5
@@ -105,6 +118,62 @@ def test_game_viewer_loads_replay_and_renders_canvas():
         assert len(screenshot) > 50_000
         assert len(set(sample)) > 60
         assert sum(1 for red, green, blue in sample if red + green + blue > 95) > 1000
+    finally:
+        server.terminate()
+        try:
+            server.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            server.kill()
+
+
+def test_game_viewer_works_with_generation_api_server():
+    playwright_module = pytest.importorskip("playwright.sync_api")
+    if not (ROOT / "replays_viewer_debug_smoke" / "replay_0.json").exists():
+        pytest.skip("viewer sample replays are not generated")
+
+    port = free_port()
+    server = subprocess.Popen(
+        [sys.executable, "viewer/server.py", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=ROOT,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        wait_for_http(f"http://127.0.0.1:{port}/api/models", timeout=20.0)
+        with playwright_module.sync_playwright() as playwright:
+            try:
+                browser = playwright.chromium.launch(headless=True)
+            except Exception as exc:
+                pytest.skip(f"Playwright Chromium is not installed: {exc}")
+
+            page = browser.new_page(viewport={"width": 1280, "height": 800})
+            errors = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            page.goto(f"http://127.0.0.1:{port}/viewer_game/index.html", wait_until="domcontentloaded")
+            page.wait_for_function("state.replay && state.visuals.size > 0")
+            page.click("#generatePanelBtn")
+            generate_panel = page.evaluate(
+                """() => ({
+                    hidden: document.querySelector('#generatePanel').hidden,
+                    disabled: document.querySelector('#generateBtn').disabled,
+                    rows: document.querySelectorAll('.model-row').length,
+                    status: document.querySelector('#generateStatus').textContent
+                })"""
+            )
+            page.click("#playBtn")
+            page.wait_for_function("state.tickFloat > 0.5")
+            play_state = page.evaluate(
+                "({tick: state.tickFloat, button: document.querySelector('#playBtn').textContent})"
+            )
+            browser.close()
+
+        assert not errors
+        assert not generate_panel["hidden"]
+        assert not generate_panel["disabled"]
+        assert generate_panel["rows"] == 6
+        assert "Ready" in generate_panel["status"]
+        assert play_state["tick"] > 0.5
+        assert play_state["button"] == "||"
     finally:
         server.terminate()
         try:
