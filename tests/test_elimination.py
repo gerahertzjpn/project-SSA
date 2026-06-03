@@ -104,5 +104,64 @@ def test_core_destroyed_marks_player_dead_and_removes_existing_units():
 
     assert event["core_destroyed"] is True
     assert state.players["A1"].alive is False
+    assert state.nodes["A1"].owner == "NEUTRAL"
+    assert state.nodes["A1"].units == {}
+    assert state.nodes["A1"].visiting_units["B1"] == {UnitType.VANGUARD.value: 5}
     assert state.nodes["CP1"].owner == "NEUTRAL"
     assert state.nodes["CP1"].units == {}
+
+
+def test_destroyed_core_cannot_be_reinforced_or_captured_by_arrival():
+    state = make_initial_state(seed=55)
+    engine = GameEngine(state, bots={})
+    state.players["A3"].alive = False
+    state.players["A3"].core_hp = 0.0
+    state.nodes["A3"].owner = "B2"
+    state.nodes["A3"].units = {}
+
+    group = MovingGroup(
+        player_id="A2",
+        team="TEAM_A",
+        units={UnitType.SKIRMISHER.value: 1},
+        src="CP2",
+        dst="A3",
+        arrival_tick=state.tick,
+    )
+
+    event = engine._handle_core_arrival(group)
+
+    assert event["type"] == "MOVE_IN"
+    assert event["core_destroyed"] is True
+    assert state.nodes["A3"].owner == "NEUTRAL"
+    assert state.nodes["A3"].units == {}
+    assert state.nodes["A3"].visiting_units == {
+        "A2": {UnitType.SKIRMISHER.value: 1},
+    }
+
+
+def test_destroyed_core_pvp_resolution_keeps_core_neutral():
+    state = make_initial_state(seed=56)
+    engine = GameEngine(state, bots={})
+    state.players["A3"].alive = False
+    state.players["A3"].core_hp = 0.0
+    state.nodes["A3"].owner = "NEUTRAL"
+    state.nodes["A3"].units = {}
+
+    battle = Battle(
+        battle_id="node:A3",
+        location_kind="node",
+        location_id="A3",
+        units=build_player_units({UnitType.VANGUARD.value: 2}, "B2", "defender"),
+        started_at_tick=state.tick,
+        last_tick=state.tick,
+        objective="pvp",
+    )
+
+    event = engine._finish_node_battle(battle)
+
+    assert event["result"] == "DEAD_CORE_PVP_RESOLVED"
+    assert state.nodes["A3"].owner == "NEUTRAL"
+    assert state.nodes["A3"].units == {}
+    assert state.nodes["A3"].visiting_units == {
+        "B2": {UnitType.VANGUARD.value: 2},
+    }

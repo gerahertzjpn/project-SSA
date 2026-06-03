@@ -563,7 +563,30 @@ class GameEngine:
         node = self.state.nodes[group.dst]
         core_owner = group.dst
 
-        if get_team(group.player_id) == get_team(core_owner):
+        if self._is_destroyed_core_node(core_owner):
+            self._neutralize_destroyed_core_node(core_owner)
+            if self._has_enemy_visitors(node, group.player_id):
+                return self._start_node_battle(
+                    group=group,
+                    node_id=group.dst,
+                    objective="pvp",
+                    include_visitors=True,
+                )
+            self._merge_visiting_units(
+                node,
+                group.player_id,
+                group.units,
+                entry_side=self._entry_side(group.player_id, group.src, group.dst),
+            )
+            self._lock_node_player(node, group.player_id)
+            return {
+                "type": "MOVE_IN",
+                "node": group.dst,
+                "player": group.player_id,
+                "core_destroyed": True,
+            }
+
+        if node.owner == core_owner and get_team(group.player_id) == get_team(core_owner):
             self._merge_units(
                 node,
                 group.units,
@@ -579,6 +602,7 @@ class GameEngine:
             objective="core",
             core_owner=core_owner,
             include_owner_units=True,
+            include_visitors=True,
             include_core=True,
         )
 
@@ -1055,23 +1079,29 @@ class GameEngine:
                 previous_core_hp - self.state.players[core_owner].core_hp,
             )
             lord_expended = False
-            if not core_alive and winner_player:
-                survivor_units = dict(survivors_by_player.get(winner_player, {}))
-                if survivor_units.pop(UnitType.LORD.value, 0) > 0:
+            if not core_alive:
+                survivor_units = (
+                    dict(survivors_by_player.get(winner_player, {}))
+                    if winner_player
+                    else {}
+                )
+                if winner_player and survivor_units.pop(UnitType.LORD.value, 0) > 0:
                     lord_expended = True
                     self._kill_allied_lord(expended=True)
-                survivors_by_player[winner_player] = survivor_units
+                if winner_player:
+                    survivors_by_player[winner_player] = survivor_units
                 self.state.players[core_owner].alive = False
                 self.state.players[core_owner].core_hp = 0.0
-                node.owner = winner_player
-                self._set_node_units(
-                    node,
-                    winner_player,
-                    survivors_by_player.get(winner_player, {}),
-                    self._battle_entry_side(battle, winner_player),
-                )
-                self._lock_node_player(node, winner_player)
                 self._remove_player_units(core_owner)
+                self._neutralize_destroyed_core_node(core_owner)
+                if winner_player and winner_player != core_owner and unit_total(survivor_units) > 0:
+                    self._merge_visiting_units(
+                        node,
+                        winner_player,
+                        survivor_units,
+                        entry_side=self._battle_entry_side(battle, winner_player),
+                    )
+                    self._lock_node_player(node, winner_player)
             else:
                 node.owner = core_owner
                 self._set_node_units(
@@ -1151,6 +1181,25 @@ class GameEngine:
             if lord_event:
                 extra["lord_spawned"] = lord_event
             return self._resolution_event(battle, winner_player or "BARON", extra)
+
+        if self._is_destroyed_core_node(battle.location_id):
+            self._neutralize_destroyed_core_node(battle.location_id)
+            if winner_player:
+                self._merge_visiting_units(
+                    node,
+                    winner_player,
+                    survivors_by_player.get(winner_player, {}),
+                    entry_side=self._battle_entry_side(battle, winner_player),
+                )
+                self._lock_node_player(node, winner_player)
+            else:
+                node.units = {}
+                self._forget_battle_entry_sides(node, battle)
+            return self._resolution_event(
+                battle,
+                winner_player,
+                {"result": "DEAD_CORE_PVP_RESOLVED"},
+            )
 
         if winner_player:
             if node.owner == "NEUTRAL" and node.neutral_hp > 0:
@@ -1286,6 +1335,38 @@ class GameEngine:
             for unit in battle.units:
                 if unit.team == player_id:
                     unit.hp = 0
+
+    def _is_destroyed_core_node(self, node_id: str) -> bool:
+        if NODE_TYPES.get(node_id) != NodeType.CORE:
+            return False
+        player = self.state.players.get(node_id)
+        return player is None or not player.alive or player.core_hp <= 0
+
+    def _neutralize_destroyed_core_node(self, node_id: str) -> None:
+        if not self._is_destroyed_core_node(node_id):
+            return
+
+        node = self.state.nodes[node_id]
+        previous_owner = node.owner
+        previous_units = dict(node.units or {})
+        previous_entry_side = node.unit_entry_side.get(previous_owner)
+
+        node.owner = "NEUTRAL"
+        node.units = {}
+        node.unit_ready_tick.pop(node_id, None)
+        node.unit_entry_side.pop(node_id, None)
+
+        if (
+            previous_owner in self.state.players
+            and previous_owner != node_id
+            and unit_total(previous_units) > 0
+        ):
+            self._merge_visiting_units(
+                node,
+                previous_owner,
+                previous_units,
+                entry_side=previous_entry_side,
+            )
 
     def _return_group_to_source(self, group: MovingGroup) -> None:
         src_node = self.state.nodes[group.src]
