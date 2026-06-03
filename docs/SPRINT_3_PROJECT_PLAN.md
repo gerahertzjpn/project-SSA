@@ -4,6 +4,8 @@ Date: 2026-06-03
 
 Sprint 2 status: closed for the single-agent proof. Accepted checkpoint:
 `training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt`.
+That checkpoint is proof evidence only after the `train_obs_v0.5` interface
+change; it must not be resumed or warm-started directly.
 
 Sprint 3 goal: move from one controlled player (`A1`) to three controlled
 teammates (`A1`, `A2`, `A3`) that learn coordinated 3v3 play under the current
@@ -21,7 +23,12 @@ game rules.
 - If game rules change during Sprint 3, current Sprint 3 checkpoints become
   stale until revalidated.
 - Observation interface changes also invalidate checkpoints with mismatched
-  input layers. Current interface is `train_obs_v0.4` / `OBSERVATION_DIM=1028`.
+  metadata or input layers. Current interface is `train_obs_v0.5` /
+  `OBSERVATION_DIM=1028`.
+- Policy observations/actions are left-side normalized: B-side players are
+  mirrored into matching A-side slots (`B1->A1`, `B2->A2`, `B3->A3`) before the
+  policy sees the state, and MOVE source/destination ids are mirrored back
+  before entering the simulator.
 
 ## Main Design Choice
 

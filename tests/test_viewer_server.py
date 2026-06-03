@@ -8,6 +8,7 @@ sys.path.insert(0, "c:/project-SSA")
 from src.core.constants import PLAYER_IDS
 from src.core.replay import load_replay
 from src.training.policy import MaskedActorCritic
+from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, OBSERVATION_VERSION
 from viewer import server
 
 
@@ -55,6 +56,9 @@ def test_viewer_server_discovers_policy_checkpoints(tmp_path: Path, monkeypatch)
         {
             "policy_state": policy.state_dict(),
             "config": {"hidden_size": 32},
+            "observation_version": OBSERVATION_VERSION,
+            "observation_dim": OBSERVATION_DIM,
+            "action_dim": ACTION_DIM,
         },
         checkpoint,
     )

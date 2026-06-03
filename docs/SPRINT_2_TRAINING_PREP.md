@@ -102,13 +102,16 @@ Illegal decoded actions fall back to `HOLD`.
 
 Current vector:
 
-- `OBSERVATION_VERSION = train_obs_v0.4`
+- `OBSERVATION_VERSION = train_obs_v0.5`
 - `OBSERVATION_DIM = 1028`
 - dtype: `float32`
 
 The vector includes:
 
 - tick/time remaining/death-time timing/resources/team/alive/global battle counts;
+- left-side policy perspective: TEAM_B players are mirrored into TEAM_A slots
+  before encoding, and selected policy actions are mirrored back to absolute
+  map nodes before simulation;
 - per-node type and owner relation;
 - per-node self/ally/enemy/neutral unit counts;
 - per-node reachability, route distance, and estimated travel time from the
@@ -271,6 +274,6 @@ Conclusion:
   before `TrainingEnv` used real death-time finalization at `TICK_LIMIT`.
   Its 300-tick games were reported as `truncated` draws, so that run is a
   diagnostic artifact only and must not be treated as a valid learning result.
-- All checkpoints from before `train_obs_v0.4`, edge-battle/type-aware movement
-  observations, and source-aware `MOVE` actions
+- All checkpoints from before `train_obs_v0.5`, mirrored policy perspective,
+  edge-battle/type-aware movement observations, and source-aware `MOVE` actions
   are incompatible with the current policy interface and must not be resumed.

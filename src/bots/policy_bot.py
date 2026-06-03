@@ -12,6 +12,7 @@ from src.training.policy import MaskedActorCritic
 from src.training.spaces import (
     ACTION_DIM,
     OBSERVATION_DIM,
+    OBSERVATION_VERSION,
     decode_action,
     encode_observation,
     legal_action_mask,
@@ -62,7 +63,7 @@ def cached_policy_state(path: str | Path, player_id: str) -> tuple[dict, int]:
     if cache_key not in _POLICY_STATE_CACHE:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
         policy_state = policy_state_from_checkpoint(checkpoint, checkpoint_path, player_id)
-        validate_policy_state_compatible(policy_state, checkpoint_path)
+        validate_checkpoint_compatible(checkpoint, policy_state, checkpoint_path)
         _POLICY_STATE_CACHE[cache_key] = (
             policy_state,
             checkpoint_hidden_size(checkpoint),
@@ -97,6 +98,24 @@ def checkpoint_hidden_size(checkpoint: dict) -> int:
     return 128
 
 
+def validate_checkpoint_compatible(checkpoint: dict, policy_state: dict, checkpoint_path: Path) -> None:
+    checkpoint_version = checkpoint.get("observation_version")
+    checkpoint_obs_dim = checkpoint.get("observation_dim")
+    checkpoint_action_dim = checkpoint.get("action_dim")
+    if (
+        checkpoint_version != OBSERVATION_VERSION
+        or int(checkpoint_obs_dim or -1) != OBSERVATION_DIM
+        or int(checkpoint_action_dim or -1) != ACTION_DIM
+    ):
+        raise ValueError(
+            f"Policy checkpoint {checkpoint_path} is incompatible with current "
+            f"policy interface metadata: checkpoint version/obs/action="
+            f"({checkpoint_version}, {checkpoint_obs_dim}, {checkpoint_action_dim}), "
+            f"current=({OBSERVATION_VERSION}, {OBSERVATION_DIM}, {ACTION_DIM})"
+        )
+    validate_policy_state_compatible(policy_state, checkpoint_path)
+
+
 def validate_policy_state_compatible(policy_state: dict, checkpoint_path: Path) -> None:
     observation_dim, action_dim = policy_state_interface(policy_state)
     if observation_dim != OBSERVATION_DIM or action_dim != ACTION_DIM:
@@ -119,6 +138,12 @@ def checkpoint_is_compatible(path: str | Path) -> bool:
     try:
         checkpoint_path = Path(path)
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        if (
+            checkpoint.get("observation_version") != OBSERVATION_VERSION
+            or int(checkpoint.get("observation_dim") or -1) != OBSERVATION_DIM
+            or int(checkpoint.get("action_dim") or -1) != ACTION_DIM
+        ):
+            return False
         if "policy_state" in checkpoint:
             states = [checkpoint["policy_state"]]
         else:

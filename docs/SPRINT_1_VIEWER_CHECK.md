@@ -47,6 +47,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 ## Simulation Notes
 
 - Neutral guard and Lord combat units are centered exactly at combat position `10.0`, not placed on the defender/right side.
+- Neutral guard strength is left/right mirrored at map generation: `CP1=CP5` and `CP2=CP6`; center nodes `CP3` and `CP4` mirror to themselves.
 - Neutral guards do not regenerate after winning a fight; the node keeps only the surviving guard count.
 - Neutral Lord stats are `120hp`, `16 atk`, and attack rate `3`.
 - Neutral Lord HP persists across failed attempts to kill it.

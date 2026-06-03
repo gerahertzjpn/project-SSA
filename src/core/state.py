@@ -197,13 +197,13 @@ def make_initial_state(seed: int = 42) -> GameState:
 
 
 def _roll_neutrals(rng) -> dict:
-    cp1_cp6 = int(rng.integers(1, 8))  # [1, 7]
-    cp2_cp5 = int(rng.integers(1, 8))
+    cp1_cp5 = int(rng.integers(1, 8))  # [1, 7]
+    cp2_cp6 = int(rng.integers(1, 8))
     cp3 = int(rng.integers(1, 8))
     cp4 = int(rng.integers(1, 8))
     return {
-        "CP1": cp1_cp6, "CP6": cp1_cp6,
-        "CP2": cp2_cp5, "CP5": cp2_cp5,
+        "CP1": cp1_cp5, "CP5": cp1_cp5,
+        "CP2": cp2_cp6, "CP6": cp2_cp6,
         "CP3": cp3,
         "CP4": cp4,
     }

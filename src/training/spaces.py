@@ -24,7 +24,7 @@ from src.core.map import ADJACENCY, ALL_NODES, NODE_TYPES, NodeType
 from src.core.units import UNIT_STATS
 
 
-OBSERVATION_VERSION = "train_obs_v0.4"
+OBSERVATION_VERSION = "train_obs_v0.5"
 
 UNIT_ORDER = (UnitType.VANGUARD, UnitType.RANGER, UnitType.SKIRMISHER)
 RELATIONS = ("self", "ally", "enemy", "neutral")
@@ -75,6 +75,44 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
 )
 ACTION_DIM = len(ACTION_SPECS)
 
+MIRROR_NODES = {
+    "A1": "B1",
+    "A2": "B2",
+    "A3": "B3",
+    "B1": "A1",
+    "B2": "A2",
+    "B3": "A3",
+    "CP1": "CP5",
+    "CP2": "CP6",
+    "CP3": "CP3",
+    "CP4": "CP4",
+    "CP5": "CP1",
+    "CP6": "CP2",
+    "Baron": "Baron",
+}
+MIRROR_PLAYERS = {
+    "A1": "B1",
+    "A2": "B2",
+    "A3": "B3",
+    "B1": "A1",
+    "B2": "A2",
+    "B3": "A3",
+}
+MIRROR_TEAMS = {
+    "TEAM_A": "TEAM_B",
+    "TEAM_B": "TEAM_A",
+}
+MIRROR_ENTRY_SIDES = {
+    "attacker": "defender",
+    "defender": "attacker",
+}
+COMBAT_LINE_MAX = 20.0
+
+_ACTION_INDEX_BY_SPEC = {
+    (spec.kind, spec.unit_type, spec.source, spec.destination, spec.intent): index
+    for index, spec in enumerate(ACTION_SPECS)
+}
+
 
 def team_of(player_id: str) -> str:
     if player_id in TEAM_A_PLAYERS:
@@ -82,6 +120,213 @@ def team_of(player_id: str) -> str:
     if player_id in TEAM_B_PLAYERS:
         return "TEAM_B"
     return "NEUTRAL"
+
+
+def mirrored_node_id(node_id: str | None) -> str | None:
+    if node_id is None:
+        return None
+    return MIRROR_NODES.get(str(node_id), str(node_id))
+
+
+def mirrored_player_id(player_id: str | None) -> str | None:
+    if player_id is None:
+        return None
+    return MIRROR_PLAYERS.get(str(player_id), str(player_id))
+
+
+def mirrored_team_id(team_id: str | None) -> str | None:
+    if team_id is None:
+        return None
+    return MIRROR_TEAMS.get(str(team_id), str(team_id))
+
+
+def mirrored_entry_side(side: str | None) -> str | None:
+    if side is None:
+        return None
+    return MIRROR_ENTRY_SIDES.get(str(side), str(side))
+
+
+def uses_mirrored_policy_perspective(player_id: str) -> bool:
+    return team_of(player_id) == "TEAM_B"
+
+
+def policy_player_id(player_id: str) -> str:
+    return mirrored_player_id(player_id) if uses_mirrored_policy_perspective(player_id) else player_id
+
+
+def policy_observation(obs: dict, player_id: str) -> tuple[dict, str]:
+    if not uses_mirrored_policy_perspective(player_id):
+        return obs, player_id
+    return mirror_observation(obs), policy_player_id(player_id)
+
+
+def mirror_action_index(action_index: int) -> int:
+    if action_index < 0 or action_index >= ACTION_DIM:
+        return 0
+    spec = ACTION_SPECS[int(action_index)]
+    mirrored = ActionSpec(
+        kind=spec.kind,
+        unit_type=spec.unit_type,
+        source=mirrored_node_id(spec.source),
+        destination=mirrored_node_id(spec.destination),
+        intent=spec.intent,
+    )
+    return _ACTION_INDEX_BY_SPEC.get(
+        (mirrored.kind, mirrored.unit_type, mirrored.source, mirrored.destination, mirrored.intent),
+        0,
+    )
+
+
+def mirror_observation(obs: dict) -> dict:
+    mirrored = dict(obs)
+    mirrored["player_id"] = mirrored_player_id(obs.get("player_id"))
+    mirrored["team"] = mirrored_team_id(obs.get("team"))
+    mirrored["core_node"] = mirrored_node_id(obs.get("core_node"))
+    if "winner" in mirrored:
+        mirrored["winner"] = mirrored_team_id(obs.get("winner"))
+
+    if isinstance(obs.get("nodes"), dict):
+        mirrored["nodes"] = {
+            mirrored_node_id(node_id): _mirror_node(node)
+            for node_id, node in obs["nodes"].items()
+        }
+    if isinstance(obs.get("players"), dict):
+        mirrored["players"] = {
+            mirrored_player_id(player_id): _mirror_player_state(player)
+            for player_id, player in obs["players"].items()
+        }
+
+    mirrored["moving_groups"] = [
+        _mirror_moving_group(group)
+        for group in obs.get("moving_groups", []) or []
+    ]
+    mirrored["active_battles"] = [
+        _mirror_battle(battle)
+        for battle in obs.get("active_battles", []) or []
+    ]
+
+    if isinstance(obs.get("baron"), dict):
+        mirrored["baron"] = _mirror_baron(obs["baron"])
+    if isinstance(obs.get("core_damage_by_team"), dict):
+        mirrored["core_damage_by_team"] = {
+            mirrored_team_id(team): value
+            for team, value in obs["core_damage_by_team"].items()
+        }
+    if isinstance(obs.get("death_time_final_core_deaths"), dict):
+        mirrored["death_time_final_core_deaths"] = {
+            mirrored_team_id(team): value
+            for team, value in obs["death_time_final_core_deaths"].items()
+        }
+    return mirrored
+
+
+def _mirror_node(node: dict) -> dict:
+    mirrored = dict(node)
+    mirrored["owner"] = mirrored_player_id(node.get("owner"))
+    mirrored["visiting_units"] = {
+        mirrored_player_id(player_id): dict(units)
+        for player_id, units in (node.get("visiting_units", {}) or {}).items()
+    }
+    mirrored["unit_ready_tick"] = {
+        mirrored_player_id(player_id): ready_tick
+        for player_id, ready_tick in (node.get("unit_ready_tick", {}) or {}).items()
+    }
+    mirrored["unit_entry_side"] = {
+        mirrored_player_id(player_id): mirrored_entry_side(side)
+        for player_id, side in (node.get("unit_entry_side", {}) or {}).items()
+    }
+    mirrored["neutral_aggro_teams"] = [
+        mirrored_team_id(team)
+        for team in node.get("neutral_aggro_teams", []) or []
+    ]
+    return mirrored
+
+
+def _mirror_player_state(player: dict) -> dict:
+    mirrored = dict(player)
+    if "player_id" in mirrored:
+        mirrored["player_id"] = mirrored_player_id(player.get("player_id"))
+    if "team" in mirrored:
+        mirrored["team"] = mirrored_team_id(player.get("team"))
+    if "core_node" in mirrored:
+        mirrored["core_node"] = mirrored_node_id(player.get("core_node"))
+    return mirrored
+
+
+def _mirror_moving_group(group: dict) -> dict:
+    mirrored = dict(group)
+    mirrored["player"] = mirrored_player_id(group.get("player"))
+    if "team" in mirrored:
+        mirrored["team"] = mirrored_team_id(group.get("team"))
+    for key in ("src", "dst", "final_dst", "segment_node"):
+        if key in mirrored:
+            mirrored[key] = mirrored_node_id(group.get(key))
+    if isinstance(group.get("path"), list):
+        mirrored["path"] = [mirrored_node_id(node_id) for node_id in group["path"]]
+    return mirrored
+
+
+def _mirror_baron(baron: dict) -> dict:
+    mirrored = dict(baron)
+    for key in ("controlled_by", "allied_lord_owner"):
+        if key in mirrored:
+            mirrored[key] = mirrored_player_id(baron.get(key))
+    if "allied_lord_target" in mirrored:
+        mirrored["allied_lord_target"] = mirrored_node_id(baron.get("allied_lord_target"))
+    return mirrored
+
+
+def _mirror_battle(battle: dict) -> dict:
+    mirrored = dict(battle)
+    kind = battle.get("location_kind")
+    mirrored_location = _mirror_battle_location(kind, battle.get("location_id"))
+    mirrored["location_id"] = mirrored_location
+    if battle.get("battle_id"):
+        prefix = "edge" if kind == "edge" else "node"
+        mirrored["battle_id"] = f"{prefix}:{mirrored_location}"
+    mirrored["participants"] = [
+        mirrored_player_id(player_id)
+        for player_id in battle.get("participants", []) or []
+    ]
+    mirrored["entry_sides"] = {
+        mirrored_player_id(player_id): mirrored_entry_side(side)
+        for player_id, side in (battle.get("entry_sides", {}) or {}).items()
+    }
+    mirrored["neutral_aggro_teams"] = [
+        mirrored_team_id(team)
+        for team in battle.get("neutral_aggro_teams", []) or []
+    ]
+    mirrored["sides"] = {
+        mirrored_player_id(side_id): dict(side)
+        for side_id, side in (battle.get("sides", {}) or {}).items()
+    }
+    mirrored["formation"] = [
+        _mirror_formation_unit(unit)
+        for unit in battle.get("formation", []) or []
+    ]
+    return mirrored
+
+
+def _mirror_battle_location(kind: str | None, location_id: str | None) -> str | None:
+    if location_id is None:
+        return None
+    if kind == "edge":
+        parts = str(location_id).split("|", 1)
+        if len(parts) == 2:
+            return "|".join(sorted((mirrored_node_id(parts[0]), mirrored_node_id(parts[1]))))
+    return mirrored_node_id(str(location_id))
+
+
+def _mirror_formation_unit(unit: list) -> list:
+    mirrored = list(unit)
+    if len(mirrored) > 1:
+        mirrored[1] = mirrored_player_id(mirrored[1])
+    if len(mirrored) > 5:
+        try:
+            mirrored[5] = round(COMBAT_LINE_MAX - float(mirrored[5]), 2)
+        except (TypeError, ValueError):
+            pass
+    return mirrored
 
 
 def owner_relation(owner: str, player_id: str) -> str:
@@ -260,6 +505,11 @@ def _intent_allowed(spec: ActionSpec, obs: dict, player_id: str) -> bool:
 
 
 def legal_action_mask(obs: dict, player_id: str) -> np.ndarray:
+    policy_obs, policy_player = policy_observation(obs, player_id)
+    return _legal_action_mask_absolute(policy_obs, policy_player)
+
+
+def _legal_action_mask_absolute(obs: dict, player_id: str) -> np.ndarray:
     mask = np.zeros(ACTION_DIM, dtype=np.bool_)
     resources = float(obs.get("resources", 0.0) or 0.0)
     mask[0] = True
@@ -277,6 +527,11 @@ def legal_action_mask(obs: dict, player_id: str) -> np.ndarray:
 
 
 def decode_action(action_index: int, obs: dict, player_id: str) -> Action:
+    policy_obs, policy_player = policy_observation(obs, player_id)
+    return _decode_policy_action(action_index, policy_obs, policy_player, player_id)
+
+
+def _decode_policy_action(action_index: int, policy_obs: dict, policy_player: str, actual_player: str) -> Action:
     if action_index < 0 or action_index >= ACTION_DIM:
         return Action(ActionType.HOLD)
 
@@ -284,16 +539,21 @@ def decode_action(action_index: int, obs: dict, player_id: str) -> Action:
     if spec.kind == "HOLD":
         return Action(ActionType.HOLD)
     if spec.kind == "PRODUCE" and spec.unit_type is not None:
-        if legal_action_mask(obs, player_id)[action_index]:
+        if _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
             return Action(ActionType.PRODUCE, unit_type=spec.unit_type)
         return Action(ActionType.HOLD)
     if spec.kind == "MOVE" and spec.source and spec.destination:
-        if not legal_action_mask(obs, player_id)[action_index]:
+        if not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
             return Action(ActionType.HOLD)
+        source = spec.source
+        destination = spec.destination
+        if uses_mirrored_policy_perspective(actual_player):
+            source = mirrored_node_id(source)
+            destination = mirrored_node_id(destination)
         return Action(
             ActionType.MOVE,
-            source=spec.source,
-            destination=spec.destination,
+            source=source,
+            destination=destination,
             intent=spec.intent,
         )
     return Action(ActionType.HOLD)
@@ -425,6 +685,11 @@ def _add_battle_features(features: list[float], battle: dict, player_id: str, we
 
 
 def encode_observation(obs: dict, player_id: str) -> np.ndarray:
+    policy_obs, policy_player = policy_observation(obs, player_id)
+    return _encode_observation_absolute(policy_obs, policy_player)
+
+
+def _encode_observation_absolute(obs: dict, player_id: str) -> np.ndarray:
     own_resources, enemy_resources = _team_resource_totals(obs, player_id)
     own_alive, enemy_alive = _team_alive_counts(obs, player_id)
     baron_hp = float((obs.get("baron", {}) or {}).get("hp", 0.0) or 0.0)

@@ -5,7 +5,7 @@ import torch
 
 from src.bots.policy_bot import PolicyBot, _POLICY_STATE_CACHE, checkpoint_is_compatible
 from src.training.policy import MaskedActorCritic
-from src.training.spaces import OBSERVATION_DIM
+from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, OBSERVATION_VERSION
 
 
 def test_policy_bot_loads_team_checkpoint_for_player_and_mirrored_slot(tmp_path: Path):
@@ -20,6 +20,9 @@ def test_policy_bot_loads_team_checkpoint_for_player_and_mirrored_slot(tmp_path:
                 "A3": policy.state_dict(),
             },
             "config": {"hidden_size": 32},
+            "observation_version": OBSERVATION_VERSION,
+            "observation_dim": OBSERVATION_DIM,
+            "action_dim": ACTION_DIM,
         },
         checkpoint_path,
     )
@@ -42,6 +45,9 @@ def test_policy_bot_rejects_checkpoint_with_old_observation_dim(tmp_path: Path):
         {
             "policy_state": policy.state_dict(),
             "config": {"hidden_size": 32},
+            "observation_version": "train_obs_old",
+            "observation_dim": OBSERVATION_DIM - 1,
+            "action_dim": ACTION_DIM,
         },
         checkpoint_path,
     )

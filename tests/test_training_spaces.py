@@ -10,6 +10,7 @@ from src.training.spaces import (
     BATTLE_FEATURES,
     COMBAT_RELATIONS,
     GLOBAL_FEATURES,
+    MIRROR_NODES,
     MOVEMENT_BUCKETS,
     MOVEMENT_FEATURES,
     NODE_FEATURES,
@@ -23,6 +24,10 @@ from src.training.spaces import (
     encode_observation,
     find_route_obs,
     legal_action_mask,
+    mirror_action_index,
+    mirrored_node_id,
+    mirrored_player_id,
+    policy_observation,
     route_metrics_for_node,
 )
 from src.core.map import ALL_NODES
@@ -50,10 +55,42 @@ def test_training_observation_vector_is_fixed_and_finite():
     obs = observe_state(make_initial_state(seed=1))
     vector = encode_observation(obs, "A1")
 
-    assert OBSERVATION_VERSION == "train_obs_v0.4"
+    assert OBSERVATION_VERSION == "train_obs_v0.5"
     assert vector.shape == (OBSERVATION_DIM,)
     assert vector.dtype == np.float32
     assert np.isfinite(vector).all()
+
+
+def test_mirror_maps_are_involutive_and_preserve_player_slots():
+    for node_id, mirrored in MIRROR_NODES.items():
+        assert mirrored_node_id(mirrored) == node_id
+
+    assert mirrored_player_id("A1") == "B1"
+    assert mirrored_player_id("A2") == "B2"
+    assert mirrored_player_id("A3") == "B3"
+    assert mirrored_player_id("B1") == "A1"
+    assert mirrored_player_id("B2") == "A2"
+    assert mirrored_player_id("B3") == "A3"
+
+
+def test_initial_a_and_b_matching_slots_share_policy_observation():
+    state = make_initial_state(seed=1)
+    for a_player, b_player in (("A1", "B1"), ("A2", "B2"), ("A3", "B3")):
+        obs_a = observe_state(state, a_player)
+        obs_b = observe_state(state, b_player)
+
+        np.testing.assert_allclose(
+            encode_observation(obs_a, a_player),
+            encode_observation(obs_b, b_player),
+            atol=1.0e-6,
+        )
+
+    policy_obs, policy_player = policy_observation(observe_state(state, "B1"), "B1")
+    assert policy_player == "A1"
+    assert policy_obs["player_id"] == "A1"
+    assert policy_obs["team"] == "TEAM_A"
+    assert policy_obs["nodes"]["A1"]["owner"] == "A1"
+    assert policy_obs["nodes"]["CP1"]["neutral_hp"] == state.nodes["CP5"].neutral_hp
 
 
 def test_training_action_mask_and_decode_initial_actions():
@@ -70,6 +107,24 @@ def test_training_action_mask_and_decode_initial_actions():
     assert action.action_type == ActionType.MOVE
     assert action.source == "A1"
     assert action.destination == "CP3"
+    assert action.intent == "CAPTURE"
+
+
+def test_b_side_action_space_uses_policy_perspective_and_decodes_to_absolute_nodes():
+    obs = observe_state(make_initial_state(seed=2), "B1")
+    canonical = action_index("MOVE", source="A1", destination="CP1", intent="CAPTURE")
+    absolute = action_index("MOVE", source="B1", destination="CP5", intent="CAPTURE")
+    mask = legal_action_mask(obs, "B1")
+
+    assert mask[canonical]
+    assert not mask[absolute]
+    assert mirror_action_index(canonical) == absolute
+
+    action = decode_action(canonical, obs, "B1")
+
+    assert action.action_type == ActionType.MOVE
+    assert action.source == "B1"
+    assert action.destination == "CP5"
     assert action.intent == "CAPTURE"
 
 

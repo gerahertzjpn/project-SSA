@@ -16,6 +16,7 @@ from src.training.team_ppo_trainer import (
     summarize_team_rollout,
     update_team_policies,
 )
+from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, OBSERVATION_VERSION
 
 
 def test_collect_team_rollouts_has_one_buffer_per_controlled_player():
@@ -85,7 +86,15 @@ def test_single_checkpoint_can_warm_start_team_policies(tmp_path: Path):
     config = TeamPPOConfig(seed=104, hidden_size=32)
     single = make_team_policies(config)["A1"]
     checkpoint_path = tmp_path / "single.pt"
-    torch.save({"policy_state": single.state_dict()}, checkpoint_path)
+    torch.save(
+        {
+            "policy_state": single.state_dict(),
+            "observation_version": OBSERVATION_VERSION,
+            "observation_dim": OBSERVATION_DIM,
+            "action_dim": ACTION_DIM,
+        },
+        checkpoint_path,
+    )
 
     policies = make_team_policies(config)
     load_single_policy_into_team(checkpoint_path, policies)

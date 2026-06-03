@@ -13,6 +13,9 @@ from .spaces import (
     encode_observation,
     find_route_obs,
     legal_action_mask,
+    mirror_action_index,
+    mirror_observation,
+    policy_observation,
 )
 from .env import TrainingEnv, TrainingEnvConfig
 from .team_env import TeamTrainingEnv, TeamTrainingEnvConfig
@@ -36,4 +39,7 @@ __all__ = [
     "encode_observation",
     "find_route_obs",
     "legal_action_mask",
+    "mirror_action_index",
+    "mirror_observation",
+    "policy_observation",
 ]

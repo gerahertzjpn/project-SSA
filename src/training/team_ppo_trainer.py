@@ -19,7 +19,7 @@ from src.training.ppo_trainer import (
     summarize_training_episodes,
     update_policy,
 )
-from src.training.spaces import ACTION_DIM, team_of
+from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, OBSERVATION_VERSION, team_of
 from src.training.team_env import DEFAULT_CONTROLLED_PLAYERS, TeamTrainingEnv, TeamTrainingEnvConfig
 
 
@@ -90,6 +90,7 @@ def load_single_policy_into_team(
     map_location: str | torch.device = "cpu",
 ) -> None:
     checkpoint = torch.load(checkpoint_path, map_location=map_location, weights_only=False)
+    _validate_checkpoint_interface(checkpoint, checkpoint_path)
     policy_state = checkpoint["policy_state"]
     for policy in policies.values():
         policy.load_state_dict(policy_state)
@@ -776,6 +777,9 @@ def save_team_checkpoint(
                 for player_id, optimizer in optimizers.items()
             },
             "config": asdict(config),
+            "observation_version": OBSERVATION_VERSION,
+            "observation_dim": OBSERVATION_DIM,
+            "action_dim": ACTION_DIM,
             "update": int(update),
             "total_steps": int(total_steps),
         },
@@ -790,6 +794,7 @@ def load_team_checkpoint(
     map_location: str | torch.device = "cpu",
 ) -> dict:
     checkpoint = torch.load(path, map_location=map_location, weights_only=False)
+    _validate_checkpoint_interface(checkpoint, path)
     for player_id, policy_state in checkpoint["policy_states"].items():
         if player_id in policies:
             policies[player_id].load_state_dict(policy_state)
@@ -798,6 +803,20 @@ def load_team_checkpoint(
             if player_id in optimizers:
                 optimizers[player_id].load_state_dict(optimizer_state)
     return checkpoint
+
+
+def _validate_checkpoint_interface(checkpoint: dict, path: Path) -> None:
+    if (
+        checkpoint.get("observation_version") != OBSERVATION_VERSION
+        or int(checkpoint.get("observation_dim") or -1) != OBSERVATION_DIM
+        or int(checkpoint.get("action_dim") or -1) != ACTION_DIM
+    ):
+        raise ValueError(
+            f"Checkpoint {path} is incompatible with current policy interface: "
+            f"checkpoint=({checkpoint.get('observation_version')}, "
+            f"{checkpoint.get('observation_dim')}, {checkpoint.get('action_dim')}), "
+            f"current=({OBSERVATION_VERSION}, {OBSERVATION_DIM}, {ACTION_DIM})"
+        )
 
 
 def latest_metrics(path: Path) -> list[dict]:

@@ -14,7 +14,7 @@ from torch import nn
 
 from src.training.env import TrainingEnv, TrainingEnvConfig
 from src.training.policy import MaskedActorCritic, to_cpu_state_dict
-from src.training.spaces import ACTION_DIM, ACTION_SPECS, OBSERVATION_DIM, team_of
+from src.training.spaces import ACTION_DIM, ACTION_SPECS, OBSERVATION_DIM, OBSERVATION_VERSION, team_of
 
 
 @dataclass
@@ -508,6 +508,9 @@ def save_checkpoint(
             "policy_state": policy.state_dict(),
             "optimizer_state": optimizer.state_dict(),
             "config": asdict(config),
+            "observation_version": OBSERVATION_VERSION,
+            "observation_dim": OBSERVATION_DIM,
+            "action_dim": ACTION_DIM,
             "update": int(update),
             "total_steps": int(total_steps),
         },
@@ -522,10 +525,25 @@ def load_checkpoint(
     map_location: str | torch.device = "cpu",
 ) -> dict:
     checkpoint = torch.load(path, map_location=map_location, weights_only=False)
+    _validate_checkpoint_interface(checkpoint, path)
     policy.load_state_dict(checkpoint["policy_state"])
     if optimizer is not None and "optimizer_state" in checkpoint:
         optimizer.load_state_dict(checkpoint["optimizer_state"])
     return checkpoint
+
+
+def _validate_checkpoint_interface(checkpoint: dict, path: Path) -> None:
+    if (
+        checkpoint.get("observation_version") != OBSERVATION_VERSION
+        or int(checkpoint.get("observation_dim") or -1) != OBSERVATION_DIM
+        or int(checkpoint.get("action_dim") or -1) != ACTION_DIM
+    ):
+        raise ValueError(
+            f"Checkpoint {path} is incompatible with current policy interface: "
+            f"checkpoint=({checkpoint.get('observation_version')}, "
+            f"{checkpoint.get('observation_dim')}, {checkpoint.get('action_dim')}), "
+            f"current=({OBSERVATION_VERSION}, {OBSERVATION_DIM}, {ACTION_DIM})"
+        )
 
 
 def append_jsonl(path: Path, item: dict) -> None:

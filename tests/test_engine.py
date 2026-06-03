@@ -91,10 +91,10 @@ def test_random_bot_enemy_frontline_only_exposes_adjacent_targets():
 
 
 def test_mirror_neutrals():
-    # CP1 should equal CP6, CP2 should equal CP5
+    # Left/right mirror: CP1 <-> CP5, CP2 <-> CP6.
     state = make_initial_state(seed=42)
-    assert state.nodes["CP1"].neutral_hp == state.nodes["CP6"].neutral_hp
-    assert state.nodes["CP2"].neutral_hp == state.nodes["CP5"].neutral_hp
+    assert state.nodes["CP1"].neutral_hp == state.nodes["CP5"].neutral_hp
+    assert state.nodes["CP2"].neutral_hp == state.nodes["CP6"].neutral_hp
 
 
 def test_winner_not_set_at_start():
