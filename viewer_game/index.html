@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autobattler Game Viewer</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="game-shell">
+    <canvas id="gameCanvas" aria-label="Replay game map"></canvas>
+
+    <header class="hud top-hud">
+      <div class="brand">
+        <strong>Game Viewer</strong>
+        <span id="metaText">load replay</span>
+      </div>
+      <div class="controls">
+        <select id="replaySelect" aria-label="Replay"></select>
+        <button id="loadBtn" type="button">Load</button>
+        <label class="file-button">
+          JSON
+          <input id="fileInput" type="file" accept="application/json,.json">
+        </label>
+        <a class="link-button" href="../viewer/index.html">Diagnostics</a>
+      </div>
+    </header>
+
+    <section class="hud bottom-hud" aria-label="Playback">
+      <button id="prevBtn" type="button" title="Previous tick" aria-label="Previous tick">|&lt;</button>
+      <button id="playBtn" type="button" class="primary" title="Play/Pause" aria-label="Play/Pause">&gt;</button>
+      <button id="nextBtn" type="button" title="Next tick" aria-label="Next tick">&gt;|</button>
+      <input id="tickSlider" type="range" min="0" max="0" value="0" aria-label="Replay tick">
+      <div class="tick-readout"><span id="tickNow">0</span>/<span id="tickMax">0</span></div>
+      <select id="speedSelect" aria-label="Playback speed">
+        <option value="0.25">0.25x</option>
+        <option value="0.5">0.5x</option>
+        <option value="1" selected>1x</option>
+        <option value="2">2x</option>
+        <option value="4">4x</option>
+        <option value="8">8x</option>
+      </select>
+    </section>
+
+    <aside id="inspectPanel" class="hud inspect-panel" aria-live="polite">
+      <h2>Selection</h2>
+      <div id="inspectBody">Click a room, squad, or fight.</div>
+    </aside>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

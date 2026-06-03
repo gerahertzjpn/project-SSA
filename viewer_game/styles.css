@@ -1,0 +1,265 @@
+:root {
+  color-scheme: dark;
+  --bg: #0d1013;
+  --hud: rgba(13, 16, 20, 0.82);
+  --hud-strong: rgba(20, 24, 30, 0.94);
+  --line: #303844;
+  --text: #eef4fa;
+  --muted: #a6b1bd;
+  --red: #f0646e;
+  --blue: #5da0ff;
+  --gold: #d8a84b;
+  --green: #75c47b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+.game-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+#gameCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  background: #101419;
+}
+
+#gameCanvas.dragging {
+  cursor: grabbing;
+}
+
+.hud {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--hud);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.34);
+}
+
+.top-hud {
+  left: 14px;
+  right: 14px;
+  top: 14px;
+  min-height: 48px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+}
+
+.brand {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.brand strong {
+  font-size: 15px;
+  line-height: 1.1;
+}
+
+.brand span {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+button,
+select,
+.file-button,
+.link-button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--hud-strong);
+  color: var(--text);
+}
+
+button,
+.file-button,
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 11px;
+  cursor: pointer;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+button.primary {
+  border-color: #547091;
+  background: #203049;
+}
+
+select {
+  padding: 0 8px;
+}
+
+.file-button input {
+  display: none;
+}
+
+.bottom-hud {
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  height: 52px;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 38px 38px 38px minmax(180px, 1fr) 82px 80px;
+  align-items: center;
+  gap: 8px;
+  padding: 7px;
+}
+
+#tickSlider {
+  width: 100%;
+}
+
+.tick-readout {
+  color: var(--muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.inspect-panel {
+  right: 14px;
+  top: 78px;
+  width: min(330px, calc(100vw - 28px));
+  max-height: calc(100vh - 160px);
+  overflow: auto;
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.inspect-panel h2 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+#inspectBody {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.42;
+}
+
+.inspect-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.inspect-title strong {
+  font-size: 15px;
+}
+
+.inspect-title span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.inspect-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 6px 0;
+}
+
+.inspect-row span:first-child {
+  color: var(--muted);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.chip {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.24);
+  padding: 2px 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 860px) {
+  .top-hud {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .controls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .controls select {
+    flex: 1 1 180px;
+  }
+
+  .bottom-hud {
+    grid-template-columns: 38px 38px 38px 1fr;
+    height: 90px;
+  }
+
+  .tick-readout,
+  #speedSelect {
+    grid-column: span 2;
+  }
+
+  .inspect-panel {
+    top: 132px;
+    max-height: calc(100vh - 230px);
+  }
+}

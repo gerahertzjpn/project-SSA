@@ -89,7 +89,9 @@ if (-not $Port) {
 }
 
 $Url = "http://127.0.0.1:$Port/viewer/index.html"
+$GameUrl = "http://127.0.0.1:$Port/viewer_game/index.html"
 Write-Host "Viewer server: $Url"
+Write-Host "Game viewer:   $GameUrl"
 
 if (-not $NoOpen) {
     Start-Process $Url
