@@ -118,3 +118,19 @@ Decision:
 - The Sprint 3 training/eval process path is alive end-to-end on tiny settings.
 - Next step is a full test suite run before starting the first real 16-worker
   team training run.
+
+## 3. Full Test Gate Before Real Run
+
+Command:
+
+```powershell
+python -m pytest -q
+```
+
+Result:
+
+- `136 passed in 17.78s`
+
+Decision:
+
+- Safe to start the first real Sprint 3 team training run from a fixed commit.
