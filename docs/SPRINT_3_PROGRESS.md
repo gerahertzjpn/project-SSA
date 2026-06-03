@@ -172,3 +172,45 @@ Results:
 Decision:
 
 - Restart the real run after committing this performance fix.
+
+## 5. Eval Performance Fix
+
+Observation during real run:
+
+- Update 10 successfully saved a checkpoint and produced the first real argmax
+  eval.
+- Update 10 argmax eval over 50 episodes:
+  - `86%` win
+  - `12%` loss
+  - `2%` draw
+  - `44%` normal wins
+  - `42%` death-time wins
+  - invalid action rate `0.0`
+- However the update took `344.577s` because `evaluate_team_policies(...)` in
+  the train CLI was sequential.
+
+Fix:
+
+- Added `evaluate_team_policies_parallel(...)`.
+- `train_team_policy.py` now uses the parallel eval path for training-time
+  argmax eval.
+
+Verification:
+
+```powershell
+python -m py_compile src/training/team_ppo_trainer.py scripts/train_team_policy.py
+python -m pytest tests/test_team_ppo_trainer.py -q
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_parallel_eval_smoke --overwrite --updates 1 --workers 4 --rollout-steps 32 --eval-episodes 4 --eval-interval 1 --checkpoint-interval 1 --random-baseline-episodes 0 --ally-init training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt --opponent-bot scripted --seed 20260603 --torch-threads 1
+```
+
+Results:
+
+- `tests/test_team_ppo_trainer.py`: `5 passed`
+- Parallel eval smoke completed and wrote
+  `training_runs/sprint3_team_parallel_eval_smoke/metrics.jsonl`
+
+Decision:
+
+- Resume the real run from
+  `training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt`
+  (checkpoint update 10).

@@ -428,6 +428,153 @@ def evaluate_team_policies(
     return summary
 
 
+def _team_policy_eval_worker(request: dict) -> dict:
+    torch.set_num_threads(int(request["torch_threads"]))
+    worker_seed = int(request["worker_seed"])
+    np.random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+
+    config = TeamPPOConfig(**request["config"])
+    policies = make_team_policies(config)
+    for player_id, policy_state in request["policy_states"].items():
+        policies[player_id].load_state_dict(policy_state)
+        policies[player_id].eval()
+
+    episode_summaries = []
+    actions_by_player = {player_id: [] for player_id in config.controlled_players}
+    masks_by_player = {player_id: [] for player_id in config.controlled_players}
+    entropies_by_player = {player_id: [] for player_id in config.controlled_players}
+
+    for env_seed in request["env_seeds"]:
+        env_seed = int(env_seed)
+        torch.manual_seed(int(request["sample_seed_offset"]) + env_seed)
+        np.random.seed((int(request["sample_seed_offset"]) + env_seed) % (2**32 - 1))
+
+        env = TeamTrainingEnv(_env_config(config, env_seed))
+        observations, _ = env.reset(seed=env_seed)
+        done = False
+        return_sums = {player_id: 0.0 for player_id in config.controlled_players}
+        shaping_sums = {player_id: 0.0 for player_id in config.controlled_players}
+        terminal_sums = {player_id: 0.0 for player_id in config.controlled_players}
+        steps = 0
+
+        while not done:
+            masks = env.action_masks()
+            selected_actions = {}
+            for player_id in config.controlled_players:
+                step = policies[player_id].act(
+                    observations[player_id],
+                    masks[player_id],
+                    deterministic=bool(request["deterministic"]),
+                    device="cpu",
+                )
+                selected_actions[player_id] = step.action
+                actions_by_player[player_id].append(step.action)
+                masks_by_player[player_id].append(masks[player_id])
+                entropies_by_player[player_id].append(step.entropy)
+
+            result = env.step(selected_actions)
+            for player_id in config.controlled_players:
+                reward_components = result.info.get("reward_components", {}).get(player_id, {}) or {}
+                return_sums[player_id] += float(result.rewards[player_id])
+                shaping_sums[player_id] += float(reward_components.get("shaping", 0.0) or 0.0)
+                terminal_sums[player_id] += float(reward_components.get("terminal", 0.0) or 0.0)
+            observations = result.observations
+            steps += 1
+            done = bool(result.terminal or result.truncated)
+
+        episode_summaries.append(_team_episode_summary(
+            return_sums=return_sums,
+            shaping_sums=shaping_sums,
+            terminal_sums=terminal_sums,
+            steps=steps,
+            winner=result.info.get("winner") or "DRAW",
+            winner_type=result.info.get("winner_type") or "unknown",
+            controlled_team=env.controlled_team,
+        ))
+
+    return {
+        "episodes": episode_summaries,
+        "actions_by_player": actions_by_player,
+        "masks_by_player": masks_by_player,
+        "entropies_by_player": entropies_by_player,
+    }
+
+
+def evaluate_team_policies_parallel(
+    policies: dict[str, MaskedActorCritic],
+    config: TeamPPOConfig,
+    episodes: int,
+    seed: int,
+    deterministic: bool,
+    workers: int,
+) -> dict:
+    if episodes <= 0:
+        return evaluate_team_policies(
+            policies,
+            config,
+            episodes=0,
+            seed=seed,
+            deterministic=deterministic,
+            device=torch.device("cpu"),
+        )
+    if workers <= 1 or episodes <= 1:
+        return evaluate_team_policies(
+            policies,
+            config,
+            episodes=episodes,
+            seed=seed,
+            deterministic=deterministic,
+            device=torch.device("cpu"),
+        )
+
+    env_seeds = [int(seed + index) for index in range(episodes)]
+    chunk_count = max(1, min(int(workers), len(env_seeds)))
+    chunks = [env_seeds[index::chunk_count] for index in range(chunk_count)]
+    policy_states = {
+        player_id: to_cpu_state_dict(policies[player_id])
+        for player_id in config.controlled_players
+    }
+    requests = [
+        {
+            "config": asdict(config),
+            "policy_states": policy_states,
+            "env_seeds": chunk,
+            "worker_seed": int(seed + worker_index * 10_007),
+            "sample_seed_offset": int(seed + 1_000_003),
+            "deterministic": bool(deterministic),
+            "torch_threads": int(config.torch_threads),
+        }
+        for worker_index, chunk in enumerate(chunks)
+    ]
+    ctx = mp.get_context("spawn")
+    with ctx.Pool(processes=chunk_count) as pool:
+        results = pool.map(_team_policy_eval_worker, requests)
+
+    episode_summaries = []
+    actions_by_player = {player_id: [] for player_id in config.controlled_players}
+    masks_by_player = {player_id: [] for player_id in config.controlled_players}
+    entropies_by_player = {player_id: [] for player_id in config.controlled_players}
+    for result in results:
+        episode_summaries.extend(result["episodes"])
+        for player_id in config.controlled_players:
+            actions_by_player[player_id].extend(result["actions_by_player"][player_id])
+            masks_by_player[player_id].extend(result["masks_by_player"][player_id])
+            entropies_by_player[player_id].extend(result["entropies_by_player"][player_id])
+
+    summary = summarize_training_episodes(episode_summaries)
+    summary["mode"] = "argmax" if deterministic else "stochastic"
+    summary["agents"] = {}
+    for player_id in config.controlled_players:
+        entropies = entropies_by_player[player_id]
+        summary["agents"][player_id] = {
+            "mean_policy_entropy": round(float(np.mean(entropies)) if entropies else 0.0, 6),
+            "action_distribution": summarize_action_distribution(actions_by_player[player_id], masks_by_player[player_id]),
+        }
+    summary["episodes_detail"] = episode_summaries
+    return summary
+
+
 def evaluate_random_legal_team(config: TeamPPOConfig, episodes: int, seed: int) -> dict:
     episode_summaries = []
     actions_by_player = {player_id: [] for player_id in config.controlled_players}

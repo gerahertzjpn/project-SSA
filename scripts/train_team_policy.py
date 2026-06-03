@@ -23,6 +23,7 @@ from src.training.team_ppo_trainer import (
     evaluate_random_legal_team,
     evaluate_random_legal_team_parallel,
     evaluate_team_policies,
+    evaluate_team_policies_parallel,
     latest_metrics,
     load_single_policy_into_team,
     load_team_checkpoint,
@@ -222,13 +223,13 @@ def main() -> None:
 
             eval_summary = None
             if update % config.eval_interval == 0:
-                eval_summary = evaluate_team_policies(
+                eval_summary = evaluate_team_policies_parallel(
                     policies,
                     config,
                     episodes=config.eval_episodes,
                     seed=config.seed + update * 50_000,
                     deterministic=True,
-                    device=device,
+                    workers=config.workers,
                 )
 
             elapsed = time.perf_counter() - started
