@@ -314,3 +314,68 @@ Current interpretation:
 - A1 argmax has become heavily concentrated on `PRODUCE:SKIRMISHER`; this must
   be checked in stochastic eval and multi-seed sweeps before accepting the
   checkpoint for league use.
+
+## 8. Real Run Completed To Update 300
+
+Run result:
+
+- The resumed real run reached update `300`.
+- `checkpoint_update_300.pt` and `latest.pt` were written successfully.
+- The process then failed during final CLI summary generation, not during
+  training, because `latest_metrics(...)` hit a BOM-prefixed JSONL line.
+
+Technical fix:
+
+- `src/training/team_ppo_trainer.py::latest_metrics(...)` now strips `\ufeff`
+  at the start of every JSONL line.
+- The same fix was applied to `src/training/ppo_trainer.py` for single-agent
+  runs.
+- Added `tests/test_metrics_io.py` to lock this behavior.
+
+Verification:
+
+```powershell
+python -m pytest tests/test_metrics_io.py tests/test_team_ppo_trainer.py -q
+python -c "from pathlib import Path; from src.training.team_ppo_trainer import latest_metrics; m=latest_metrics(Path('training_runs/sprint3_team_scripted_warm_v1/metrics.jsonl')); print(len(m)); print(m[-1]['kind'], m[-1].get('update'))"
+```
+
+Results:
+
+- `6 passed`
+- Current real-run metrics file reads fully: `310` records; last record is
+  `team_ppo_update 300`.
+
+Final built-in argmax eval checkpoints:
+
+| Update | Win | Loss | Draw | Normal Wins | Death-Time Wins | Mean Steps | A3 Dominant Argmax |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 250 | `94%` | `6%` | `0%` | `92%` | `2%` | `153.96` | `PRODUCE:SKIRMISHER` at `26%` |
+| 260 | `96%` | `4%` | `0%` | `90%` | `6%` | `155.80` | `PRODUCE:SKIRMISHER` at `30%` |
+| 270 | `98%` | `2%` | `0%` | `88%` | `10%` | `158.84` | `HOLD` at `53%` |
+| 280 | `94%` | `6%` | `0%` | `86%` | `8%` | `164.84` | `HOLD` at `55%` |
+| 290 | `96%` | `4%` | `0%` | `82%` | `14%` | `190.10` | `HOLD` at `57%` |
+| 300 | `86%` | `14%` | `0%` | `82%` | `4%` | `186.82` | `HOLD` at `70%` |
+
+Interpretation:
+
+- The team policy clearly learned under the corrected rules: it repeatedly
+  exceeded the random-legal team baseline (`30%` win, `66%` loss, `4%` draw) and
+  the scripted-control baseline (`34%` win, `64%` loss, `2%` draw from Sprint 2
+  preflight).
+- The latest checkpoint is not the best checkpoint.
+- Update `240` remains the strongest visible candidate from the built-in eval:
+  `100%` win, `98%` normal wins, `2%` death-time wins, shortest mean episode
+  length.
+- Update `220` remains a backup candidate: `100%` win, `90%` normal wins,
+  `10%` death-time wins.
+- Update `270` is worth checking as a late neighbor but has a clear A3 HOLD
+  concentration risk.
+- Updates `280-300` should not be accepted without surprising sweep results;
+  A3 argmax collapses toward HOLD and raw win-rate drops by update `300`.
+
+Next action:
+
+- Run a separate multi-seed argmax/stochastic eval sweep on candidate
+  checkpoints `220`, `240`, `250`, `260`, `270`, plus controls.
+- Select a checkpoint by scripted performance and stability, not by training
+  recency.

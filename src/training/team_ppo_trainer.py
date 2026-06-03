@@ -806,7 +806,7 @@ def latest_metrics(path: Path) -> list[dict]:
     result = []
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
-            line = line.strip()
+            line = line.strip().lstrip("\ufeff")
             if line:
                 result.append(json.loads(line))
     return result
