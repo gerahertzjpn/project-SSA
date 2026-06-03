@@ -61,6 +61,7 @@ class PlayerState:
     resources: float
     alive: bool
     core_hp: float
+    core_type: str = "standard"
 
 
 @dataclass
@@ -172,6 +173,7 @@ def make_initial_state(seed: int = 42) -> GameState:
             resources=start_resources,
             alive=True,
             core_hp=float(CORE_HP),
+            core_type="standard",
         )
 
     baron = BaronState(

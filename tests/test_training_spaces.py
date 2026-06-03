@@ -9,12 +9,14 @@ from src.training.spaces import (
     ACTION_SPECS,
     BATTLE_FEATURES,
     COMBAT_RELATIONS,
+    CORE_TYPE_FEATURES,
     GLOBAL_FEATURES,
     MIRROR_NODES,
     MOVEMENT_BUCKETS,
     MOVEMENT_FEATURES,
     NODE_FEATURES,
     NODE_SCALAR_FEATURES,
+    NODE_TYPE_FEATURES,
     OWNER_RELATION_FEATURES,
     OBSERVATION_DIM,
     OBSERVATION_VERSION,
@@ -22,6 +24,7 @@ from src.training.spaces import (
     UNIT_ORDER,
     decode_action,
     encode_observation,
+    estimate_route_ticks,
     find_route_obs,
     legal_action_mask,
     mirror_action_index,
@@ -55,7 +58,7 @@ def test_training_observation_vector_is_fixed_and_finite():
     obs = observe_state(make_initial_state(seed=1))
     vector = encode_observation(obs, "A1")
 
-    assert OBSERVATION_VERSION == "train_obs_v0.5"
+    assert OBSERVATION_VERSION == "train_obs_v0.6"
     assert vector.shape == (OBSERVATION_DIM,)
     assert vector.dtype == np.float32
     assert np.isfinite(vector).all()
@@ -189,10 +192,31 @@ def test_training_observation_exposes_per_core_hp_and_death_time_clock():
     obs = observe_state(state)
     vector = encode_observation(obs, "A1")
 
-    b1_core_hp_offset = GLOBAL_FEATURES + ALL_NODES.index("B1") * NODE_FEATURES + 21
+    scalar_start = (
+        NODE_TYPE_FEATURES
+        + CORE_TYPE_FEATURES
+        + OWNER_RELATION_FEATURES
+        + STATIONED_UNIT_FEATURES
+    )
+    b1_core_hp_offset = GLOBAL_FEATURES + ALL_NODES.index("B1") * NODE_FEATURES + scalar_start + 2
 
     assert vector[3] == 1.0
     assert vector[b1_core_hp_offset] == np.float32(17.0 / float(CORE_HP))
+
+
+def test_training_observation_exposes_core_type_for_all_cores():
+    obs = observe_state(make_initial_state(seed=5), "A1")
+    vector = encode_observation(obs, "A1")
+    core_type_start = NODE_TYPE_FEATURES
+
+    assert vector[node_offset("A2") + core_type_start] == np.float32(1.0)
+    assert vector[node_offset("B1") + core_type_start] == np.float32(1.0)
+    assert vector[node_offset("CP1") + core_type_start] == np.float32(0.0)
+
+
+def test_route_tick_estimate_is_discrete_per_segment():
+    assert estimate_route_ticks(["A1", "CP1"], speed=3.0) == 3.0
+    assert estimate_route_ticks(["A1", "CP1", "CP3"], speed=3.0) == 5.0
 
 
 def node_offset(node_id: str) -> int:
@@ -201,7 +225,8 @@ def node_offset(node_id: str) -> int:
 
 def movement_offset(node_id: str, bucket: str, relation: str, unit_type: UnitType) -> int:
     movement_start = (
-        3
+        NODE_TYPE_FEATURES
+        + CORE_TYPE_FEATURES
         + OWNER_RELATION_FEATURES
         + STATIONED_UNIT_FEATURES
         + NODE_SCALAR_FEATURES
@@ -227,7 +252,8 @@ def battle_offset(
     hp_slot: int | None = None,
 ) -> int:
     battle_start = (
-        3
+        NODE_TYPE_FEATURES
+        + CORE_TYPE_FEATURES
         + OWNER_RELATION_FEATURES
         + STATIONED_UNIT_FEATURES
         + NODE_SCALAR_FEATURES

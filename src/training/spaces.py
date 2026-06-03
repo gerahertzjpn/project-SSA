@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections import deque
 from dataclasses import dataclass
 from typing import Optional
@@ -24,15 +25,17 @@ from src.core.map import ADJACENCY, ALL_NODES, NODE_TYPES, NodeType
 from src.core.units import UNIT_STATS
 
 
-OBSERVATION_VERSION = "train_obs_v0.5"
+OBSERVATION_VERSION = "train_obs_v0.6"
 
 UNIT_ORDER = (UnitType.VANGUARD, UnitType.RANGER, UnitType.SKIRMISHER)
+CORE_TYPES = ("standard",)
 RELATIONS = ("self", "ally", "enemy", "neutral")
 COMBAT_RELATIONS = ("self", "ally", "enemy")
 MOVEMENT_BUCKETS = ("inside", "outgoing", "incoming")
 MOVE_INTENTS = ("CAPTURE", "TRANSIT")
 GLOBAL_FEATURES = 14
 NODE_TYPE_FEATURES = 3
+CORE_TYPE_FEATURES = len(CORE_TYPES)
 OWNER_RELATION_FEATURES = len(RELATIONS)
 STATIONED_UNIT_FEATURES = len(RELATIONS) * len(UNIT_ORDER)
 NODE_SCALAR_FEATURES = 9
@@ -40,6 +43,7 @@ MOVEMENT_FEATURES = len(MOVEMENT_BUCKETS) * len(COMBAT_RELATIONS) * len(UNIT_ORD
 BATTLE_FEATURES = 4 + len(COMBAT_RELATIONS) * len(UNIT_ORDER)
 NODE_FEATURES = (
     NODE_TYPE_FEATURES
+    + CORE_TYPE_FEATURES
     + OWNER_RELATION_FEATURES
     + STATIONED_UNIT_FEATURES
     + NODE_SCALAR_FEATURES
@@ -425,15 +429,18 @@ def group_speed(units: dict | None) -> float:
 def estimate_route_ticks(path: list[str], speed: float) -> float:
     if len(path) <= 1:
         return 0.0
+    segment_speed = max(0.001, float(speed))
     edge_count = len(path) - 1
     intermediate_count = max(0, len(path) - 2)
-    base_ticks = (
-        NODE_HALF_CROSSING_TICKS
-        + float(TRAVEL_TIME) * edge_count
-        + float(TRAVEL_TIME) * intermediate_count
-        + NODE_HALF_CROSSING_TICKS
-    )
-    return base_ticks / max(0.001, float(speed))
+    half_ticks = _discrete_segment_ticks(NODE_HALF_CROSSING_TICKS / segment_speed)
+    full_ticks = _discrete_segment_ticks(float(TRAVEL_TIME) / segment_speed)
+    return float(half_ticks * 2 + full_ticks * (edge_count + intermediate_count))
+
+
+def _discrete_segment_ticks(ticks: float) -> int:
+    if ticks <= 0:
+        return 0
+    return max(1, math.ceil(float(ticks)))
 
 
 def movable_sources(obs: dict, player_id: str) -> list[str]:
@@ -725,6 +732,11 @@ def _encode_observation_absolute(obs: dict, player_id: str) -> np.ndarray:
             1.0 if node_type == NodeType.CONTROL_POINT else 0.0,
             1.0 if node_type == NodeType.BARON else 0.0,
         ])
+        core_type = node.get("core_type") if node_type == NodeType.CORE else None
+        features.extend(
+            1.0 if core_type == item else 0.0
+            for item in CORE_TYPES
+        )
         relation = owner_relation(node.get("owner", "NEUTRAL"), player_id)
         features.extend(1.0 if relation == item else 0.0 for item in RELATIONS)
 

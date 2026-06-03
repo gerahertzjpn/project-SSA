@@ -428,6 +428,13 @@ def test_movement_speed_uses_slowest_unit_in_group():
     assert groups["A1"].travel_ticks < groups["A2"].travel_ticks
 
 
+def test_arrival_tick_estimate_uses_discrete_segment_ticks():
+    engine = GameEngine(make_initial_state(seed=20), make_bots())
+
+    assert engine._estimate_arrival_tick(10, ["A1", "CP1"], speed=3.0) == 13
+    assert engine._estimate_arrival_tick(10, ["A1", "CP1", "CP3"], speed=3.0) == 15
+
+
 def test_stationed_units_use_saved_entry_side_in_node_battle():
     state = make_initial_state(seed=16)
     state.nodes["CP3"].owner = "B1"

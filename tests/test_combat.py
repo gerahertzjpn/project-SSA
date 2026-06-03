@@ -403,6 +403,46 @@ def test_melee_unit_attacks_instead_of_moving_when_target_starts_in_range():
     assert vanguard_frame["target"] == close_target.uid
 
 
+def test_melee_engagement_width_distributes_contact_attacks():
+    skirmishers = build_player_units({UnitType.SKIRMISHER.value: 5}, "A1", "attacker")
+    rangers = build_player_units({UnitType.RANGER.value: 3}, "B1", "defender")
+    for unit in skirmishers:
+        unit.pos = 10.0
+        unit.speed = 0.0
+    for index, unit in enumerate(rangers):
+        unit.pos = 11.5 + index * 0.25
+        unit.speed = 0.0
+        unit.range = 0.0
+
+    frame = tick_battle_units([*skirmishers, *rangers], record_trace=True)
+    attacked_targets = {
+        attack["target"]
+        for item in frame
+        if item["type"] == UnitType.SKIRMISHER.value
+        for attack in item["attacks"]
+    }
+
+    assert attacked_targets == {unit.uid for unit in rangers}
+    assert all(unit.hp <= 0 for unit in rangers)
+
+
+def test_melee_engagement_width_requires_real_contact():
+    skirmisher = build_player_units({UnitType.SKIRMISHER.value: 1}, "A1", "attacker")[0]
+    target = build_player_units({UnitType.RANGER.value: 1}, "B1", "defender")[0]
+    skirmisher.pos = 10.0
+    skirmisher.speed = 0.0
+    target.pos = skirmisher.pos + skirmisher.range + 0.2
+    target.speed = 0.0
+    target.range = 0.0
+    before_hp = target.hp
+
+    frame = tick_battle_units([skirmisher, target], record_trace=True)
+    skirmisher_frame = next(item for item in frame if item["uid"] == skirmisher.uid)
+
+    assert target.hp == before_hp
+    assert skirmisher_frame["attacks"] == []
+
+
 def test_regular_unit_stops_and_attacks_when_target_starts_in_range():
     ranger = build_player_units({UnitType.RANGER.value: 1}, "A1", "attacker")[0]
     target = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]

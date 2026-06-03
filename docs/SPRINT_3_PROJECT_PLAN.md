@@ -4,7 +4,7 @@ Date: 2026-06-03
 
 Sprint 2 status: closed for the single-agent proof. Accepted checkpoint:
 `training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt`.
-That checkpoint is proof evidence only after the `train_obs_v0.5` interface
+That checkpoint is proof evidence only before the `train_obs_v0.6` interface
 change; it must not be resumed or warm-started directly.
 
 Sprint 3 goal: move from one controlled player (`A1`) to three controlled
@@ -15,6 +15,12 @@ Current pre-training balance pass is documented in `docs/BALANCE_AUDIT.md`.
 The active ruleset for the next large run uses core `80hp/6 atk`, neutral guards
 with `2hp` each and damage `2 * strength`, integer death-time core damage, and
 neutral income `ceil(strength / 2)`.
+Melee units (`Vanguard`, `Skirmisher`) can attack after closing distance, while
+`Ranger` still chooses between moving and shooting. Once a melee unit has made
+real contact with an enemy line, a small contact-width window lets melee attacks
+distribute across nearby targets instead of piling into one pixel-nearest unit.
+Movement ETA and route-time observations use discrete per-segment tick costs,
+matching the simulator's node-exit, edge, node-transit, and node-enter phases.
 
 ## Non-Negotiables
 
@@ -28,8 +34,10 @@ neutral income `ceil(strength / 2)`.
 - If game rules change during Sprint 3, current Sprint 3 checkpoints become
   stale until revalidated.
 - Observation interface changes also invalidate checkpoints with mismatched
-  metadata or input layers. Current interface is `train_obs_v0.5` /
-  `OBSERVATION_DIM=1028`.
+  metadata or input layers. Current interface is `train_obs_v0.6` /
+  `OBSERVATION_DIM=1080`.
+- Core nodes expose a stable `core_type` feature. The current only type is
+  `standard`; this is intentionally present before future factions are added.
 - Policy observations/actions are left-side normalized: B-side players are
   mirrored into matching A-side slots (`B1->A1`, `B2->A2`, `B3->A3`) before the
   policy sees the state, and MOVE source/destination ids are mirrored back
@@ -130,7 +138,7 @@ Build the smallest correct version first:
 
 Tests to write before long training:
 
-- reset returns three observations of dimension `1028`;
+- reset returns three observations of dimension `1080`;
 - each controlled player has a legal mask with at least `HOLD`;
 - one `step()` advances the engine by one tick total, not three ticks;
 - all three actions are consumed on the same tick;

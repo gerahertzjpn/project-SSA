@@ -463,11 +463,18 @@ class GameEngine:
         progress: float = 0.0,
     ) -> int:
         segments = self._movement_segments(path, speed)
-        remaining = 0.0
+        remaining = 0
         for index, segment in enumerate(segments[segment_index:], start=segment_index):
             ticks = float(segment["ticks"])
-            remaining += ticks * (1.0 - progress if index == segment_index else 1.0)
-        return current_tick + max(1, math.ceil(remaining))
+            remaining_ticks = ticks * (1.0 - progress if index == segment_index else 1.0)
+            remaining += self._discrete_segment_ticks(remaining_ticks)
+        return current_tick + max(1, remaining)
+
+    @staticmethod
+    def _discrete_segment_ticks(ticks: float) -> int:
+        if ticks <= 0:
+            return 0
+        return max(1, math.ceil(float(ticks)))
 
     def _complete_group_segment(self, group: MovingGroup) -> tuple[Optional[dict], bool]:
         if group.phase == "node_enter":
@@ -1630,6 +1637,11 @@ class GameEngine:
                     if node_id in self.state.players
                     else None
                 ),
+                "core_type": (
+                    self.state.players[node_id].core_type
+                    if node_id in self.state.players
+                    else None
+                ),
                 "neutral_hp": node.neutral_hp,
                 "neutral_income": node.neutral_income,
                 "neutral_aggro_teams": sorted(node.neutral_aggro_teams),
@@ -1682,7 +1694,12 @@ class GameEngine:
                 "allied_lord_expended": state.baron.allied_lord_expended,
             },
             "players": {
-                pid: {"alive": p.alive, "resources": p.resources, "core_hp": round(p.core_hp, 3)}
+                pid: {
+                    "alive": p.alive,
+                    "resources": p.resources,
+                    "core_hp": round(p.core_hp, 3),
+                    "core_type": p.core_type,
+                }
                 for pid, p in state.players.items()
             },
         }
@@ -1697,6 +1714,11 @@ class GameEngine:
                     "units": dict(node.units),
                     "core_hp": (
                         round(state.players[nid].core_hp, 3)
+                        if nid in state.players
+                        else None
+                    ),
+                    "core_type": (
+                        state.players[nid].core_type
                         if nid in state.players
                         else None
                     ),
@@ -1736,6 +1758,7 @@ class GameEngine:
                     "resources": round(player.resources, 2),
                     "alive": player.alive,
                     "core_hp": round(player.core_hp, 3),
+                    "core_type": player.core_type,
                 }
                 for pid, player in state.players.items()
             },

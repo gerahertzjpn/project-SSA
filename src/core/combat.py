@@ -45,6 +45,7 @@ NEUTRAL_RANGE = float(UNIT_STATS[UnitType.RANGER]["range"])
 LORD_RANGE = LORD_ATTACK_RANGE
 CORE_RANGE = CORE_ATTACK_RANGE
 LORD_CONTACT_RANGE = 0.5
+MELEE_ENGAGEMENT_WIDTH = 1.0
 RANGE_EPSILON = 1e-5
 
 _SLOT_ORDER = {
@@ -202,16 +203,43 @@ def _find_target(
     best = None
     best_dist = float("inf")
     pending = pending or {}
+    range_limit = _target_range_limit(unit, enemies, positions)
     for e in enemies:
         if not e.is_alive():
             continue
         if e.hp - pending.get(e.uid, 0.0) <= 0:
             continue
         dist = abs(_unit_pos(unit, positions) - _unit_pos(e, positions))
-        if dist <= unit.range + RANGE_EPSILON and dist < best_dist:
+        if dist <= range_limit and dist < best_dist:
             best_dist = dist
             best = e
     return best
+
+
+def _uses_melee_engagement(unit: UnitInstance) -> bool:
+    return unit.unit_type in (UnitType.VANGUARD.value, UnitType.SKIRMISHER.value)
+
+
+def _target_range_limit(
+    unit: UnitInstance,
+    enemies: list[UnitInstance],
+    positions: Optional[dict[int, float]] = None,
+) -> float:
+    base_limit = float(unit.range) + RANGE_EPSILON
+    if not _uses_melee_engagement(unit):
+        return base_limit
+
+    nearest = min(
+        (
+            abs(_unit_pos(unit, positions) - _unit_pos(enemy, positions))
+            for enemy in enemies
+            if enemy.is_alive()
+        ),
+        default=float("inf"),
+    )
+    if nearest <= base_limit:
+        return nearest + MELEE_ENGAGEMENT_WIDTH + RANGE_EPSILON
+    return base_limit
 
 
 def _unit_pos(unit: UnitInstance, positions: Optional[dict[int, float]] = None) -> float:
@@ -433,13 +461,19 @@ def _find_persistent_target(
     best = None
     best_dist = float("inf")
     pending = pending or {}
+    hostile_units = [
+        other
+        for other in all_units
+        if _is_hostile(unit, other, neutral_aggro_teams)
+    ]
+    range_limit = _target_range_limit(unit, hostile_units, positions)
     for other in all_units:
         if not _is_hostile(unit, other, neutral_aggro_teams):
             continue
         if other.hp - pending.get(other.uid, 0.0) <= 0:
             continue
         dist = abs(_unit_pos(unit, positions) - _unit_pos(other, positions))
-        if in_range_only and dist > unit.range + RANGE_EPSILON:
+        if in_range_only and dist > range_limit:
             continue
         if dist < best_dist:
             best_dist = dist
