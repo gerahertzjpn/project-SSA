@@ -195,6 +195,8 @@ def test_neutrals_are_centered_stationary_group_with_ranger_range():
     neutrals = build_neutral_units(5)
 
     assert len(neutrals) == 5
+    assert {unit.hp for unit in neutrals} == {2.0}
+    assert {unit.max_hp for unit in neutrals} == {2.0}
     assert {unit.pos for unit in neutrals} == {CENTER_SIDE}
     assert {unit.speed for unit in neutrals} == {0.0}
     assert {unit.range for unit in neutrals} == {UNIT_STATS[UnitType.RANGER]["range"]}

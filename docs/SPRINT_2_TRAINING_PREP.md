@@ -76,6 +76,7 @@ Pre-training balance pass before the next large run:
 
 - core stats are `80hp`, `6 atk`, range `12.0`;
 - neutral Lord stats are `120hp`, `16 atk`, attack rate `3`, range `11.0`;
+- neutral guards have `2hp` each;
 - neutral guard total attack is `2 * guard strength`;
 - neutral point income is scaled from guard strength: `1..7 -> 1,1,2,2,3,3,4`.
 - death-time core damage is integer-scheduled across ticks `270..299` so a

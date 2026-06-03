@@ -14,7 +14,7 @@ Rebalance the game before the next large training run and separate two questions
 Current script:
 
 ```bash
-python scripts/analyze_balance.py --matches 300 --workers 16 --bot-types random,scripted --out analysis/balance_audit_integer_damage_300.json
+python scripts/analyze_balance.py --matches 300 --workers 16 --bot-types random,scripted --out analysis/balance_audit_neutral_hp2_300.json
 ```
 
 The audit measures:
@@ -36,6 +36,17 @@ Ranger:
   on side/formation.
 - Decision: do not nerf Ranger in this pass. The clearer balance issues were
   objective durability and neutral-point ROI.
+
+Open issue:
+
+- Direct scenario `10 Skirmisher` entering from the left versus `10 Ranger`
+  entering from the right currently ends with `9 Ranger` surviving.
+- Reversing sides gives the same Ranger-favored result.
+- Skirmishers only win the checked pure-army case when the formation is much
+  larger, e.g. `20 Skirmisher` versus `10 Ranger`.
+- This means the intended Skirmisher-over-Ranger counter is not reliable under
+  the current 1D formation/range rules and should be fixed before a large run if
+  Ranger-heavy policies reappear.
 
 Core:
 
@@ -80,6 +91,7 @@ Match stats after rebalance:
 
 - Core: `80hp`, `6 atk`, range `12.0`.
 - Neutral Lord: `120hp`, `16 atk`, attack rate `3`, range `11.0`.
+- Neutral guards: `2hp` each.
 - Neutral guard total attack: `2 * guard_strength`.
 - Neutral income: `ceil(guard_strength / 2)`, so strength `1..7` pays
   `1,1,2,2,3,3,4`.

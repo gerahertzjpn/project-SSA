@@ -229,6 +229,7 @@ def test_replay_meta_records_code_and_rules_version(tmp_path: Path):
     assert replay["meta"]["rules"]["allied_lord_can_move_and_shoot"] is True
     assert replay["meta"]["rules"]["core_hp"] == 80
     assert replay["meta"]["rules"]["core_atk"] == 6
+    assert replay["meta"]["rules"]["neutral_guard_hp"] == 2
     assert replay["meta"]["rules"]["neutral_guard_total_atk"] == "2 * guard_strength"
     assert replay["meta"]["rules"]["neutral_income"] == "ceil(guard_strength / 2)"
     assert replay["meta"]["rules"]["lord_attack_range"] == 11.0

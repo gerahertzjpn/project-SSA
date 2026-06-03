@@ -54,7 +54,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - Neutral Lord HP persists across failed attempts to kill it.
 - Killing the neutral Lord spawns an allied `LORD` unit with full HP on the same node. It automatically pushes along a shortest route toward a random living enemy core and fights enemies encountered on the way.
 - The allied `LORD` keeps one persistent HP pool across all push fights. If it dies during the push, it does not resurrect again. If it destroys its first core, it disappears regardless of remaining HP.
-- Neutral guards are represented as a stationary centered group with Ranger-equivalent range (`3.0`) and total attack equal to `2 * guard strength`. Once aggroed by an attack/capture, the whole neutral group attacks.
+- Neutral guards are represented as a stationary centered group with `2hp` per guard, Ranger-equivalent range (`3.0`), and total attack equal to `2 * guard strength`. Once aggroed by an attack/capture, the whole neutral group attacks.
 - Current neutral aggro is intent-based: `CAPTURE`/`ATTACK` starts neutral aggro immediately, while `TRANSIT` does not. Future damage-triggered aggro is tracked in `docs/SPRINT_2_TRAINING_PREP.md`.
 - TEAM_A cores are placed on the left side of the combat line, TEAM_B cores on the right side. Cores have high attack range.
 - Core stats are `80hp`, `6 atk`, and high attack range (`12.0`).

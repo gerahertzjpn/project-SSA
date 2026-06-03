@@ -1123,11 +1123,11 @@ class GameEngine:
             )
 
         if battle.objective == "neutral":
-            remaining_neutral_hp = int(sum(
-                max(0.0, unit.hp)
+            remaining_neutral_hp = sum(
+                1
                 for unit in battle.units
                 if unit.unit_type == "NEUTRAL" and unit.is_alive()
-            ))
+            )
             node.neutral_aggro_teams = set(battle.neutral_aggro_teams)
             if remaining_neutral_hp > 0 or not winner_player:
                 node.owner = "NEUTRAL"

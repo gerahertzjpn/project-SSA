@@ -64,6 +64,7 @@ BARON_RESPAWN_TICKS = 50
 # Combat maps are a 1D [0..20] line, so map radius is 10.
 LORD_ATTACK_RANGE = 11.0
 CORE_ATTACK_RANGE = 12.0
+NEUTRAL_GUARD_HP = 2
 
 PLAYER_IDS = ["A1", "A2", "A3", "B1", "B2", "B3"]
 TEAM_A_PLAYERS = ["A1", "A2", "A3"]

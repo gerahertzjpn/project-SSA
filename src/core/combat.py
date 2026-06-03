@@ -21,6 +21,7 @@ from typing import Optional
 from .constants import (
     UnitType, CORE_HP, CORE_ATK, BARON_ATK, BARON_ATTACK_RATE, MAX_COMBAT_TICKS,
     TEAM_A_PLAYERS, TEAM_B_PLAYERS, TRAVEL_TIME, LORD_ATTACK_RANGE, CORE_ATTACK_RANGE,
+    NEUTRAL_GUARD_HP,
 )
 from .units import UnitInstance, UNIT_STATS
 
@@ -105,8 +106,8 @@ def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
             uid=_new_uid(),
             unit_type="NEUTRAL",
             team="NEUTRAL",
-            hp=1.0,
-            max_hp=1.0,
+            hp=float(NEUTRAL_GUARD_HP),
+            max_hp=float(NEUTRAL_GUARD_HP),
             atk=per_unit_atk,
             range=NEUTRAL_RANGE,
             speed=0.0,
@@ -639,7 +640,7 @@ def resolve_combat(
     if alive_atk and not alive_def:
         return _count_survivors(alive_atk), attacker_team, trace, 0
     if neutral_hp > 0:
-        remaining = int(sum(u.hp for u in alive_def if u.unit_type == "NEUTRAL"))
+        remaining = sum(1 for u in alive_def if u.unit_type == "NEUTRAL")
         return {}, "NEUTRAL", trace, remaining
     return _count_survivors([u for u in alive_def if u.unit_type != "CORE"]), defender_team, trace, 0
 

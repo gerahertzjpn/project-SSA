@@ -1,5 +1,12 @@
 from dataclasses import dataclass
-from .constants import BARON_ATTACK_RATE, BARON_ATK, BARON_HP, LORD_ATTACK_RANGE, UnitType
+from .constants import (
+    BARON_ATTACK_RATE,
+    BARON_ATK,
+    BARON_HP,
+    LORD_ATTACK_RANGE,
+    NEUTRAL_GUARD_HP,
+    UnitType,
+)
 
 # R-P-S: VANGUARD > SKIRMISHER > RANGER > VANGUARD
 # Reflected through unit stats: rangers shred vanguards at range before they close,
@@ -42,7 +49,7 @@ UNIT_STATS: dict[UnitType, dict] = {
 
 # Neutral unit stats (like vanguard but with configurable HP/ATK)
 NEUTRAL_UNIT_BASE = {
-    "hp": 1,         # multiplied by neutral_strength
+    "hp": NEUTRAL_GUARD_HP,
     "atk": 1,        # total neutral atk is set dynamically from guard strength
     "range": 3.0,
     "speed": 0.0,    # neutrals don't advance

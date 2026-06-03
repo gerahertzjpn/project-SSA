@@ -31,6 +31,7 @@ from src.core.constants import (
     BARON_HP,
     CORE_HP,
     MAX_COMBAT_TICKS,
+    NEUTRAL_GUARD_HP,
     PLAYER_IDS,
     TEAM_A_PLAYERS,
     TEAM_B_PLAYERS,
@@ -503,6 +504,7 @@ def constants_snapshot() -> dict[str, Any]:
         },
         "core_hp": CORE_HP,
         "baron_hp": BARON_HP,
+        "neutral_guard_hp": NEUTRAL_GUARD_HP,
     }
 
 
