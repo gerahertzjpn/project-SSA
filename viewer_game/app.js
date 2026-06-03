@@ -79,6 +79,8 @@ const state = {
   samples: [...SAMPLE_REPLAYS],
   tickFloat: 0,
   playing: false,
+  playStartedAt: 0,
+  playStartTick: 0,
   lastFrame: 0,
   snapVisuals: true,
   visuals: new Map(),
@@ -123,6 +125,7 @@ function bindControls() {
   els.prevBtn.addEventListener("click", () => seekTo(Math.floor(state.tickFloat) - 1));
   els.nextBtn.addEventListener("click", () => seekTo(Math.floor(state.tickFloat) + 1));
   els.tickSlider.addEventListener("input", (event) => seekTo(Number(event.target.value)));
+  els.speedSelect.addEventListener("change", () => resetPlaybackClock(performance.now()));
   els.canvas.addEventListener("mousedown", startDrag);
   window.addEventListener("mousemove", dragMove);
   window.addEventListener("mouseup", endDrag);
@@ -187,7 +190,7 @@ function setReplay(replay, label) {
   state.replay = replay;
   state.replayLabel = label;
   state.tickFloat = 0;
-  state.playing = false;
+  setPlaying(false);
   state.visuals.clear();
   state.selected = null;
   state.snapVisuals = true;
@@ -208,8 +211,24 @@ function togglePlay() {
   if (!state.replay) {
     return;
   }
-  state.playing = !state.playing;
+  setPlaying(!state.playing);
+}
+
+function setPlaying(playing, now = performance.now()) {
+  state.playing = Boolean(playing);
+  if (state.playing) {
+    state.playStartedAt = now;
+    state.playStartTick = state.tickFloat;
+  }
   els.playBtn.textContent = state.playing ? "||" : ">";
+}
+
+function resetPlaybackClock(now = performance.now()) {
+  if (!state.playing) {
+    return;
+  }
+  state.playStartedAt = now;
+  state.playStartTick = state.tickFloat;
 }
 
 function seekTo(tick) {
@@ -218,8 +237,10 @@ function seekTo(tick) {
   }
   const max = state.replay.ticks.length - 1;
   state.tickFloat = Math.max(0, Math.min(max, tick));
+  resetPlaybackClock();
   state.snapVisuals = true;
   updatePlaybackUi();
+  render(0);
 }
 
 function frameLoop(now) {
@@ -229,10 +250,9 @@ function frameLoop(now) {
   if (state.replay && state.playing) {
     const speed = Number(els.speedSelect.value || 1);
     const maxTick = state.replay.ticks.length - 1;
-    state.tickFloat = Math.min(maxTick, state.tickFloat + (dt * 1000 / BASE_TICK_MS) * speed);
+    state.tickFloat = Math.min(maxTick, state.playStartTick + ((now - state.playStartedAt) / BASE_TICK_MS) * speed);
     if (state.tickFloat >= maxTick) {
-      state.playing = false;
-      els.playBtn.textContent = ">";
+      setPlaying(false, now);
     }
   }
 

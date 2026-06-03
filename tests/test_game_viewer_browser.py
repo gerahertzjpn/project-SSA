@@ -73,6 +73,14 @@ def test_game_viewer_loads_replay_and_renders_canvas():
                     };
                 }"""
             )
+            page.click("#loadBtn")
+            page.wait_for_function("state.replay && Number(document.querySelector('#tickMax').textContent) > 0")
+            play_before = page.evaluate("({tick: state.tickFloat, text: document.querySelector('#playBtn').textContent})")
+            page.click("#playBtn")
+            page.wait_for_function("state.tickFloat > 0.5")
+            play_after = page.evaluate(
+                "({tick: state.tickFloat, readout: document.querySelector('#tickNow').textContent, text: document.querySelector('#playBtn').textContent})"
+            )
             screenshot = page.screenshot(full_page=False)
             browser.close()
 
@@ -85,6 +93,11 @@ def test_game_viewer_loads_replay_and_renders_canvas():
         assert counts["canvasWidth"] > 0
         assert counts["canvasHeight"] > 0
         assert "schema" in counts["meta"]
+        assert play_before["tick"] == 0
+        assert play_before["text"] == ">"
+        assert play_after["tick"] > 0.5
+        assert int(play_after["readout"]) >= 0
+        assert play_after["text"] == "||"
 
         image = image_module.open(BytesIO(screenshot)).convert("RGB")
         pixels = list(image.getdata())
