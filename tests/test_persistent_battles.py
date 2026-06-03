@@ -3,7 +3,7 @@ sys.path.insert(0, "c:/project-SSA")
 
 from src.core.constants import ActionType, UnitType, PLAYER_IDS, TRAVEL_TIME
 from src.core.engine import Action, GameEngine
-from src.core.combat import ATTACKER_SIDE, DEFENDER_SIDE
+from src.core.combat import ATTACKER_SIDE, CENTER_SIDE, DEFENDER_SIDE
 from src.core.state import MovingGroup, make_initial_state
 
 
@@ -453,8 +453,8 @@ def test_stationed_units_use_saved_entry_side_in_node_battle():
 
     assert battle.participant_entry_sides["B1"] == "attacker"
     assert battle.participant_entry_sides["A1"] == "defender"
-    assert b_unit.pos == ATTACKER_SIDE
-    assert a_unit.pos == DEFENDER_SIDE
+    assert ATTACKER_SIDE <= b_unit.pos < CENTER_SIDE
+    assert CENTER_SIDE < a_unit.pos <= DEFENDER_SIDE
 
 
 def test_neutral_aggro_set():

@@ -91,6 +91,8 @@ def test_viewer_loads_compact_replay_schema():
     assert "replayFetchUrl" in script
     assert "DEFAULT_UI_RUNS" in script
     assert "displayUnitCode" in script
+    assert "renderPos" in script
+    assert "simPos" in script
     assert "requestAnimationFrame" in script
     assert "frame" not in script
 

@@ -29,6 +29,7 @@ from src.core.constants import (
     TRAVEL_TIME,
 )
 from src.core.engine import GameEngine
+from src.core.combat import DEPLOYMENT_DEPTH, RENDER_SLOT_SPACING, SIM_SLOT_SPACING
 from src.core.replay import save_replay
 from src.core.state import GameState, make_initial_state
 
@@ -162,6 +163,9 @@ def rules_meta() -> dict:
         "lord_attack_range": LORD_ATTACK_RANGE,
         "core_attack_range": CORE_ATTACK_RANGE,
         "edge_travel_time": TRAVEL_TIME,
+        "combat_deployment_depth": DEPLOYMENT_DEPTH,
+        "combat_sim_slot_spacing": SIM_SLOT_SPACING,
+        "combat_render_slot_spacing": RENDER_SLOT_SPACING,
     }
 
 

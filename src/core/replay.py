@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-REPLAY_SCHEMA_VERSION = "0.5.1"
-COMBAT_TRACE_FORMAT = "compact_v3"
+REPLAY_SCHEMA_VERSION = "0.5.2"
+COMBAT_TRACE_FORMAT = "compact_v4"
 
 
 def save_replay(

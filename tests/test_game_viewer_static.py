@@ -39,6 +39,8 @@ def test_game_viewer_has_stable_visual_tracker():
     assert "populateModelSelects" in script
     assert "startPlaybackTimer" in script
     assert "advancePlayback" in script
+    assert "renderPos" in script
+    assert "simPos" in script
 
 
 def test_game_viewer_layout_is_canvas_first():

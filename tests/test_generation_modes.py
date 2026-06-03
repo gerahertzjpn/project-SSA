@@ -223,7 +223,7 @@ def test_replay_meta_records_code_and_rules_version(tmp_path: Path):
     )
     replay = load_replay(str(replay_path))
 
-    assert replay["meta"]["schema_version"] == "0.5.1"
+    assert replay["meta"]["schema_version"] == "0.5.2"
     assert replay["meta"]["code_commit"]
     assert replay["meta"]["rules"]["no_shoot_while_moving"] is True
     assert replay["meta"]["rules"]["allied_lord_can_move_and_shoot"] is True
@@ -234,6 +234,9 @@ def test_replay_meta_records_code_and_rules_version(tmp_path: Path):
     assert replay["meta"]["rules"]["neutral_income"] == "ceil(guard_strength / 2)"
     assert replay["meta"]["rules"]["lord_attack_range"] == 11.0
     assert replay["meta"]["rules"]["core_attack_range"] == 12.0
+    assert replay["meta"]["rules"]["combat_deployment_depth"] == 4.0
+    assert replay["meta"]["rules"]["combat_sim_slot_spacing"] == 0.08
+    assert replay["meta"]["rules"]["combat_render_slot_spacing"] == 0.32
 
 
 def test_training_profile_requires_no_replay_path(tmp_path: Path):

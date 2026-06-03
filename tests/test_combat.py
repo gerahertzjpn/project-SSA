@@ -213,6 +213,83 @@ def test_cores_are_on_team_side_with_high_range():
     assert right_core.range == CORE_ATTACK_RANGE
 
 
+def test_large_armies_deploy_compactly_without_crossing_the_combat_line():
+    skirmishers = build_player_units({UnitType.SKIRMISHER.value: 20}, "A1", "attacker")
+    rangers = build_player_units({UnitType.RANGER.value: 10}, "B1", "defender")
+
+    assert max(unit.pos for unit in skirmishers) < CENTER_SIDE
+    assert min(unit.pos for unit in rangers) > CENTER_SIDE
+    assert min(abs(left.pos - right.pos) for left in skirmishers for right in rangers) > UNIT_STATS[UnitType.RANGER]["range"]
+
+
+def test_large_skirmisher_army_does_not_hit_rangers_on_spawn_tick():
+    units = [
+        *build_player_units({UnitType.SKIRMISHER.value: 20}, "A1", "attacker"),
+        *build_player_units({UnitType.RANGER.value: 10}, "B1", "defender"),
+    ]
+
+    frame = tick_battle_units(units, record_trace=True)
+
+    assert all(not item["attacks"] for item in frame)
+    assert sum(unit.is_alive() for unit in units if unit.team == "A1") == 20
+    assert sum(unit.is_alive() for unit in units if unit.team == "B1") == 10
+
+
+@pytest.mark.parametrize(
+    ("left_units", "right_units"),
+    [
+        ({UnitType.SKIRMISHER.value: 20}, {UnitType.RANGER.value: 10}),
+        ({UnitType.VANGUARD.value: 15}, {UnitType.RANGER.value: 10}),
+        ({UnitType.VANGUARD.value: 15}, {UnitType.SKIRMISHER.value: 20}),
+        ({UnitType.SKIRMISHER.value: 14}, {UnitType.RANGER.value: 10}),
+    ],
+)
+def test_pure_army_winner_type_is_independent_of_entry_side(left_units, right_units):
+    forward_survivors, _, _, _ = resolve_combat(
+        attacker_units=left_units,
+        attacker_team="A1",
+        defender_units=right_units,
+        defender_team="B1",
+        record_trace=False,
+    )
+    reverse_survivors, _, _, _ = resolve_combat(
+        attacker_units=right_units,
+        attacker_team="A1",
+        defender_units=left_units,
+        defender_team="B1",
+        record_trace=False,
+    )
+
+    assert set(forward_survivors) == set(reverse_survivors)
+
+
+def test_combat_deployment_keeps_frontline_ahead_of_backline():
+    attacker = build_player_units(
+        {
+            UnitType.RANGER.value: 1,
+            UnitType.SKIRMISHER.value: 1,
+            UnitType.VANGUARD.value: 1,
+        },
+        "A1",
+        "attacker",
+    )
+    defender = build_player_units(
+        {
+            UnitType.RANGER.value: 1,
+            UnitType.SKIRMISHER.value: 1,
+            UnitType.VANGUARD.value: 1,
+        },
+        "B1",
+        "defender",
+    )
+
+    attacker_pos = {unit.unit_type: unit.pos for unit in attacker}
+    defender_pos = {unit.unit_type: unit.pos for unit in defender}
+
+    assert attacker_pos[UnitType.VANGUARD.value] > attacker_pos[UnitType.SKIRMISHER.value] > attacker_pos[UnitType.RANGER.value]
+    assert defender_pos[UnitType.VANGUARD.value] < defender_pos[UnitType.SKIRMISHER.value] < defender_pos[UnitType.RANGER.value]
+
+
 def test_combat_line_crossing_matches_empty_edge_travel_time():
     assert COMBAT_MOVE_SPEED * TRAVEL_TIME == DEFENDER_SIDE - ATTACKER_SIDE
 

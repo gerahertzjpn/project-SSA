@@ -37,19 +37,19 @@ Ranger:
 - Decision: do not nerf Ranger in this pass. The clearer balance issues were
   objective durability and neutral-point ROI.
 
-Open issue:
+Open issue after compact deployment fix:
 
 - Direct scenario `10 Skirmisher` entering from the left versus `10 Ranger`
-  entering from the right currently ends with `8 Ranger` surviving after
-  raising Skirmisher HP to `6`.
-- Reversing sides gives the same Ranger-favored result.
-- `10 Skirmisher` costs `30` resources while `10 Ranger` costs `40`; the
-  near-equal-cost pure-army check `14 Skirmisher` versus `10 Ranger` ends with
-  `3 Skirmisher` surviving.
-- This means Skirmishers can answer Rangers by budget, but the intended
-  Skirmisher-over-Ranger counter is still not reliable by equal headcount under
-  the current 1D formation/range rules and should be watched before a large run
-  if Ranger-heavy policies reappear.
+  entering from the right currently ends with `9 Ranger` surviving.
+- `14 Skirmisher` (`42` resources) versus `10 Ranger` (`40` resources) still
+  loses, leaving roughly `7-8 Ranger`.
+- `20 Skirmisher` (`60` resources) versus `10 Ranger` (`40` resources) also
+  loses, leaving roughly `3 Ranger`.
+- This result was measured after fixing compact combat deployment, where large
+  armies no longer spawn stretched through the whole `0..20` combat line. It
+  means the previous Skirmisher-over-Ranger result was contaminated by a
+  formation bug, and Ranger is again the main balance suspect before a large
+  training run.
 
 Core:
 
@@ -94,6 +94,9 @@ Match stats after rebalance:
 
 - Core: `80hp`, `6 atk`, range `12.0`.
 - Skirmisher: `6hp`, `3 atk`, range `1.5`, speed `1.5`.
+- Combat deployments are compact: player units spawn inside a bounded side
+  deployment band, and replay rows expose separate `sim_pos` and visual-only
+  `render_pos`.
 - Neutral Lord: `120hp`, `16 atk`, attack rate `3`, range `11.0`.
 - Neutral guards: `2hp` each.
 - Neutral guard total attack: `2 * guard_strength`.

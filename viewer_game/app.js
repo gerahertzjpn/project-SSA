@@ -1350,13 +1350,16 @@ function interpolateFormation(formation = [], nextFormation = [], alpha = 0) {
 function normalizeFormation(formation = []) {
   return formation.map((row, index) => {
     if (Array.isArray(row) && row.length >= 7) {
+      const simPos = Number(row[5]) || 0;
+      const renderPos = row.length >= 8 ? Number(row[7]) : simPos;
       return {
         uid: row[0],
         team: row[1],
         type: displayUnitCode(row[2]),
         hp: Number(row[3]) || 0,
         maxHp: Number(row[4]) || 0,
-        pos: Number(row[5]) || 0,
+        pos: Number.isFinite(renderPos) ? renderPos : simPos,
+        simPos,
         range: Number(row[6]) || 0,
       };
     }

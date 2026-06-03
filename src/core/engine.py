@@ -27,6 +27,7 @@ from .map import ADJACENCY, NODE_TYPES, NodeType
 from .combat import (
     build_player_units, build_neutral_units, build_core_unit, build_baron_unit,
     tick_battle_units, has_hostile_units, count_survivors_by_player,
+    render_position,
 )
 from .production import apply_production, collect_income
 from .units import UNIT_STATS
@@ -1788,6 +1789,7 @@ class GameEngine:
                 round(max(0.0, unit.max_hp), 1),
                 round(unit.pos, 2),
                 round(unit.range, 2),
+                round(render_position(unit), 2),
             ])
         return formation
 

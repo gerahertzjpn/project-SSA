@@ -18,7 +18,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "range": 1.0,
         "speed": 1.0,  # positions per combat tick
         "slot": "front",
-        "base_pos": 2,  # starting position offset from own side
+        "base_pos": 3.2,  # starting position offset from own side
     },
     UnitType.RANGER: {
         "hp": 3,
@@ -26,7 +26,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "range": 3.0,
         "speed": 0.75,
         "slot": "back",
-        "base_pos": 10,
+        "base_pos": 0.8,
     },
     UnitType.SKIRMISHER: {
         "hp": 6,
@@ -34,7 +34,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "range": 1.5,
         "speed": 1.5,
         "slot": "mid",
-        "base_pos": 5,
+        "base_pos": 1.9,
     },
     UnitType.LORD: {
         "hp": BARON_HP,
@@ -43,7 +43,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "range": LORD_ATTACK_RANGE,
         "speed": 1.0,
         "slot": "front",
-        "base_pos": 1,
+        "base_pos": 3.4,
     },
 }
 
@@ -71,6 +71,7 @@ class UnitInstance:
     pos: float           # 1D position (attackers start low, defenders start high)
     attack_rate: int = 1
     move_direction: float = 0.0
+    render_offset: float = 0.0
 
     def is_alive(self) -> bool:
         return self.hp > 0

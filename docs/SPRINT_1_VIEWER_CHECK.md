@@ -6,10 +6,10 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 
 ## Replay schema used
 
-- `schema_version`: `0.5.1`
-- `combat_trace_format`: `compact_v3`
+- `schema_version`: `0.5.2`
+- `combat_trace_format`: `compact_v4`
 - sample path: `replays_viewer_debug_smoke/replay_0.json`
-- active battle formation rows are `[uid, team, unit_code, hp, max_hp, pos, range]`
+- active battle formation rows are `[uid, team, unit_code, hp, max_hp, sim_pos, range, render_pos]`
 - `BATTLE_TICK.summary.attacks` rows are `[attacker_uid, target_uid, damage, attacker_team, attacker_code, target_team, target_code]`
 
 ## Naming Canon
@@ -24,7 +24,8 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 ## Visual mapping
 
 - The center panel is a map-first replay UI: nodes are rendered as rooms, edges are rendered as corridors, and core-to-CP1/CP2/CP5/CP6 passages are rendered as heavier tunnel corridors.
-- The `unitCanvas` layer renders individual visible unit figures over the map. Active battles use true replay `formation` rows with `uid/hp/pos/range`; non-battle stationed and moving forces are expanded deterministically from aggregate unit counts for visual readability only.
+- The `unitCanvas` layer renders individual visible unit figures over the map. Active battles use replay `formation` rows with `uid/hp/sim_pos/range/render_pos`; non-battle stationed and moving forces are expanded deterministically from aggregate unit counts for visual readability only.
+- `formation[*][5]` / `sim_pos` is the real 1D combat coordinate used by simulation. `formation[*][7]` / `render_pos` is a visual-only coordinate that spreads compact formations enough for the viewer to show individual units.
 - `nodes[*].owner` controls room color: A players are red, B players are blue, neutral nodes are grey/gold.
 - `nodes[*].units`, `nodes[*].visiting_units`, neutral guards, Lord guards, and moving groups currently inside a node phase are shown as separate force cards around the room, with fixed slots to avoid marker stacking.
 - `nodes[*].unit_ready_tick` marks units that arrived/resolved this tick and cannot leave that node until the next tick.
@@ -61,6 +62,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - A destroyed core becomes permanently `NEUTRAL` and cannot be captured again. Units standing in a destroyed core are tracked as `visiting_units` by their real player; they must never be merged into `node.units` under the neutral core owner.
 - Death Time starts at tick `270`: all living cores take integer scheduled damage each tick through tick `299`, with the per-tick damage distributed so a full-health core is left at exactly `1hp`. At tick `300`, final lethal damage resolves the match by the number of own cores that survived until the final hit, then total core HP/damage tie-breakers. Draw is reserved for games with no non-death-time core damage.
 - Combat approach movement uses unit speed. Speed `1.0` crosses the full combat line in `TRAVEL_TIME` world ticks; faster/slower units scale from that baseline. Attack cadence and damage are not accelerated.
+- Player battle deployments are compact. Units spawn inside a bounded side deployment band instead of being laid out across the entire `0..20` combat line. Frontline units start ahead of mid/backline units; visual replay rows may spread units more widely through `render_pos`, but that visual spacing does not affect combat.
 - Route movement speed is based on the slowest unit in the moving group. Edge travel, empty node crossing, source exit, and final node entry all scale from that same speed.
 - A source node exit or final node entry costs half of a full node crossing. Passing through an intermediate node costs one full node crossing.
 - Neutral nodes are valid transit nodes even while neutral guards are alive; passing through does not aggro guards by itself.

@@ -105,7 +105,7 @@ def test_active_battle_snapshot_uses_side_summary():
     assert "entry_sides" in snapshots[-1]
     assert "formation" in snapshots[-1]
     assert isinstance(snapshots[-1]["formation"][0], list)
-    assert len(snapshots[-1]["formation"][0]) == 7
+    assert len(snapshots[-1]["formation"][0]) == 8
     assert "units" not in snapshots[-1]
 
 

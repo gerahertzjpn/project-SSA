@@ -10,7 +10,8 @@ It is intentionally separate from `viewer/`:
 ## Visual Model
 
 - The replay is still the source of truth. The game viewer does not simulate combat, movement, ownership, production, or victory.
-- Active battles use true replay formation rows: `[uid, team, unit_code, hp, max_hp, pos, range]`.
+- Active battles use replay formation rows: `[uid, team, unit_code, hp, max_hp, sim_pos, range, render_pos]`.
+- The game viewer draws `render_pos` when present, while `sim_pos` remains the combat-coordinate source of truth. Older 7-field rows are still read by treating `pos` as both values.
 - Movement and stationed forces outside battle are expanded visually from aggregate counts such as `VANGUARD: 7`.
 - A visual tracker reuses same-team/same-type entities across representation changes within a handoff radius. This is for readability only; it does not create new simulation state.
 - Node exit, edge movement, node transit, node entry, and battle formation are rendered by one canvas pipeline so movement appears continuous instead of switching between UI widgets.

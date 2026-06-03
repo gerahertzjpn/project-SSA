@@ -37,7 +37,9 @@ def _new_uid() -> int:
 ATTACKER_SIDE = 0.0
 DEFENDER_SIDE = 20.0
 CENTER_SIDE = (ATTACKER_SIDE + DEFENDER_SIDE) / 2.0
-SLOT_SPACING = 1.0
+DEPLOYMENT_DEPTH = 4.0
+SIM_SLOT_SPACING = 0.08
+RENDER_SLOT_SPACING = 0.32
 COMBAT_MOVE_SPEED = (DEFENDER_SIDE - ATTACKER_SIDE) / TRAVEL_TIME
 NEUTRAL_RANGE = float(UNIT_STATS[UnitType.RANGER]["range"])
 LORD_RANGE = LORD_ATTACK_RANGE
@@ -67,13 +69,26 @@ def _build_side(units_dict: dict, team: str, is_attacker: bool) -> list[UnitInst
         unit_type_val = unit_type_enum.value
         stats = UNIT_STATS.get(unit_type_enum, UNIT_STATS[UnitType.VANGUARD])
         slot_order = _SLOT_ORDER.get(unit_type_val, 1)
-        for _ in range(count):
-            all_units.append((slot_order, unit_type_val, stats))
-    all_units.sort(key=lambda x: x[0])
+        for index in range(int(count or 0)):
+            all_units.append((slot_order, unit_type_val, stats, index, int(count or 0)))
+    all_units.sort(key=lambda x: (x[0], x[1], x[3]))
 
     instances = []
-    for i, (_, unit_type_val, stats) in enumerate(all_units):
-        pos = base + direction * i * SLOT_SPACING
+    for _, unit_type_val, stats, same_type_index, same_type_count in all_units:
+        anchor = _deployment_anchor(stats)
+        sim_offset = _formation_offset(
+            same_type_index,
+            same_type_count,
+            anchor,
+            SIM_SLOT_SPACING,
+        )
+        render_offset = _formation_offset(
+            same_type_index,
+            same_type_count,
+            anchor,
+            RENDER_SLOT_SPACING,
+        )
+        pos = base + direction * (anchor + sim_offset)
         instances.append(UnitInstance(
             uid=_new_uid(),
             unit_type=unit_type_val,
@@ -86,8 +101,28 @@ def _build_side(units_dict: dict, team: str, is_attacker: bool) -> list[UnitInst
             pos=pos,
             attack_rate=int(stats.get("attack_rate", 1)),
             move_direction=direction,
+            render_offset=direction * (render_offset - sim_offset),
         ))
     return instances
+
+
+def _deployment_anchor(stats: dict) -> float:
+    return max(0.0, min(DEPLOYMENT_DEPTH, float(stats.get("base_pos", DEPLOYMENT_DEPTH / 2.0))))
+
+
+def _formation_offset(index: int, count: int, anchor: float, spacing: float) -> float:
+    if count <= 1:
+        return 0.0
+    max_width = max(0.0, min(anchor, DEPLOYMENT_DEPTH - anchor) * 2.0)
+    if max_width <= 0.0:
+        return 0.0
+    width = min(max_width, spacing * (count - 1))
+    actual_spacing = width / max(1, count - 1)
+    return (index - (count - 1) / 2.0) * actual_spacing
+
+
+def render_position(unit: UnitInstance) -> float:
+    return max(ATTACKER_SIDE, min(DEFENDER_SIDE, unit.pos + float(getattr(unit, "render_offset", 0.0) or 0.0)))
 
 
 def _unit_type_enum(unit_type_val: str) -> UnitType:
@@ -161,6 +196,7 @@ def _find_target(
     unit: UnitInstance,
     enemies: list[UnitInstance],
     pending: Optional[dict[int, float]] = None,
+    positions: Optional[dict[int, float]] = None,
 ) -> Optional[UnitInstance]:
     best = None
     best_dist = float("inf")
@@ -170,35 +206,55 @@ def _find_target(
             continue
         if e.hp - pending.get(e.uid, 0.0) <= 0:
             continue
-        dist = abs(unit.pos - e.pos)
+        dist = abs(_unit_pos(unit, positions) - _unit_pos(e, positions))
         if dist <= unit.range and dist < best_dist:
             best_dist = dist
             best = e
     return best
 
 
-def _nearest_target(unit: UnitInstance, enemies: list[UnitInstance]) -> Optional[UnitInstance]:
+def _unit_pos(unit: UnitInstance, positions: Optional[dict[int, float]] = None) -> float:
+    if positions is None:
+        return unit.pos
+    return float(positions.get(unit.uid, unit.pos))
+
+
+def _nearest_target(
+    unit: UnitInstance,
+    enemies: list[UnitInstance],
+    positions: Optional[dict[int, float]] = None,
+) -> Optional[UnitInstance]:
     best = None
     best_dist = float("inf")
     for enemy in enemies:
         if not enemy.is_alive():
             continue
-        dist = abs(unit.pos - enemy.pos)
+        dist = abs(_unit_pos(unit, positions) - _unit_pos(enemy, positions))
         if dist < best_dist:
             best_dist = dist
             best = enemy
     return best
 
 
-def _move_toward_target(unit: UnitInstance, target: Optional[UnitInstance]) -> None:
+def _next_position_toward_target(
+    unit: UnitInstance,
+    target: Optional[UnitInstance],
+    positions: Optional[dict[int, float]] = None,
+) -> float:
     if target is None or unit.speed <= 0:
-        return
-    dist = abs(target.pos - unit.pos)
+        return unit.pos
+    unit_pos = _unit_pos(unit, positions)
+    target_pos = _unit_pos(target, positions)
+    dist = abs(target_pos - unit_pos)
     if dist <= unit.range:
-        return
-    direction = 1.0 if target.pos > unit.pos else -1.0
+        return unit.pos
+    direction = 1.0 if target_pos > unit_pos else -1.0
     step = min(COMBAT_MOVE_SPEED * unit.speed, max(0.0, dist - unit.range))
-    unit.pos += direction * step
+    return unit_pos + direction * step
+
+
+def _move_toward_target(unit: UnitInstance, target: Optional[UnitInstance]) -> None:
+    unit.pos = _next_position_toward_target(unit, target)
 
 
 def _is_allied_lord(unit: UnitInstance) -> bool:
@@ -212,8 +268,12 @@ def _forward_direction(unit: UnitInstance) -> float:
     return 1.0 if _combat_side(unit.team) == "TEAM_A" else -1.0
 
 
-def _is_ahead(unit: UnitInstance, other: UnitInstance) -> bool:
-    return (other.pos - unit.pos) * _forward_direction(unit) >= -1e-6
+def _is_ahead(
+    unit: UnitInstance,
+    other: UnitInstance,
+    positions: Optional[dict[int, float]] = None,
+) -> bool:
+    return (_unit_pos(other, positions) - _unit_pos(unit, positions)) * _forward_direction(unit) >= -1e-6
 
 
 def _find_allied_lord_target(
@@ -222,6 +282,7 @@ def _find_allied_lord_target(
     neutral_aggro_teams: Optional[set[str]] = None,
     in_range_only: bool = True,
     pending: Optional[dict[int, float]] = None,
+    positions: Optional[dict[int, float]] = None,
 ) -> Optional[UnitInstance]:
     best = None
     best_dist = float("inf")
@@ -229,11 +290,11 @@ def _find_allied_lord_target(
     for other in all_units:
         if not _is_hostile(unit, other, neutral_aggro_teams):
             continue
-        if not _is_ahead(unit, other):
+        if not _is_ahead(unit, other, positions):
             continue
         if other.hp - pending.get(other.uid, 0.0) <= 0:
             continue
-        dist = abs(unit.pos - other.pos)
+        dist = abs(_unit_pos(unit, positions) - _unit_pos(other, positions))
         if in_range_only and dist > unit.range:
             continue
         if dist < best_dist:
@@ -242,29 +303,45 @@ def _find_allied_lord_target(
     return best
 
 
-def _move_allied_lord_forward(
+def _next_allied_lord_forward_position(
     unit: UnitInstance,
     all_units: list[UnitInstance],
     neutral_aggro_teams: Optional[set[str]] = None,
-) -> None:
+    positions: Optional[dict[int, float]] = None,
+) -> float:
     if unit.speed <= 0:
-        return
+        return unit.pos
 
     target = _find_allied_lord_target(
         unit,
         all_units,
         neutral_aggro_teams=neutral_aggro_teams,
         in_range_only=False,
+        positions=positions,
     )
     if target is not None:
-        dist = abs(target.pos - unit.pos)
+        unit_pos = _unit_pos(unit, positions)
+        target_pos = _unit_pos(target, positions)
+        dist = abs(target_pos - unit_pos)
         if dist <= LORD_CONTACT_RANGE:
-            return
+            return unit.pos
         step = min(COMBAT_MOVE_SPEED * unit.speed, max(0.0, dist - LORD_CONTACT_RANGE))
     else:
         step = COMBAT_MOVE_SPEED * unit.speed
 
-    unit.pos = max(ATTACKER_SIDE, min(DEFENDER_SIDE, unit.pos + _forward_direction(unit) * step))
+    return max(ATTACKER_SIDE, min(DEFENDER_SIDE, _unit_pos(unit, positions) + _forward_direction(unit) * step))
+
+
+def _move_allied_lord_forward(
+    unit: UnitInstance,
+    all_units: list[UnitInstance],
+    neutral_aggro_teams: Optional[set[str]] = None,
+) -> None:
+    unit.pos = _next_allied_lord_forward_position(
+        unit,
+        all_units,
+        neutral_aggro_teams=neutral_aggro_teams,
+    )
 
 
 def _combat_side(team: str) -> str:
@@ -309,6 +386,7 @@ def _find_persistent_target(
     neutral_aggro_teams: Optional[set[str]] = None,
     in_range_only: bool = True,
     pending: Optional[dict[int, float]] = None,
+    positions: Optional[dict[int, float]] = None,
 ) -> Optional[UnitInstance]:
     best = None
     best_dist = float("inf")
@@ -318,7 +396,7 @@ def _find_persistent_target(
             continue
         if other.hp - pending.get(other.uid, 0.0) <= 0:
             continue
-        dist = abs(unit.pos - other.pos)
+        dist = abs(_unit_pos(unit, positions) - _unit_pos(other, positions))
         if in_range_only and dist > unit.range:
             continue
         if dist < best_dist:
@@ -363,6 +441,7 @@ def _frame_snapshot(
             "max_hp": round(u.max_hp, 2),
             "range": round(u.range, 2),
             "atk": round(u.atk, 2),
+            "render_pos": round(render_position(u), 2),
             "dmg": round(damage_log.get(u.uid, 0.0), 2),
             "target": target_log.get(u.uid),
             "attacks": [
@@ -417,11 +496,18 @@ def tick_battle_units(
         is not None
     }
 
+    start_positions = {unit.uid: unit.pos for unit in alive}
+    planned_positions: dict[int, float] = {}
     for unit in alive:
         if unit.speed <= 0:
             continue
         if _is_allied_lord(unit):
-            _move_allied_lord_forward(unit, alive, neutral_aggro_teams=neutral_aggro_teams)
+            planned_positions[unit.uid] = _next_allied_lord_forward_position(
+                unit,
+                alive,
+                neutral_aggro_teams=neutral_aggro_teams,
+                positions=start_positions,
+            )
             continue
         if unit.uid in attack_ready:
             continue
@@ -430,10 +516,19 @@ def tick_battle_units(
             alive,
             neutral_aggro_teams=neutral_aggro_teams,
             in_range_only=False,
+            positions=start_positions,
         )
         if target is None:
             continue
-        _move_toward_target(unit, target)
+        planned_positions[unit.uid] = _next_position_toward_target(
+            unit,
+            target,
+            positions=start_positions,
+        )
+
+    for unit in alive:
+        if unit.uid in planned_positions:
+            unit.pos = planned_positions[unit.uid]
 
     pending: dict[int, float] = {}
     damage_log: dict[int, float] = {}
@@ -542,16 +637,37 @@ def _run_combat(
             if not _is_allied_lord(u) and _find_target(u, alive_atk) is not None
         }
 
+        start_positions = {u.uid: u.pos for u in alive_atk + alive_def}
+        planned_positions: dict[int, float] = {}
         for u in alive_atk:
             if _is_allied_lord(u):
-                _move_allied_lord_forward(u, all_units)
+                planned_positions[u.uid] = _next_allied_lord_forward_position(
+                    u,
+                    all_units,
+                    positions=start_positions,
+                )
             elif u.uid not in attack_ready_atk:
-                _move_toward_target(u, _nearest_target(u, alive_def))
+                planned_positions[u.uid] = _next_position_toward_target(
+                    u,
+                    _nearest_target(u, alive_def, positions=start_positions),
+                    positions=start_positions,
+                )
         for u in alive_def:
             if _is_allied_lord(u):
-                _move_allied_lord_forward(u, all_units)
+                planned_positions[u.uid] = _next_allied_lord_forward_position(
+                    u,
+                    all_units,
+                    positions=start_positions,
+                )
             elif u.uid not in attack_ready_def:
-                _move_toward_target(u, _nearest_target(u, alive_atk))
+                planned_positions[u.uid] = _next_position_toward_target(
+                    u,
+                    _nearest_target(u, alive_atk, positions=start_positions),
+                    positions=start_positions,
+                )
+        for u in alive_atk + alive_def:
+            if u.uid in planned_positions:
+                u.pos = planned_positions[u.uid]
 
         pending: dict[int, float] = {}
         damage_log: dict[int, float] = {}
