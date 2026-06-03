@@ -16,6 +16,7 @@ def test_viewer_assets_exist_and_are_wired():
     assert 'id="sampleSelect"' in index
     assert 'id="diagnosticsGrid"' in index
     assert 'preserveAspectRatio="none"' in index
+    assert 'id="unitCanvas"' in index
     assert 'id="mapForceLayer"' in index
     assert 'id="lordLayer"' in index
     assert 'id="mapEventLayer"' in index
@@ -57,6 +58,10 @@ def test_viewer_loads_compact_replay_schema():
     assert "forceStatus" in script
     assert "movingGroupCard" in script
     assert "movingGroupPosition" in script
+    assert "renderUnitCanvas" in script
+    assert "drawBattleFormation" in script
+    assert "drawUnitCluster" in script
+    assert "drawUnitGlyph" in script
     assert "renderMapForces" in script
     assert "mapForcesAtNode" in script
     assert "renderMapEvents" in script
@@ -94,6 +99,7 @@ def test_viewer_layout_has_arena_layers():
     styles = (VIEWER / "styles.css").read_text(encoding="utf-8")
 
     assert ".arena" in styles
+    assert ".unit-canvas" in styles
     assert "#nodeLayer" in styles
     assert "#mapForceLayer" in styles
     assert "#routeLayer" in styles

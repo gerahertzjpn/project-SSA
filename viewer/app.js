@@ -49,6 +49,16 @@ const BARON_FORCE_SLOTS = [
   [0, -98], [108, -54], [108, 54], [0, 98],
   [-108, 54], [-108, -54], [142, 0], [-142, 0],
 ];
+const UNIT_CLUSTER_LIMIT = 160;
+const UNIT_COLORS = {
+  teamA: "#f06068",
+  teamB: "#5da0ff",
+  neutral: "#d6a64b",
+  text: "#edf3f8",
+  dark: "#0b0e12",
+  hp: "#78c47b",
+  hpLow: "#ff8f8f",
+};
 const MAP_EVENT_OFFSETS = [[0, -92], [76, -78], [-76, -78], [0, 92], [76, 78], [-76, 78]];
 const ROUTE_LANE_GAP = 18;
 const MAP_EVENT_LOOKBACK = 3;
@@ -93,6 +103,7 @@ const els = {
   arena: document.getElementById("arena"),
   edgeLayer: document.getElementById("edgeLayer"),
   nodeLayer: document.getElementById("nodeLayer"),
+  unitCanvas: document.getElementById("unitCanvas"),
   mapForceLayer: document.getElementById("mapForceLayer"),
   routeLayer: document.getElementById("routeLayer"),
   battleLayer: document.getElementById("battleLayer"),
@@ -645,6 +656,7 @@ function renderEmpty() {
   els.tickNow.textContent = "0";
   els.tickMax.textContent = "0";
   renderNodes(null);
+  renderUnitCanvas(null, null, 0);
   renderMapForces(null);
   renderMapEvents(null);
   renderLordOverlay([]);
@@ -659,6 +671,7 @@ function renderTick(alpha = 0) {
   els.tickSlider.value = String(state.tick);
 
   renderNodes(tick, lordNodeIds);
+  renderUnitCanvas(tick, nextTick, alpha);
   renderMapForces(tick);
   renderRoutes(tick, nextTick, alpha);
   renderBattles(tick, nextTick, alpha);
@@ -858,6 +871,367 @@ function mapForcesAtNode(nodeId, tick = {}) {
   }
 
   return forces.slice(0, NODE_FORCE_SLOTS.length);
+}
+
+function renderUnitCanvas(tick, nextTick, alpha = 0) {
+  const canvas = els.unitCanvas;
+  if (!canvas) {
+    return;
+  }
+
+  const width = Math.max(1, els.arena.clientWidth);
+  const height = Math.max(1, els.arena.clientHeight);
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  const pixelWidth = Math.round(width * dpr);
+  const pixelHeight = Math.round(height * dpr);
+
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+
+  if (!tick) {
+    return;
+  }
+
+  const battleNodeIds = new Set((tick.active_battles || [])
+    .filter((battle) => battle.location_kind === "node")
+    .map((battle) => battle.location_id));
+
+  drawStationedUnitLayer(ctx, tick, battleNodeIds);
+  drawMovingUnitLayer(ctx, tick, nextTick, alpha);
+  drawBattleUnitLayer(ctx, tick, nextTick, alpha);
+}
+
+function drawStationedUnitLayer(ctx, tick, battleNodeIds = new Set()) {
+  for (const nodeId of NODE_IDS) {
+    if (battleNodeIds.has(nodeId)) {
+      continue;
+    }
+
+    const forces = mapForcesAtNode(nodeId, tick);
+    forces.forEach((force, index) => {
+      const pos = nodeForcePosition(nodeId, index);
+      if (!pos) {
+        return;
+      }
+      drawUnitCluster(ctx, pos[0], pos[1] + 18, force.units, force.owner, {
+        key: `${nodeId}:${force.owner}:${force.role}:${index}`,
+        maxWidth: CORE_NODES.has(nodeId) ? 58 : 64,
+        size: hasLordUnit(force.units) ? 7 : 4.4,
+        alpha: force.role === "neutral" ? 0.72 : 0.9,
+      });
+    });
+  }
+}
+
+function drawMovingUnitLayer(ctx, tick, nextTick, alpha = 0) {
+  const nextGroups = [...(nextTick?.moving_groups || [])];
+  const used = new Set();
+  const edgeGroups = (tick.moving_groups || []).filter((group) => isEdgeMovement(group));
+  const edgeTotals = edgeGroupTotals(edgeGroups);
+  const edgeIndexes = new Map();
+
+  for (const group of tick.moving_groups || []) {
+    const nextGroup = findNextGroup(group, nextGroups, used);
+    const nextProgress = sameMovementSegment(group, nextGroup) ? nextGroup.progress : 1;
+    const progress = interpolateValue(
+      Number(group.progress || 0),
+      Number(nextProgress ?? 0),
+      alpha,
+    );
+
+    let pos = null;
+    let key = `${group.player}:${group.started}:${group.phase}:${group.segment_index}`;
+    if (isEdgeMovement(group)) {
+      const edge = edgeKey(group.src, group.dst);
+      const laneIndex = edgeIndexes.get(edge) || 0;
+      edgeIndexes.set(edge, laneIndex + 1);
+      pos = movingGroupPosition(group, progress, laneIndex, edgeTotals.get(edge) || 1);
+      key = `${key}:${edge}:${laneIndex}`;
+    } else {
+      const nodeId = movementNodeId(group);
+      pos = scalePoint(nodePhasePoint(nodeId, group.src, group.dst, group.phase, progress));
+      key = `${key}:${nodeId}`;
+    }
+
+    if (!pos) {
+      continue;
+    }
+
+    drawUnitCluster(ctx, pos[0], pos[1], group.units, group.player, {
+      key,
+      maxWidth: hasLordUnit(group.units) ? 68 : 54,
+      size: hasLordUnit(group.units) ? 8 : 4.2,
+      alpha: 0.96,
+      motion: true,
+    });
+  }
+}
+
+function drawBattleUnitLayer(ctx, tick, nextTick, alpha = 0) {
+  for (const battle of tick.active_battles || []) {
+    const nextBattle = (nextTick?.active_battles || []).find((item) => item.battle_id === battle.battle_id);
+    const battleEvent = battleTickEvent(tick, battle);
+    drawBattleFormation(ctx, battle, nextBattle, alpha, battleEvent);
+  }
+}
+
+function drawBattleFormation(ctx, battle, nextBattle, alpha = 0, battleEvent = null) {
+  const base = battlePosition(battle);
+  if (!base) {
+    return;
+  }
+
+  const units = interpolateFormation(battle.formation || [], nextBattle?.formation || [], alpha);
+  if (!units.length) {
+    return;
+  }
+
+  const axis = battleAxis(battle);
+  const perp = [-axis[1], axis[0]];
+  const spacing = battle.location_kind === "edge" ? 4.8 : 5.3;
+  const span = battle.location_kind === "edge" ? 76 : 88;
+  const uidPositions = new Map();
+
+  drawBattleAura(ctx, base, battle);
+
+  const laneCounters = new Map();
+  for (const unit of units) {
+    const laneKey = `${unit.team}:${unit.type}:${Math.round(Number(unit.pos || 0))}`;
+    const laneCount = laneCounters.get(laneKey) || 0;
+    laneCounters.set(laneKey, laneCount + 1);
+
+    const pos = Math.max(-1, Math.min(1, (Number(unit.pos || 10) - 10) / 10));
+    const lane = battleUnitLaneOffset(unit, laneCount);
+    const jitter = deterministicJitter(`${battle.battle_id}:${unit.uid ?? unit.fallbackIndex ?? laneKey}`, 2.8);
+    const x = base[0] + axis[0] * pos * span + perp[0] * lane + jitter[0];
+    const y = base[1] + axis[1] * pos * span + perp[1] * lane + jitter[1];
+    const hpRatio = unit.maxHp > 0 ? unit.hp / unit.maxHp : 1;
+
+    uidPositions.set(unit.uid, { x, y, team: unit.team, type: unit.type });
+    drawUnitGlyph(ctx, x, y, unit.type, unit.team, {
+      hpRatio,
+      size: unit.type === "L" || unit.type === "B" ? 9 : spacing,
+      alpha: hpRatio <= 0 ? 0.35 : 1,
+      combat: true,
+    });
+  }
+
+  drawBattleAttackLines(ctx, battleEvent?.summary?.attacks || [], uidPositions);
+}
+
+function drawBattleAura(ctx, base, battle) {
+  ctx.save();
+  ctx.globalAlpha = 0.24;
+  ctx.strokeStyle = battle.location_id === "Baron" ? UNIT_COLORS.neutral : "#f0d18a";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 6]);
+  ctx.beginPath();
+  ctx.ellipse(base[0], base[1], battle.location_kind === "edge" ? 54 : 66, 28, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBattleAttackLines(ctx, attacks = [], uidPositions = new Map()) {
+  ctx.save();
+  ctx.lineWidth = 1.4;
+  ctx.globalAlpha = 0.82;
+  for (const attack of attacks.slice(0, 36)) {
+    const from = uidPositions.get(attack[0]);
+    const to = uidPositions.get(attack[1]);
+    if (!from || !to) {
+      continue;
+    }
+
+    ctx.strokeStyle = teamCanvasColor(from.team);
+    ctx.setLineDash(displayUnitCode(attack[4]) === "R" ? [4, 4] : []);
+    ctx.beginPath();
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function battleAxis(battle = {}) {
+  if (battle.location_kind === "edge" && battle.location_id) {
+    const [src, dst] = String(battle.location_id).split("|");
+    const a = scalePoint(NODE_POSITIONS[src]);
+    const b = scalePoint(NODE_POSITIONS[dst]);
+    if (a && b) {
+      const dx = b[0] - a[0];
+      const dy = b[1] - a[1];
+      const length = Math.max(1, Math.hypot(dx, dy));
+      return [dx / length, dy / length];
+    }
+  }
+  return [1, 0];
+}
+
+function battleUnitLaneOffset(unit, laneCount = 0) {
+  if (unit.team === "NEUTRAL" || unit.team === "BARON" || unit.team === "LORD") {
+    return ((laneCount % 5) - 2) * 5;
+  }
+
+  const typeLane = { R: -18, S: 0, V: 16, C: 22, L: 0, B: 0 }[unit.type] ?? 0;
+  const teamSign = String(unit.team).startsWith("A") ? -1 : 1;
+  return typeLane * teamSign + ((laneCount % 3) - 1) * 4;
+}
+
+function drawUnitCluster(ctx, centerX, centerY, units = {}, owner = "", options = {}) {
+  const expanded = expandUnitCodes(units, UNIT_CLUSTER_LIMIT);
+  if (!expanded.codes.length) {
+    return;
+  }
+
+  const count = expanded.codes.length;
+  const maxWidth = Number(options.maxWidth || 62);
+  const baseSize = Number(options.size || 4.4);
+  const spacing = Math.max(baseSize * 1.65, count > 70 ? 6 : 8);
+  const columns = Math.max(1, Math.min(Math.floor(maxWidth / spacing), Math.ceil(Math.sqrt(count))));
+  const rows = Math.ceil(count / columns);
+  const originX = centerX - ((columns - 1) * spacing) / 2;
+  const originY = centerY - ((rows - 1) * spacing) / 2;
+  const jitterSeed = String(options.key || `${owner}:${unitSignature(units)}`);
+
+  expanded.codes.forEach((code, index) => {
+    const col = index % columns;
+    const row = Math.floor(index / columns);
+    const jitter = deterministicJitter(`${jitterSeed}:${index}`, options.motion ? 1.4 : 0.8);
+    drawUnitGlyph(
+      ctx,
+      originX + col * spacing + jitter[0],
+      originY + row * spacing + jitter[1],
+      code,
+      owner,
+      {
+        size: count > 96 ? Math.max(3.1, baseSize - 0.8) : baseSize,
+        alpha: options.alpha ?? 0.9,
+        combat: false,
+      },
+    );
+  });
+
+  if (expanded.remaining > 0) {
+    drawClusterOverflow(ctx, centerX + maxWidth / 2 + 10, centerY, owner, expanded.remaining);
+  }
+}
+
+function expandUnitCodes(units = {}, limit = UNIT_CLUSTER_LIMIT) {
+  const codes = [];
+  let remaining = 0;
+
+  for (const [type, count] of orderedUnitEntries(units)) {
+    const numericCount = Math.max(0, Math.round(Number(count) || 0));
+    const code = unitCode(type);
+    for (let index = 0; index < numericCount; index += 1) {
+      if (codes.length < limit) {
+        codes.push(code);
+      } else {
+        remaining += 1;
+      }
+    }
+  }
+
+  return { codes, remaining };
+}
+
+function drawUnitGlyph(ctx, x, y, code, owner, options = {}) {
+  const size = Number(options.size || 4.4);
+  const teamColor = teamCanvasColor(owner);
+  const hpRatio = Math.max(0, Math.min(1, Number(options.hpRatio ?? 1)));
+  const alpha = Number(options.alpha ?? 1);
+  const isLord = code === "L" || code === "B";
+  const radius = isLord ? size + 2 : size;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = isLord ? 2 : 1.25;
+  ctx.strokeStyle = teamColor;
+  ctx.fillStyle = UNIT_COLORS.dark;
+
+  ctx.beginPath();
+  ctx.arc(x, y - radius * 0.42, radius * 0.52, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  roundedRectPath(ctx, x - radius * 0.74, y - radius * 0.2, radius * 1.48, radius * 1.28, radius * 0.42);
+  ctx.fill();
+  ctx.stroke();
+
+  if (options.combat && hpRatio < 0.98) {
+    ctx.fillStyle = hpRatio < 0.35 ? UNIT_COLORS.hpLow : UNIT_COLORS.hp;
+    ctx.fillRect(x - radius, y + radius * 0.8, radius * 2 * hpRatio, 2);
+  }
+
+  if (radius >= 4.2) {
+    ctx.fillStyle = UNIT_COLORS.text;
+    ctx.font = `${Math.max(7, Math.round(radius * 1.25))}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(displayUnitCode(code), x, y + radius * 0.16);
+  }
+
+  ctx.restore();
+}
+
+function drawClusterOverflow(ctx, x, y, owner, remaining) {
+  ctx.save();
+  ctx.fillStyle = "rgba(5, 7, 10, 0.86)";
+  ctx.strokeStyle = teamCanvasColor(owner);
+  ctx.lineWidth = 1;
+  roundedRectPath(ctx, x - 13, y - 8, 26, 16, 5);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = UNIT_COLORS.text;
+  ctx.font = "9px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(`+${remaining}`, x, y);
+  ctx.restore();
+}
+
+function roundedRectPath(ctx, x, y, width, height, radius) {
+  const r = Math.min(radius, width / 2, height / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + width - r, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+  ctx.lineTo(x + width, y + height - r);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+  ctx.lineTo(x + r, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+}
+
+function deterministicJitter(key, amount = 1) {
+  let hash = 2166136261;
+  const text = String(key);
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  const x = ((hash & 0xff) / 255 - 0.5) * amount * 2;
+  const y = (((hash >> 8) & 0xff) / 255 - 0.5) * amount * 2;
+  return [x, y];
+}
+
+function teamCanvasColor(owner) {
+  if (String(owner).startsWith("A")) {
+    return UNIT_COLORS.teamA;
+  }
+  if (String(owner).startsWith("B")) {
+    return UNIT_COLORS.teamB;
+  }
+  return UNIT_COLORS.neutral;
 }
 
 function renderRoutes(tick, nextTick, alpha) {

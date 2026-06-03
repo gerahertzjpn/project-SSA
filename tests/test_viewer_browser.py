@@ -119,6 +119,8 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
                     routes: document.querySelectorAll('.route').length,
                     stateCards: document.querySelectorAll('.state-node-card').length,
                     forceCards: document.querySelectorAll('.state-force-card').length,
+                    unitCanvasWidth: document.querySelector('#unitCanvas')?.width || 0,
+                    unitCanvasHeight: document.querySelector('#unitCanvas')?.height || 0,
                     mapForces: document.querySelectorAll('.map-force').length,
                     tunnelPaths: document.querySelectorAll('.edge-path.tunnel').length,
                     coreHpBars: document.querySelectorAll('.state-hp.core').length,
@@ -153,6 +155,8 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
         sample = pixels[::step]
 
         assert counts["nodes"] == 13
+        assert counts["unitCanvasWidth"] > 0
+        assert counts["unitCanvasHeight"] > 0
         assert counts["mapForces"] > 0
         assert counts["tunnelPaths"] == 12
         assert counts["stateCards"] > 0

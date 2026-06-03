@@ -204,28 +204,35 @@ select {
   z-index: 1;
 }
 
-#mapForceLayer {
+.unit-canvas {
+  position: absolute;
+  inset: 0;
   z-index: 2;
   pointer-events: none;
 }
 
-#routeLayer {
+#mapForceLayer {
   z-index: 3;
   pointer-events: none;
 }
 
-#battleLayer {
+#routeLayer {
   z-index: 4;
   pointer-events: none;
 }
 
-#lordLayer {
+#battleLayer {
   z-index: 5;
   pointer-events: none;
 }
 
-#mapEventLayer {
+#lordLayer {
   z-index: 6;
+  pointer-events: none;
+}
+
+#mapEventLayer {
+  z-index: 7;
   pointer-events: none;
 }
 
@@ -402,19 +409,19 @@ select {
 
 .map-force {
   position: absolute;
-  width: 78px;
-  min-height: 34px;
+  width: 62px;
+  min-height: 24px;
   transform: translate3d(-50%, -50%, 0);
   border: 1px solid var(--line);
-  border-left: 4px solid currentColor;
-  border-radius: 6px;
-  background: rgba(12, 15, 19, 0.92);
+  border-left: 3px solid currentColor;
+  border-radius: 5px;
+  background: rgba(10, 13, 17, 0.72);
   color: var(--muted);
-  padding: 4px 5px;
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.34);
+  padding: 3px 4px;
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.24);
   display: grid;
-  gap: 1px;
   line-height: 1.05;
+  opacity: 0.78;
   will-change: left, top;
 }
 
@@ -442,33 +449,33 @@ select {
 
 .map-force strong {
   color: var(--text);
-  font-size: 11px;
+  font-size: 9px;
 }
 
 .map-force span {
   color: currentColor;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 800;
 }
 
 .map-force small {
   color: var(--muted);
-  font-size: 9px;
+  display: none;
 }
 
 .route {
   position: absolute;
-  width: 78px;
-  min-height: 30px;
+  width: 56px;
+  min-height: 22px;
   margin-left: 0;
   margin-top: 0;
   border-radius: 6px;
   border: 1px solid currentColor;
-  border-left-width: 4px;
-  background: rgba(10, 13, 17, 0.95);
-  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.38);
+  border-left-width: 3px;
+  background: rgba(10, 13, 17, 0.76);
+  box-shadow: 0 5px 12px rgba(0, 0, 0, 0.24);
   transform: translate3d(-50%, -50%, 0);
-  padding: 4px 5px;
+  padding: 3px 4px;
   display: grid;
   gap: 1px;
   line-height: 1.05;
@@ -493,12 +500,12 @@ select {
 
 .route strong {
   color: var(--text);
-  font-size: 11px;
+  font-size: 9px;
 }
 
 .route span {
   color: currentColor;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 800;
 }
 
@@ -558,8 +565,8 @@ select {
 
 .battle-marker {
   position: absolute;
-  width: 178px;
-  min-height: 106px;
+  width: 92px;
+  min-height: 34px;
   margin-left: 0;
   margin-top: 0;
   border: 2px solid var(--gold);
@@ -569,7 +576,7 @@ select {
   font-size: 11px;
   line-height: 1.15;
   transform: translate3d(-50%, -50%, 0);
-  padding: 7px;
+  padding: 5px 6px;
   box-shadow:
     0 0 0 2px rgba(0, 0, 0, 0.36),
     0 10px 22px rgba(0, 0, 0, 0.42);
@@ -597,24 +604,24 @@ select {
   align-items: baseline;
   justify-content: space-between;
   gap: 6px;
-  margin-bottom: 5px;
+  margin-bottom: 0;
 }
 
 .map-battle-head strong {
   color: var(--text);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .map-battle-head span {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .map-battle-sides {
-  display: grid;
+  display: none;
   gap: 4px;
 }
 
@@ -672,6 +679,7 @@ select {
 
 .map-battle-note,
 .map-battle-deaths {
+  display: none;
   margin-top: 4px;
   color: var(--muted);
   font-size: 9px;
@@ -686,6 +694,7 @@ select {
 }
 
 .map-mini-formation {
+  display: none;
   position: relative;
   height: 18px;
   margin-top: 5px;

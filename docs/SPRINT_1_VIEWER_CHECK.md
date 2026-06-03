@@ -24,6 +24,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 ## Visual mapping
 
 - The center panel is a map-first replay UI: nodes are rendered as rooms, edges are rendered as corridors, and core-to-CP1/CP2/CP5/CP6 passages are rendered as heavier tunnel corridors.
+- The `unitCanvas` layer renders individual visible unit figures over the map. Active battles use true replay `formation` rows with `uid/hp/pos/range`; non-battle stationed and moving forces are expanded deterministically from aggregate unit counts for visual readability only.
 - `nodes[*].owner` controls room color: A players are red, B players are blue, neutral nodes are grey/gold.
 - `nodes[*].units`, `nodes[*].visiting_units`, neutral guards, Lord guards, and moving groups currently inside a node phase are shown as separate force cards around the room, with fixed slots to avoid marker stacking.
 - `nodes[*].unit_ready_tick` marks units that arrived/resolved this tick and cannot leave that node until the next tick.
@@ -33,6 +34,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 - `moving_groups[*].path` is the full planned route, while `src`/`dst` describe the current phase endpoints.
 - `active_battles[*].location_kind == "node"` is shown as an in-map battle card near the node.
 - `active_battles[*].location_kind == "edge"` is shown as an in-map battle card near the edge midpoint/position.
+- In-map battle cards are intentionally compact badges; detailed side HP, attack links, deaths, and compact 1D formation remain in the `Battles` tab.
 - `active_battles[*].formation` is shown as a compact 1D combat line inside each battle card.
 - `BATTLE_TICK.summary.attacks` is shown as colored attack links plus a short attack log; ranged attacks are dashed.
 - Recently resolved battles remain visible for a short replay lookback as faded cards, using the last active formation snapshot plus the final `BATTLE_TICK.summary`.
