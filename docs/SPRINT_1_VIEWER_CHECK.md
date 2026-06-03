@@ -45,7 +45,7 @@ Replay viewer reads JSON only. It does not simulate combat, movement, income, ba
 
 - Neutral guard and Lord combat units are centered exactly at combat position `10.0`, not placed on the defender/right side.
 - Neutral guards do not regenerate after winning a fight; the node keeps only the surviving guard count.
-- Neutral Lord stats are `150hp`, `16 atk`, and attack rate `3`.
+- Neutral Lord stats are `120hp`, `16 atk`, and attack rate `3`.
 - Neutral Lord HP persists across failed attempts to kill it.
 - Killing the neutral Lord spawns an allied `LORD` unit with full HP on the same node. It automatically pushes along a shortest route toward a random living enemy core and fights enemies encountered on the way.
 - The allied `LORD` keeps one persistent HP pool across all push fights. If it dies during the push, it does not resurrect again. If it destroys its first core, it disappears regardless of remaining HP.
