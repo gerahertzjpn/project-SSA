@@ -9,7 +9,13 @@ from src.bots.base import Bot
 from src.core.constants import TEAM_A_PLAYERS, TEAM_B_PLAYERS
 from src.core.engine import Action
 from src.training.policy import MaskedActorCritic
-from src.training.spaces import decode_action, encode_observation, legal_action_mask
+from src.training.spaces import (
+    ACTION_DIM,
+    OBSERVATION_DIM,
+    decode_action,
+    encode_observation,
+    legal_action_mask,
+)
 
 
 _POLICY_STATE_CACHE: dict[str, tuple[dict, int]] = {}
@@ -55,8 +61,10 @@ def cached_policy_state(path: str | Path, player_id: str) -> tuple[dict, int]:
     cache_key = f"{checkpoint_path.resolve()}::{player_id}"
     if cache_key not in _POLICY_STATE_CACHE:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        policy_state = policy_state_from_checkpoint(checkpoint, checkpoint_path, player_id)
+        validate_policy_state_compatible(policy_state, checkpoint_path)
         _POLICY_STATE_CACHE[cache_key] = (
-            policy_state_from_checkpoint(checkpoint, checkpoint_path, player_id),
+            policy_state,
             checkpoint_hidden_size(checkpoint),
         )
     return _POLICY_STATE_CACHE[cache_key]
@@ -89,13 +97,46 @@ def checkpoint_hidden_size(checkpoint: dict) -> int:
     return 128
 
 
+def validate_policy_state_compatible(policy_state: dict, checkpoint_path: Path) -> None:
+    observation_dim, action_dim = policy_state_interface(policy_state)
+    if observation_dim != OBSERVATION_DIM or action_dim != ACTION_DIM:
+        raise ValueError(
+            f"Policy checkpoint {checkpoint_path} is incompatible with current "
+            f"policy interface: checkpoint obs/action=({observation_dim}, {action_dim}), "
+            f"current obs/action=({OBSERVATION_DIM}, {ACTION_DIM})"
+        )
+
+
+def policy_state_interface(policy_state: dict) -> tuple[int, int]:
+    first_layer = policy_state.get("body.0.weight")
+    actor = policy_state.get("actor.weight")
+    if first_layer is None or actor is None:
+        return -1, -1
+    return int(first_layer.shape[1]), int(actor.shape[0])
+
+
+def checkpoint_is_compatible(path: str | Path) -> bool:
+    try:
+        checkpoint_path = Path(path)
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        if "policy_state" in checkpoint:
+            states = [checkpoint["policy_state"]]
+        else:
+            states = list((checkpoint.get("policy_states") or {}).values())
+        if not states:
+            return False
+        return all(policy_state_interface(state) == (OBSERVATION_DIM, ACTION_DIM) for state in states)
+    except Exception:
+        return False
+
+
 def default_policy_checkpoint() -> Optional[Path]:
     candidates = [
         Path("training_runs/sprint2_random_first_real_v1/checkpoints/checkpoint_update_180.pt"),
         Path("training_runs/sprint2_random_first_real_v1/checkpoints/latest.pt"),
     ]
     for path in candidates:
-        if path.exists():
+        if path.exists() and checkpoint_is_compatible(path):
             return path
     return None
 
@@ -106,7 +147,7 @@ def default_team_policy_checkpoint() -> Optional[Path]:
         Path("training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt"),
     ]
     for path in candidates:
-        if path.exists():
+        if path.exists() and checkpoint_is_compatible(path):
             return path
     return None
 

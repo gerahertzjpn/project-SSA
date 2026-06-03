@@ -24,13 +24,29 @@ from src.core.map import ADJACENCY, ALL_NODES, NODE_TYPES, NodeType
 from src.core.units import UNIT_STATS
 
 
-OBSERVATION_VERSION = "train_obs_v0.3"
+OBSERVATION_VERSION = "train_obs_v0.4"
 
 UNIT_ORDER = (UnitType.VANGUARD, UnitType.RANGER, UnitType.SKIRMISHER)
 RELATIONS = ("self", "ally", "enemy", "neutral")
+COMBAT_RELATIONS = ("self", "ally", "enemy")
+MOVEMENT_BUCKETS = ("inside", "outgoing", "incoming")
 MOVE_INTENTS = ("CAPTURE", "TRANSIT")
 GLOBAL_FEATURES = 14
-NODE_FEATURES = 41
+NODE_TYPE_FEATURES = 3
+OWNER_RELATION_FEATURES = len(RELATIONS)
+STATIONED_UNIT_FEATURES = len(RELATIONS) * len(UNIT_ORDER)
+NODE_SCALAR_FEATURES = 9
+MOVEMENT_FEATURES = len(MOVEMENT_BUCKETS) * len(COMBAT_RELATIONS) * len(UNIT_ORDER)
+BATTLE_FEATURES = 4 + len(COMBAT_RELATIONS) * len(UNIT_ORDER)
+NODE_FEATURES = (
+    NODE_TYPE_FEATURES
+    + OWNER_RELATION_FEATURES
+    + STATIONED_UNIT_FEATURES
+    + NODE_SCALAR_FEATURES
+    + MOVEMENT_FEATURES
+    + BATTLE_FEATURES
+    + BATTLE_FEATURES
+)
 OBSERVATION_DIM = GLOBAL_FEATURES + len(ALL_NODES) * NODE_FEATURES
 NODE_HALF_CROSSING_TICKS = float(TRAVEL_TIME) / 2.0
 ROUTE_EDGE_NORM = max(1, len(ALL_NODES) - 1)
@@ -287,6 +303,11 @@ def _normal_unit_counts(units: dict | None) -> list[float]:
     return [float((units or {}).get(unit_type.value, 0) or 0) / 50.0 for unit_type in UNIT_ORDER]
 
 
+def _add_normal_unit_counts(target: list[float], offset: int, units: dict | None) -> None:
+    for unit_index, unit_type in enumerate(UNIT_ORDER):
+        target[offset + unit_index] += float((units or {}).get(unit_type.value, 0) or 0) / 50.0
+
+
 def _team_resource_totals(obs: dict, player_id: str) -> tuple[float, float]:
     own_team = team_of(player_id)
     own = 0.0
@@ -316,51 +337,91 @@ def _team_alive_counts(obs: dict, player_id: str) -> tuple[int, int]:
 
 
 def _moving_node_totals(obs: dict, player_id: str) -> dict[str, list[float]]:
-    totals = {node_id: [0.0] * 9 for node_id in ALL_NODES}
+    totals = {node_id: [0.0] * MOVEMENT_FEATURES for node_id in ALL_NODES}
+
+    def add_units(node_id: str | None, bucket: str, relation: str, units: dict | None) -> None:
+        if node_id not in totals or relation not in COMBAT_RELATIONS:
+            return
+        bucket_index = MOVEMENT_BUCKETS.index(bucket)
+        relation_index_ = COMBAT_RELATIONS.index(relation)
+        offset = (
+            bucket_index * len(COMBAT_RELATIONS) * len(UNIT_ORDER)
+            + relation_index_ * len(UNIT_ORDER)
+        )
+        _add_normal_unit_counts(totals[node_id], offset, units)
+
     for group in obs.get("moving_groups", []) or []:
         relation = owner_relation(group.get("player", "NEUTRAL"), player_id)
         if relation == "neutral":
             continue
-        rel_slot = {"self": 0, "ally": 1, "enemy": 2}[relation]
-        total = float(unit_total(group.get("units", {}))) / 50.0
+        units = group.get("units", {})
         phase = group.get("phase", "edge")
         inside_node = group.get("segment_node") if phase != "edge" else None
-        if inside_node in totals:
-            totals[inside_node][rel_slot] += total
-        if group.get("src") in totals:
-            totals[group["src"]][3 + rel_slot] += total
-        if group.get("dst") in totals:
-            totals[group["dst"]][6 + rel_slot] += total
+        add_units(inside_node, "inside", relation, units)
+        add_units(group.get("src"), "outgoing", relation, units)
+        add_units(group.get("dst"), "incoming", relation, units)
     return totals
 
 
 def _battle_node_totals(obs: dict, player_id: str) -> dict[str, list[float]]:
-    totals = {node_id: [0.0, 0.0, 0.0, 0.0] for node_id in ALL_NODES}
+    totals = {node_id: [0.0] * BATTLE_FEATURES for node_id in ALL_NODES}
     for battle in obs.get("active_battles", []) or []:
         if battle.get("location_kind") != "node":
             continue
         node_id = battle.get("location_id")
         if node_id not in totals:
             continue
-        friendly_hp = 0.0
-        enemy_hp = 0.0
-        neutral_hp = 0.0
-        for side_id, side in (battle.get("sides", {}) or {}).items():
-            hp = float(side.get("hp", 0.0) or 0.0)
-            relation = owner_relation(side_id, player_id)
-            if relation in {"self", "ally"}:
-                friendly_hp += hp
-            elif relation == "enemy":
-                enemy_hp += hp
-            else:
-                neutral_hp += hp
-        totals[node_id] = [
-            friendly_hp / 200.0,
-            enemy_hp / 200.0,
-            neutral_hp / 100.0,
-            float(battle.get("age_ticks", 0) or 0) / float(TICK_LIMIT),
-        ]
+        _add_battle_features(totals[node_id], battle, player_id, weight=1.0)
     return totals
+
+
+def _edge_battle_node_totals(obs: dict, player_id: str) -> dict[str, list[float]]:
+    totals = {node_id: [0.0] * BATTLE_FEATURES for node_id in ALL_NODES}
+    for battle in obs.get("active_battles", []) or []:
+        if battle.get("location_kind") != "edge":
+            continue
+        endpoints = _edge_battle_endpoints(battle)
+        if not endpoints:
+            continue
+        for node_id in endpoints:
+            if node_id in totals:
+                _add_battle_features(totals[node_id], battle, player_id, weight=1.0)
+    return totals
+
+
+def _edge_battle_endpoints(battle: dict) -> list[str]:
+    location_id = str(battle.get("location_id", "") or "")
+    if "|" not in location_id:
+        return []
+    endpoints = [part for part in location_id.split("|", 1) if part in ALL_NODES]
+    return endpoints if len(endpoints) == 2 else []
+
+
+def _add_battle_features(features: list[float], battle: dict, player_id: str, weight: float) -> None:
+    friendly_hp = 0.0
+    enemy_hp = 0.0
+    neutral_hp = 0.0
+    for side_id, side in (battle.get("sides", {}) or {}).items():
+        hp = float(side.get("hp", 0.0) or 0.0) * weight
+        relation = owner_relation(side_id, player_id)
+        if relation in {"self", "ally"}:
+            friendly_hp += hp
+        elif relation == "enemy":
+            enemy_hp += hp
+        else:
+            neutral_hp += hp
+        if relation in COMBAT_RELATIONS:
+            relation_index_ = COMBAT_RELATIONS.index(relation)
+            offset = 4 + relation_index_ * len(UNIT_ORDER)
+            _add_normal_unit_counts(features, offset, side.get("units", {}))
+
+    features[0] += friendly_hp / 200.0
+    features[1] += enemy_hp / 200.0
+    features[2] += neutral_hp / 100.0
+    features[3] = max(
+        features[3],
+        float(battle.get("age_ticks", 0) or 0) / float(TICK_LIMIT),
+    )
 
 
 def encode_observation(obs: dict, player_id: str) -> np.ndarray:
@@ -387,6 +448,7 @@ def encode_observation(obs: dict, player_id: str) -> np.ndarray:
 
     moving_totals = _moving_node_totals(obs, player_id)
     battle_totals = _battle_node_totals(obs, player_id)
+    edge_battle_totals = _edge_battle_node_totals(obs, player_id)
     own_team = team_of(player_id)
 
     for node_id in ALL_NODES:
@@ -429,6 +491,7 @@ def encode_observation(obs: dict, player_id: str) -> np.ndarray:
         ])
         features.extend(moving_totals[node_id])
         features.extend(battle_totals[node_id])
+        features.extend(edge_battle_totals[node_id])
 
     vector = np.asarray(features, dtype=np.float32)
     if vector.shape != (OBSERVATION_DIM,):

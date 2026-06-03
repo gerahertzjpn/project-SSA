@@ -19,6 +19,7 @@ from src.core.constants import PLAYER_IDS
 from src.core.replay import REPLAY_SCHEMA_VERSION
 from src.core.runner import current_code_commit, rules_meta, run_match
 from src.bots.policy_bot import (
+    checkpoint_is_compatible,
     default_policy_checkpoint,
     default_team_policy_checkpoint,
     policy_model_id_for_checkpoint,
@@ -65,7 +66,7 @@ def available_models() -> list[dict]:
             "label": f"Sprint 3 team scripted best ({team_checkpoint.name})",
         })
     latest_team_checkpoint = ROOT / "training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt"
-    if latest_team_checkpoint.exists():
+    if latest_team_checkpoint.exists() and checkpoint_is_compatible(latest_team_checkpoint):
         seen_checkpoints.add(latest_team_checkpoint.resolve())
         models.append({
             "id": "ppo_team_scripted_v1_latest",
@@ -79,7 +80,7 @@ def available_models() -> list[dict]:
             "label": f"PPO random v1 ({best_checkpoint.name})",
         })
     latest_checkpoint = ROOT / "training_runs/sprint2_random_first_real_v1/checkpoints/latest.pt"
-    if latest_checkpoint.exists():
+    if latest_checkpoint.exists() and checkpoint_is_compatible(latest_checkpoint):
         seen_checkpoints.add(latest_checkpoint.resolve())
         models.append({
             "id": "ppo_random_v1_latest",
@@ -104,7 +105,7 @@ def discover_policy_checkpoints() -> list[Path]:
     checkpoints = [
         path
         for path in root.glob("*/checkpoints/*.pt")
-        if path.is_file()
+        if path.is_file() and checkpoint_is_compatible(path)
     ]
     return sorted(checkpoints, key=lambda path: (path.parent.parent.name, path.name))
 

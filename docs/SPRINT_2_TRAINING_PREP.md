@@ -102,8 +102,8 @@ Illegal decoded actions fall back to `HOLD`.
 
 Current vector:
 
-- `OBSERVATION_VERSION = train_obs_v0.3`
-- `OBSERVATION_DIM = 547`
+- `OBSERVATION_VERSION = train_obs_v0.4`
+- `OBSERVATION_DIM = 1028`
 - dtype: `float32`
 
 The vector includes:
@@ -116,8 +116,12 @@ The vector includes:
 - neutral HP/income/aggro;
 - persistent core HP;
 - ready lock signal;
-- moving groups aggregated by node;
-- node battle HP summaries.
+- moving groups aggregated by node with type-wise composition for
+  Vanguard/Ranger/Skirmisher by self/ally/enemy and inside/outgoing/incoming
+  buckets;
+- node battle HP summaries plus type-wise battle composition;
+- edge battle summaries projected onto both endpoint nodes, including HP and
+  Vanguard/Ranger/Skirmisher composition by self/ally/enemy.
 
 This is a training interface, not a replay format. Replay schema remains separate.
 
@@ -191,7 +195,7 @@ Expected properties:
 
 - JSON output;
 - `kind` is `random_rollout_smoke_no_training`;
-- all observations have dimension `547`;
+- all observations have dimension `1028`;
 - no replay JSON is stored in engine memory during the rollout.
 
 Full verification:
@@ -267,5 +271,6 @@ Conclusion:
   before `TrainingEnv` used real death-time finalization at `TICK_LIMIT`.
   Its 300-tick games were reported as `truncated` draws, so that run is a
   diagnostic artifact only and must not be treated as a valid learning result.
-- All checkpoints from before `train_obs_v0.3` and source-aware `MOVE` actions
+- All checkpoints from before `train_obs_v0.4`, edge-battle/type-aware movement
+  observations, and source-aware `MOVE` actions
   are incompatible with the current policy interface and must not be resumed.

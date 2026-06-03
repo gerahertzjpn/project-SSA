@@ -9,6 +9,7 @@ from src.bots.random_bot import RandomBot
 from src.bots.scripted_bot import ScriptedBot
 from src.bots.policy_bot import (
     PolicyBot,
+    checkpoint_is_compatible,
     checkpoint_from_policy_model_id,
     default_policy_checkpoint,
     default_team_policy_checkpoint,
@@ -91,7 +92,7 @@ def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
     if model_id in {"ppo_random_v1", "ppo_random_v1_latest"}:
         if model_id == "ppo_random_v1_latest":
             latest = Path("training_runs/sprint2_random_first_real_v1/checkpoints/latest.pt")
-            checkpoint = latest if latest.exists() else None
+            checkpoint = latest if latest.exists() and checkpoint_is_compatible(latest) else None
         else:
             checkpoint = default_policy_checkpoint()
         if checkpoint is None:
@@ -100,7 +101,7 @@ def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
     if model_id in {"ppo_team_scripted_v1", "ppo_team_scripted_v1_latest"}:
         if model_id == "ppo_team_scripted_v1_latest":
             latest = Path("training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt")
-            checkpoint = latest if latest.exists() else None
+            checkpoint = latest if latest.exists() and checkpoint_is_compatible(latest) else None
         else:
             checkpoint = default_team_policy_checkpoint()
         if checkpoint is None:

@@ -20,6 +20,8 @@ game rules.
 - Do not use old pre-fix exploit checkpoints as quality evidence.
 - If game rules change during Sprint 3, current Sprint 3 checkpoints become
   stale until revalidated.
+- Observation interface changes also invalidate checkpoints with mismatched
+  input layers. Current interface is `train_obs_v0.4` / `OBSERVATION_DIM=1028`.
 
 ## Main Design Choice
 
@@ -116,7 +118,7 @@ Build the smallest correct version first:
 
 Tests to write before long training:
 
-- reset returns three observations of dimension `547`;
+- reset returns three observations of dimension `1028`;
 - each controlled player has a legal mask with at least `HOLD`;
 - one `step()` advances the engine by one tick total, not three ticks;
 - all three actions are consumed on the same tick;

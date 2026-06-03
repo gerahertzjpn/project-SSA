@@ -1,10 +1,13 @@
 import sys
 from pathlib import Path
 
+import torch
+
 sys.path.insert(0, "c:/project-SSA")
 
 from src.core.constants import PLAYER_IDS
 from src.core.replay import load_replay
+from src.training.policy import MaskedActorCritic
 from viewer import server
 
 
@@ -47,7 +50,14 @@ def test_replay_files_are_sorted_by_numeric_index(tmp_path: Path, monkeypatch):
 def test_viewer_server_discovers_policy_checkpoints(tmp_path: Path, monkeypatch):
     checkpoint = tmp_path / "training_runs" / "new_policy" / "checkpoints" / "latest.pt"
     checkpoint.parent.mkdir(parents=True)
-    checkpoint.write_bytes(b"stub")
+    policy = MaskedActorCritic(hidden_size=32)
+    torch.save(
+        {
+            "policy_state": policy.state_dict(),
+            "config": {"hidden_size": 32},
+        },
+        checkpoint,
+    )
     monkeypatch.setattr(server, "ROOT", tmp_path)
     monkeypatch.setattr(
         server,
