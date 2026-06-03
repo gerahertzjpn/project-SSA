@@ -253,3 +253,35 @@ Results:
 Decision:
 
 - Resume the real run from checkpoint update 20.
+
+## 7. Real Run Resume After Pool Reuse
+
+Run:
+
+```powershell
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_scripted_warm_v1 --resume training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt --updates 280 --workers 16 --rollout-steps 512 --eval-episodes 50 --eval-interval 10 --checkpoint-interval 10 --random-baseline-episodes 0 --opponent-bot scripted --seed 20260603 --torch-threads 1
+```
+
+State cleanup before resume:
+
+- `metrics.jsonl` had uncheckpointed update `21-24` records from the interrupted
+  attempt.
+- A backup was saved as
+  `training_runs/sprint3_team_scripted_warm_v1/metrics_before_resume_prune_20260603.jsonl`.
+- The active metrics file was pruned back to checkpoint update `20`, so resumed
+  updates start cleanly from `21`.
+
+Early resumed eval checkpoints:
+
+| Update | Win | Loss | Draw | Normal Wins | Death-Time Wins | Notes |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 30 | `94%` | `6%` | `0%` | `46%` | `48%` | Pool reuse worked; no pagefile errors observed. |
+| 40 | `60%` | `20%` | `20%` | `6%` | `54%` | Bad/noisy checkpoint; keep watching trend. |
+| 50 | `96%` | `0%` | `4%` | `50%` | `46%` | Recovered strongly after update 40 dip. |
+
+Current interpretation:
+
+- The run is alive and producing usable checkpoints.
+- Invalid action rate is still `0.0`.
+- Checkpoint selection must be based on eval sweeps, not simply the latest
+  checkpoint; update `40` is already a good example of why.
