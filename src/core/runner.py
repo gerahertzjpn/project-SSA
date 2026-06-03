@@ -11,6 +11,7 @@ from src.bots.policy_bot import (
     PolicyBot,
     checkpoint_from_policy_model_id,
     default_policy_checkpoint,
+    default_team_policy_checkpoint,
 )
 from src.core.constants import (
     CORE_ATTACK_RANGE,
@@ -95,6 +96,15 @@ def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
             checkpoint = default_policy_checkpoint()
         if checkpoint is None:
             raise ValueError("PPO random v1 checkpoint is not available")
+        return PolicyBot(player_id, team, checkpoint_path=checkpoint, deterministic=True)
+    if model_id in {"ppo_team_scripted_v1", "ppo_team_scripted_v1_latest"}:
+        if model_id == "ppo_team_scripted_v1_latest":
+            latest = Path("training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt")
+            checkpoint = latest if latest.exists() else None
+        else:
+            checkpoint = default_team_policy_checkpoint()
+        if checkpoint is None:
+            raise ValueError("PPO team scripted v1 checkpoint is not available")
         return PolicyBot(player_id, team, checkpoint_path=checkpoint, deterministic=True)
     raise ValueError(f"Unknown bot model: {model_id}")
 

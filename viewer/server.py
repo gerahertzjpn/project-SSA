@@ -18,7 +18,11 @@ if str(ROOT) not in sys.path:
 from src.core.constants import PLAYER_IDS
 from src.core.replay import REPLAY_SCHEMA_VERSION
 from src.core.runner import current_code_commit, rules_meta, run_match
-from src.bots.policy_bot import default_policy_checkpoint, policy_model_id_for_checkpoint
+from src.bots.policy_bot import (
+    default_policy_checkpoint,
+    default_team_policy_checkpoint,
+    policy_model_id_for_checkpoint,
+)
 
 
 REPLAY_DIR = ROOT / "replays_viewer_debug_smoke"
@@ -53,6 +57,20 @@ def available_models() -> list[dict]:
         {"id": "scripted", "label": "Scripted bot"},
     ]
     seen_checkpoints: set[Path] = set()
+    team_checkpoint = default_team_policy_checkpoint()
+    if team_checkpoint is not None:
+        seen_checkpoints.add(team_checkpoint.resolve())
+        models.append({
+            "id": "ppo_team_scripted_v1",
+            "label": f"Sprint 3 team scripted best ({team_checkpoint.name})",
+        })
+    latest_team_checkpoint = ROOT / "training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt"
+    if latest_team_checkpoint.exists():
+        seen_checkpoints.add(latest_team_checkpoint.resolve())
+        models.append({
+            "id": "ppo_team_scripted_v1_latest",
+            "label": "Sprint 3 team scripted latest",
+        })
     best_checkpoint = default_policy_checkpoint()
     if best_checkpoint is not None:
         seen_checkpoints.add(best_checkpoint.resolve())
