@@ -44,3 +44,32 @@ Decision:
 - Sprint 2 checkpoint and eval loop are healthy enough to use as Sprint 3 warm
   start/reference.
 - Proceed to multi-agent synchronized 3v3 training infrastructure.
+
+## 1. Team Training Environment
+
+Implemented:
+
+- `src/training/team_env.py`
+- `TeamTrainingEnvConfig`
+- `TeamTrainingEnv`
+- synchronized `step({"A1": action, "A2": action, "A3": action})`
+- one engine tick per multi-agent step
+- per-player observations, masks, decoded actions, invalid-action accounting
+- shared team terminal reward and team shaping by default
+- dead controlled players are masked to `HOLD` only
+
+Test command:
+
+```powershell
+python -m pytest tests/test_team_training_env.py -q
+```
+
+Result:
+
+- `7 passed in 1.46s`
+
+Decision:
+
+- The first Sprint 3 infrastructure requirement is met: three controlled
+  teammates can act on the same world tick without converting 3v3 into three
+  sequential single-agent turns.

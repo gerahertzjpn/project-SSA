@@ -15,6 +15,7 @@ from .spaces import (
     legal_action_mask,
 )
 from .env import TrainingEnv, TrainingEnvConfig
+from .team_env import TeamTrainingEnv, TeamTrainingEnvConfig
 from .policy import MaskedActorCritic
 from .ppo_trainer import PPOConfig
 
@@ -25,6 +26,8 @@ __all__ = [
     "OBSERVATION_VERSION",
     "TrainingEnv",
     "TrainingEnvConfig",
+    "TeamTrainingEnv",
+    "TeamTrainingEnvConfig",
     "MaskedActorCritic",
     "PPOConfig",
     "decode_action",
