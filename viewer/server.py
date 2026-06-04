@@ -113,15 +113,17 @@ def discover_policy_checkpoints() -> list[Path]:
 def server_info() -> dict:
     current_commit = current_code_commit()
     current_fingerprint = source_fingerprint()
+    fingerprint_equal = SERVER_SOURCE_FINGERPRINT == current_fingerprint
     stale = (
         SERVER_COMMIT != "unknown"
         and current_commit != "unknown"
         and SERVER_COMMIT != current_commit
-    ) or SERVER_SOURCE_FINGERPRINT != current_fingerprint
+    ) or not fingerprint_equal
     return {
         "commit": SERVER_COMMIT,
         "current_commit": current_commit,
         "stale": stale,
+        "source_fingerprint_equal": fingerprint_equal,
         "source_fingerprint": SERVER_SOURCE_FINGERPRINT[:24],
         "current_source_fingerprint": current_fingerprint[:24],
         "started_at": SERVER_STARTED_AT,

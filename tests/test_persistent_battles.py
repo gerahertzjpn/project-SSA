@@ -65,16 +65,18 @@ def test_battle_is_persistent_not_instant():
 
 def test_opposing_groups_create_persistent_edge_battle():
     state = make_initial_state(seed=2)
-    state.nodes["A1"].units = {UnitType.VANGUARD.value: 8}
-    state.nodes["CP1"].owner = "B1"
+    state.nodes["CP1"].owner = "A1"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP1"].units = {UnitType.VANGUARD.value: 8}
+    state.nodes["CP3"].owner = "B1"
+    state.nodes["CP3"].neutral_hp = 0
+    state.nodes["CP3"].units = {UnitType.VANGUARD.value: 8}
 
     engine = GameEngine(
         state,
         make_bots({
-            "A1": [Action(ActionType.MOVE, source="A1", destination="CP1")],
-            "B1": [Action(ActionType.MOVE, source="CP1", destination="A1")],
+            "A1": [Action(ActionType.MOVE, source="CP1", destination="CP3")],
+            "B1": [Action(ActionType.MOVE, source="CP3", destination="CP1")],
         }),
     )
 
@@ -86,21 +88,23 @@ def test_opposing_groups_create_persistent_edge_battle():
         if battle.location_kind == "edge"
     ]
     assert len(edge_battles) == 1
-    assert edge_battles[0].location_id == "A1|CP1"
+    assert edge_battles[0].location_id == "CP1|CP3"
 
 
 def test_reinforcement_joins_edge_battle():
     state = make_initial_state(seed=3)
-    state.nodes["A1"].units = {UnitType.VANGUARD.value: 8}
-    state.nodes["CP1"].owner = "B1"
+    state.nodes["CP1"].owner = "A1"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP1"].units = {UnitType.VANGUARD.value: 8}
+    state.nodes["CP3"].owner = "B1"
+    state.nodes["CP3"].neutral_hp = 0
+    state.nodes["CP3"].units = {UnitType.VANGUARD.value: 8}
 
     engine = GameEngine(
         state,
         make_bots({
-            "A1": [Action(ActionType.MOVE, source="A1", destination="CP1")],
-            "B1": [Action(ActionType.MOVE, source="CP1", destination="A1")],
+            "A1": [Action(ActionType.MOVE, source="CP1", destination="CP3")],
+            "B1": [Action(ActionType.MOVE, source="CP3", destination="CP1")],
         }),
     )
     engine.tick()
@@ -112,8 +116,8 @@ def test_reinforcement_joins_edge_battle():
         player_id="A1",
         team="TEAM_A",
         units={UnitType.VANGUARD.value: 2},
-        src="A1",
-        dst="CP1",
+        src="CP1",
+        dst="CP3",
         arrival_tick=state.tick + 1,
         started_tick=state.tick,
         travel_ticks=TRAVEL_TIME,
@@ -138,8 +142,8 @@ def test_edge_battle_created_this_tick_catches_same_edge_groups():
             player_id="A1",
             team="TEAM_A",
             units={UnitType.VANGUARD.value: 2},
-            src="A1",
-            dst="CP1",
+            src="CP1",
+            dst="CP3",
             arrival_tick=state.tick + 1,
             started_tick=state.tick,
             travel_ticks=10,
@@ -150,8 +154,8 @@ def test_edge_battle_created_this_tick_catches_same_edge_groups():
             player_id="B1",
             team="TEAM_B",
             units={UnitType.VANGUARD.value: 2},
-            src="CP1",
-            dst="A1",
+            src="CP3",
+            dst="CP1",
             arrival_tick=state.tick + 1,
             started_tick=state.tick,
             travel_ticks=10,
@@ -162,8 +166,8 @@ def test_edge_battle_created_this_tick_catches_same_edge_groups():
             player_id="A2",
             team="TEAM_A",
             units={UnitType.SKIRMISHER.value: 1},
-            src="A1",
-            dst="CP1",
+            src="CP1",
+            dst="CP3",
             arrival_tick=state.tick + 1,
             started_tick=state.tick,
             travel_ticks=10,
@@ -176,7 +180,7 @@ def test_edge_battle_created_this_tick_catches_same_edge_groups():
     engine.tick()
 
     battle = next(b for b in state.active_battles.values() if b.location_kind == "edge")
-    assert battle.location_id == "A1|CP1"
+    assert battle.location_id == "CP1|CP3"
     assert sorted(battle.participant_entry_sides) == ["A1", "A2", "B1"]
     assert battle.participant_entry_sides["A1"] == "attacker"
     assert battle.participant_entry_sides["A2"] == "attacker"
@@ -271,6 +275,57 @@ def test_neutrals_passive_until_attacked():
     assert state.nodes["CP1"].neutral_hp == 5
     assert "A1" in state.nodes["CP1"].visiting_units
     assert not state.active_battles
+
+
+def test_transit_group_joins_active_node_battle_instead_of_passing_through():
+    state = make_initial_state(seed=18)
+    state.nodes["CP1"].owner = "NEUTRAL"
+    state.nodes["CP1"].neutral_hp = 5
+    engine = GameEngine(state, make_bots())
+
+    capturing_group = MovingGroup(
+        player_id="A1",
+        team="TEAM_A",
+        units={UnitType.VANGUARD.value: 2},
+        src="A1",
+        dst="CP1",
+        arrival_tick=state.tick,
+        started_tick=state.tick,
+        intent="CAPTURE",
+        path=["A1", "CP1"],
+    )
+    engine._start_node_battle(
+        group=capturing_group,
+        node_id="CP1",
+        objective="neutral",
+        include_neutral=True,
+    )
+    battle = state.active_battles["node:CP1"]
+    before_units = len(battle.units)
+
+    transit_group = MovingGroup(
+        player_id="B1",
+        team="TEAM_B",
+        units={UnitType.VANGUARD.value: 3},
+        src="CP3",
+        dst="CP1",
+        arrival_tick=state.tick,
+        started_tick=state.tick,
+        progress=1.0,
+        intent="TRANSIT",
+        path=["CP3", "CP1", "A1"],
+        phase="edge",
+        segment_index=1,
+    )
+
+    event = engine._handle_transit_checkpoint(transit_group)
+
+    assert event["type"] == "BATTLE_REINFORCEMENT"
+    assert event["battle_id"] == "node:CP1"
+    assert event["player"] == "B1"
+    assert len(battle.units) == before_units + 3
+    assert any(unit.team == "B1" for unit in battle.units)
+    assert "B1" not in state.nodes["CP1"].visiting_units
 
 
 def test_arrived_units_cannot_leave_node_until_next_tick():
@@ -425,7 +480,7 @@ def test_movement_speed_uses_slowest_unit_in_group():
     groups = {group.player_id: group for group in state.moving_groups}
 
     assert groups["A1"].speed == UNIT_STATS[UnitType.SKIRMISHER]["speed"]
-    assert groups["A2"].speed == 1.0
+    assert groups["A2"].speed == UNIT_STATS[UnitType.RANGER]["speed"]
     assert groups["A1"].travel_ticks < groups["A2"].travel_ticks
 
 
@@ -547,16 +602,18 @@ def test_baron_blocks_transit():
 
 def test_replay_has_node_and_edge_battle_events():
     state = make_initial_state(seed=8)
-    state.nodes["A1"].units = {UnitType.VANGUARD.value: 8}
-    state.nodes["CP1"].owner = "B1"
+    state.nodes["CP1"].owner = "A1"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP1"].units = {UnitType.VANGUARD.value: 8}
+    state.nodes["CP3"].owner = "B1"
+    state.nodes["CP3"].neutral_hp = 0
+    state.nodes["CP3"].units = {UnitType.VANGUARD.value: 8}
 
     engine = GameEngine(
         state,
         make_bots({
-            "A1": [Action(ActionType.MOVE, source="A1", destination="CP1")],
-            "B1": [Action(ActionType.MOVE, source="CP1", destination="A1")],
+            "A1": [Action(ActionType.MOVE, source="CP1", destination="CP3")],
+            "B1": [Action(ActionType.MOVE, source="CP3", destination="CP1")],
         }),
     )
     engine.tick()

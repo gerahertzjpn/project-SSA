@@ -18,7 +18,11 @@ from src.core.constants import (
     BARON_ATTACK_RATE,
     BARON_ATK,
     BARON_HP,
+    BARON_SECONDARY_ATTACK_RATE,
+    BARON_SECONDARY_ATK,
+    ALLIED_LORD_PUSH_DELAY_TICKS,
     CORE_ATK,
+    CORE_ATTACK_RATE,
     CORE_HP,
     CORE_ATTACK_RANGE,
     LORD_ATTACK_RANGE,
@@ -29,7 +33,9 @@ from src.core.constants import (
     TRAVEL_TIME,
 )
 from src.core.engine import GameEngine
-from src.core.combat import DEPLOYMENT_DEPTH, RENDER_SLOT_SPACING, SIM_SLOT_SPACING
+from src.core.combat import DEPLOYMENT_DEPTH, MELEE_CONTACT_SNAP, RENDER_SLOT_SPACING, SIM_SLOT_SPACING
+from src.core.combat2d import COMBAT_RANGE_TO_MAP_UNITS
+from src.core.map2d import MAP2D_VERSION, MOVEMENT_MAP_UNITS_PER_TICK, map2d_replay_meta
 from src.core.replay import save_replay
 from src.core.state import GameState, make_initial_state
 
@@ -149,20 +155,38 @@ def current_code_commit() -> str:
 
 def rules_meta() -> dict:
     return {
-        "no_shoot_while_moving": True,
+        "no_shoot_while_moving": False,
+        "ranger_can_attack_after_moving": True,
+        "approach_threat_battles": True,
+        "node_ranged_approach_battles": True,
+        "map_distance_movement": True,
+        "combat_2d_map": True,
+        "combat_range_to_map_units": COMBAT_RANGE_TO_MAP_UNITS,
         "allied_lord_can_move_and_shoot": True,
-        "allied_lord_attacks_forward_only": True,
+        "allied_lord_stops_for_attackable_targets": True,
+        "allied_lord_returns_fire_when_attacked_from_behind": True,
+        "lord_support_join_actions": True,
+        "enemy_lord_hunt_actions": True,
+        "allied_lord_attacks_forward_only": False,
+        "allied_lord_prefers_forward_targets": True,
+        "allied_lord_push_delay_ticks": ALLIED_LORD_PUSH_DELAY_TICKS,
+        "map2d_version": MAP2D_VERSION,
         "core_hp": CORE_HP,
         "core_atk": CORE_ATK,
+        "core_attack_rate": CORE_ATTACK_RATE,
         "baron_hp": BARON_HP,
         "baron_atk": BARON_ATK,
         "baron_attack_rate": BARON_ATTACK_RATE,
+        "baron_secondary_atk": BARON_SECONDARY_ATK,
+        "baron_secondary_attack_rate": BARON_SECONDARY_ATTACK_RATE,
         "neutral_guard_hp": NEUTRAL_GUARD_HP,
         "neutral_guard_total_atk": "2 * guard_strength",
         "neutral_income": "ceil(guard_strength / 2)",
         "lord_attack_range": LORD_ATTACK_RANGE,
         "core_attack_range": CORE_ATTACK_RANGE,
         "edge_travel_time": TRAVEL_TIME,
+        "movement_map_units_per_tick": MOVEMENT_MAP_UNITS_PER_TICK,
+        "melee_contact_snap": MELEE_CONTACT_SNAP,
         "combat_deployment_depth": DEPLOYMENT_DEPTH,
         "combat_sim_slot_spacing": SIM_SLOT_SPACING,
         "combat_render_slot_spacing": RENDER_SLOT_SPACING,
@@ -206,6 +230,7 @@ def run_match(
                 "bot_type": bot_type,
                 "code_commit": current_code_commit(),
                 "rules": rules_meta(),
+                "map2d": map2d_replay_meta(),
                 "player_models": dict(player_models or {}),
                 "winner_type": state.winner_type,
                 "core_combat_damage": round(state.core_combat_damage, 3),
@@ -222,6 +247,10 @@ def run_match(
                     "owner": state.baron.allied_lord_owner,
                     "hp": round(state.baron.allied_lord_hp, 3),
                     "target": state.baron.allied_lord_target,
+                    "path": list(state.baron.allied_lord_path),
+                    "ready_tick": state.baron.allied_lord_ready_tick,
+                    "arrival_tick": state.baron.allied_lord_arrival_tick,
+                    "support_units": dict(state.baron.allied_lord_support_units),
                     "alive": state.baron.allied_lord_alive,
                     "expended": state.baron.allied_lord_expended,
                 },

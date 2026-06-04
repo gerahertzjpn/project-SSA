@@ -314,6 +314,11 @@ def action_label(action_index: int) -> str:
         return f"{action_index}:PRODUCE:{spec.unit_type.value}"
     if spec.kind == "MOVE" and spec.source and spec.destination:
         return f"{action_index}:MOVE:{spec.intent}:{spec.source}->{spec.destination}"
+    if spec.kind == "PRODUCE_MOVE" and spec.unit_type is not None and spec.source and spec.destination:
+        return (
+            f"{action_index}:PRODUCE_MOVE:{spec.unit_type.value}"
+            f"+{spec.intent}:{spec.source}->{spec.destination}"
+        )
     return f"{action_index}:{spec.kind}"
 
 
@@ -323,6 +328,8 @@ def action_kind_label(action_index: int) -> str:
     spec = ACTION_SPECS[int(action_index)]
     if spec.kind == "MOVE":
         return f"MOVE_{spec.intent}"
+    if spec.kind == "PRODUCE_MOVE":
+        return f"PRODUCE_MOVE_{spec.intent}"
     return spec.kind
 
 

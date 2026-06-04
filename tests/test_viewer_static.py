@@ -67,6 +67,8 @@ def test_viewer_loads_compact_replay_schema():
     assert "renderMapEvents" in script
     assert "TUNNEL_EDGES" in script
     assert "battleCardPosition" in script
+    assert 'battle.location_kind === "approach"' in script
+    assert "battle.approach_id" in script
     assert "movementSignature" in script
     assert "pathSignature" in script
     assert "started" in script

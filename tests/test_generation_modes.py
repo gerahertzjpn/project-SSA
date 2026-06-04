@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from src.core.constants import CORE_ATK, CORE_ATTACK_RATE, CORE_HP, CORE_ATTACK_RANGE, LORD_ATTACK_RANGE, NEUTRAL_GUARD_HP
+from src.core.map2d import MAP2D_VERSION
 from src.core.replay import load_replay
 from src.core.runner import GENERATION_PROFILES, run_match
 
@@ -223,20 +225,34 @@ def test_replay_meta_records_code_and_rules_version(tmp_path: Path):
     )
     replay = load_replay(str(replay_path))
 
-    assert replay["meta"]["schema_version"] == "0.5.2"
+    assert replay["meta"]["schema_version"] == "0.7.2"
     assert replay["meta"]["code_commit"]
-    assert replay["meta"]["rules"]["no_shoot_while_moving"] is True
+    assert replay["meta"]["rules"]["no_shoot_while_moving"] is False
+    assert replay["meta"]["rules"]["ranger_can_attack_after_moving"] is True
+    assert replay["meta"]["rules"]["approach_threat_battles"] is True
+    assert replay["meta"]["rules"]["node_ranged_approach_battles"] is True
+    assert replay["meta"]["rules"]["combat_2d_map"] is True
+    assert replay["meta"]["rules"]["map_distance_movement"] is True
     assert replay["meta"]["rules"]["allied_lord_can_move_and_shoot"] is True
-    assert replay["meta"]["rules"]["core_hp"] == 80
-    assert replay["meta"]["rules"]["core_atk"] == 6
-    assert replay["meta"]["rules"]["neutral_guard_hp"] == 2
+    assert replay["meta"]["rules"]["map2d_version"] == MAP2D_VERSION
+    assert replay["meta"]["rules"]["core_hp"] == CORE_HP
+    assert replay["meta"]["rules"]["core_atk"] == CORE_ATK
+    assert replay["meta"]["rules"]["core_attack_rate"] == CORE_ATTACK_RATE
+    assert replay["meta"]["rules"]["neutral_guard_hp"] == NEUTRAL_GUARD_HP
     assert replay["meta"]["rules"]["neutral_guard_total_atk"] == "2 * guard_strength"
     assert replay["meta"]["rules"]["neutral_income"] == "ceil(guard_strength / 2)"
-    assert replay["meta"]["rules"]["lord_attack_range"] == 11.0
-    assert replay["meta"]["rules"]["core_attack_range"] == 12.0
+    assert replay["meta"]["rules"]["lord_attack_range"] == LORD_ATTACK_RANGE
+    assert replay["meta"]["rules"]["core_attack_range"] == CORE_ATTACK_RANGE
+    assert replay["meta"]["rules"]["movement_map_units_per_tick"] == 30.0
+    assert replay["meta"]["rules"]["melee_contact_snap"] == 0.05
     assert replay["meta"]["rules"]["combat_deployment_depth"] == 4.0
     assert replay["meta"]["rules"]["combat_sim_slot_spacing"] == 0.08
     assert replay["meta"]["rules"]["combat_render_slot_spacing"] == 0.32
+    assert replay["meta"]["map2d"]["version"] == MAP2D_VERSION
+    assert replay["meta"]["map2d"]["nodes"]["A1"]["type"] == "CORE"
+    assert replay["meta"]["map2d"]["nodes"]["Baron"]["type"] == "BARON"
+    assert replay["meta"]["map2d"]["lanes"]["A1|CP1"]["tunnel"] is True
+    assert replay["meta"]["map2d"]["approaches"]["CP1->Baron"]["lane_id"] == "CP1|Baron"
 
 
 def test_training_profile_requires_no_replay_path(tmp_path: Path):
@@ -251,6 +267,9 @@ def test_training_profile_requires_no_replay_path(tmp_path: Path):
     assert result.replay_path is None
     assert not (tmp_path / "ignored.json").exists()
     assert result.replay_ticks_recorded == 0
+    assert result.state.visual_unit_counter == 0
+    assert all(not node.visual_units for node in result.state.nodes.values())
+    assert all(not node.visiting_visual_units for node in result.state.nodes.values())
 
 
 def test_replay_mode_requires_path():

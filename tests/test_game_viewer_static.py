@@ -29,6 +29,12 @@ def test_game_viewer_has_stable_visual_tracker():
     assert "desiredUnits" in script
     assert "stationedDesired" in script
     assert "movingDesired" in script
+    assert "groupVisualAnchor" in script
+    assert "findNextVisualGroup" in script
+    assert "visualMovementKey" in script
+    assert "group?.visual?.x" in script
+    assert 'battle.location_kind === "approach"' in script
+    assert "battle.approach_id" in script
     assert "battleDesired" in script
     assert "drawVisualUnits" in script
     assert "pickAt" in script
@@ -41,6 +47,7 @@ def test_game_viewer_has_stable_visual_tracker():
     assert "advancePlayback" in script
     assert "renderPos" in script
     assert "simPos" in script
+    assert "isDeadCoreNode" in script
 
 
 def test_game_viewer_layout_is_canvas_first():

@@ -19,6 +19,8 @@ class NodeState:
     neutral_income: int     # income per tick when captured (scaled from original neutral strength)
     neutral_aggro_teams: set[str] = field(default_factory=set)
     visiting_units: dict = field(default_factory=dict)  # player_id -> {UnitType.value: count}
+    visual_units: dict = field(default_factory=dict)  # owner -> unit_type -> [stable replay visual ids]
+    visiting_visual_units: dict = field(default_factory=dict)  # player_id -> unit_type -> [stable replay visual ids]
     unit_ready_tick: dict = field(default_factory=dict)  # player_id -> first tick units may move again
     unit_entry_side: dict = field(default_factory=dict)  # player_id -> attacker/defender side last used in node combat
 
@@ -48,6 +50,7 @@ class MovingGroup:
     segment_node: Optional[str] = None
     speed: float = 1.0
     final_dst: Optional[str] = None
+    visual_units: dict = field(default_factory=dict)  # unit_type -> [stable replay visual ids]
 
     def total_units(self) -> int:
         return sum(self.units.values())
@@ -73,6 +76,12 @@ class BaronState:
     allied_lord_owner: Optional[str] = None
     allied_lord_hp: float = 0.0
     allied_lord_target: Optional[str] = None
+    allied_lord_path: list[str] = field(default_factory=list)
+    allied_lord_ready_tick: int = 0
+    allied_lord_arrival_tick: int = 0
+    allied_lord_visual_units: dict = field(default_factory=dict)
+    allied_lord_support_units: dict = field(default_factory=dict)
+    allied_lord_support_visual_units: dict = field(default_factory=dict)
     allied_lord_alive: bool = False
     allied_lord_expended: bool = False
 
@@ -80,7 +89,7 @@ class BaronState:
 @dataclass
 class Battle:
     battle_id: str
-    location_kind: str              # 'node' | 'edge'
+    location_kind: str              # 'node' | 'edge' | 'approach'
     location_id: str                # node id or canonical edge id
     units: list[UnitInstance]
     started_at_tick: int
@@ -97,6 +106,8 @@ class Battle:
     neutral_aggro_teams: set[str] = field(default_factory=set)
     objective: Optional[str] = None  # neutral | baron | core | pvp
     core_owner: Optional[str] = None
+    approach_id: Optional[str] = None
+    threat_zone_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -112,6 +123,7 @@ class GameState:
     core_damage_by_team: dict           # team -> non-death-time core damage dealt
     death_time_final_core_deaths: dict  # team -> cores destroyed by final death-time hit
     rng: object                         # numpy rng for reproducibility
+    visual_unit_counter: int = 0
 
     # ongoing persistent battles: "node:<id>" or "edge:<a>|<b>" -> Battle
     active_battles: dict = field(default_factory=dict)

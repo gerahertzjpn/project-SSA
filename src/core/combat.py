@@ -19,7 +19,8 @@ clashes) where the agent only needs the outcome, not the per-tick position data.
 from typing import Optional
 
 from .constants import (
-    UnitType, CORE_HP, CORE_ATK, BARON_ATK, BARON_ATTACK_RATE, MAX_COMBAT_TICKS,
+    UnitType, CORE_HP, CORE_ATK, CORE_ATTACK_RATE, BARON_HP, BARON_ATK, BARON_ATTACK_RATE,
+    BARON_SECONDARY_ATK, BARON_SECONDARY_ATTACK_RATE, MAX_COMBAT_TICKS,
     TEAM_A_PLAYERS, TEAM_B_PLAYERS, TRAVEL_TIME, LORD_ATTACK_RANGE, CORE_ATTACK_RANGE,
     NEUTRAL_GUARD_HP,
 )
@@ -103,6 +104,8 @@ def _build_side(units_dict: dict, team: str, is_attacker: bool) -> list[UnitInst
             speed=float(stats["speed"]),
             pos=pos,
             attack_rate=int(stats.get("attack_rate", 1)),
+            secondary_atk=float(stats.get("secondary_atk", 0.0)),
+            secondary_attack_rate=int(stats.get("secondary_attack_rate", 0)),
             move_direction=direction,
             render_offset=direction * (render_offset - sim_offset),
         ))
@@ -170,7 +173,7 @@ def _build_core(player_id: str, hp: float | None = None) -> UnitInstance:
         range=CORE_RANGE,
         speed=0.0,
         pos=pos,
-        attack_rate=1,
+        attack_rate=CORE_ATTACK_RATE,
         move_direction=0.0,
     )
 
@@ -181,12 +184,14 @@ def _build_baron(baron_hp: int) -> UnitInstance:
         unit_type="BARON",
         team="BARON",
         hp=float(baron_hp),
-        max_hp=float(baron_hp),
+        max_hp=float(BARON_HP),
         atk=float(BARON_ATK),
         range=LORD_RANGE,
         speed=0.0,
         pos=CENTER_SIDE,
         attack_rate=BARON_ATTACK_RATE,
+        secondary_atk=float(BARON_SECONDARY_ATK),
+        secondary_attack_rate=BARON_SECONDARY_ATTACK_RATE,
         move_direction=0.0,
     )
 
@@ -486,6 +491,15 @@ def _attack_rate(unit: UnitInstance) -> int:
     return max(1, int(getattr(unit, "attack_rate", 1) or 1))
 
 
+def _attack_damage_sequence(unit: UnitInstance) -> list[float]:
+    damages = [float(unit.atk)] * _attack_rate(unit)
+    secondary_atk = float(getattr(unit, "secondary_atk", 0.0) or 0.0)
+    secondary_rate = max(0, int(getattr(unit, "secondary_attack_rate", 0) or 0))
+    if secondary_atk > 0 and secondary_rate > 0:
+        damages.extend([secondary_atk] * secondary_rate)
+    return damages
+
+
 def _can_attack_after_moving(unit: UnitInstance) -> bool:
     return unit.unit_type in (UnitType.VANGUARD.value, UnitType.SKIRMISHER.value, UnitType.RANGER.value)
 
@@ -497,11 +511,13 @@ def _queue_attack(
     damage_log: dict[int, float],
     target_log: dict[int, int],
     attack_log: dict[int, list[tuple[int, float]]],
+    damage: Optional[float] = None,
 ) -> None:
-    pending[target.uid] = pending.get(target.uid, 0.0) + unit.atk
-    damage_log[unit.uid] = damage_log.get(unit.uid, 0.0) + unit.atk
+    value = float(unit.atk if damage is None else damage)
+    pending[target.uid] = pending.get(target.uid, 0.0) + value
+    damage_log[unit.uid] = damage_log.get(unit.uid, 0.0) + value
     target_log[unit.uid] = target.uid
-    attack_log.setdefault(unit.uid, []).append((target.uid, unit.atk))
+    attack_log.setdefault(unit.uid, []).append((target.uid, value))
 
 
 def _frame_snapshot(
@@ -633,7 +649,7 @@ def tick_battle_units(
 
     for unit in alive:
         unit_targeting_pending = targeting_pending.setdefault(_combat_side(unit.team), {})
-        for _ in range(_attack_rate(unit)):
+        for damage in _attack_damage_sequence(unit):
             if _is_allied_lord(unit):
                 target = _find_allied_lord_target(
                     unit,
@@ -654,8 +670,8 @@ def tick_battle_units(
                 target = None
             if target is None:
                 break
-            _queue_attack(unit, target, pending, damage_log, target_log, attack_log)
-            unit_targeting_pending[target.uid] = unit_targeting_pending.get(target.uid, 0.0) + unit.atk
+            _queue_attack(unit, target, pending, damage_log, target_log, attack_log, damage=damage)
+            unit_targeting_pending[target.uid] = unit_targeting_pending.get(target.uid, 0.0) + damage
 
     for unit in units:
         if unit.uid in pending:
@@ -789,7 +805,7 @@ def _run_combat(
 
         for u in alive_atk:
             unit_targeting_pending = targeting_pending.setdefault(_combat_side(u.team), {})
-            for _ in range(_attack_rate(u)):
+            for damage in _attack_damage_sequence(u):
                 if _is_allied_lord(u):
                     t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=unit_targeting_pending)
                 elif u.uid in attack_ready_atk or _can_attack_after_moving(u):
@@ -798,12 +814,12 @@ def _run_combat(
                     t = None
                 if not t:
                     break
-                _queue_attack(u, t, pending, damage_log, target_log, attack_log)
-                unit_targeting_pending[t.uid] = unit_targeting_pending.get(t.uid, 0.0) + u.atk
+                _queue_attack(u, t, pending, damage_log, target_log, attack_log, damage=damage)
+                unit_targeting_pending[t.uid] = unit_targeting_pending.get(t.uid, 0.0) + damage
 
         for u in alive_def:
             unit_targeting_pending = targeting_pending.setdefault(_combat_side(u.team), {})
-            for _ in range(_attack_rate(u)):
+            for damage in _attack_damage_sequence(u):
                 if _is_allied_lord(u):
                     t = _find_allied_lord_target(u, all_units, in_range_only=True, pending=unit_targeting_pending)
                 elif u.uid in attack_ready_def or _can_attack_after_moving(u):
@@ -812,8 +828,8 @@ def _run_combat(
                     t = None
                 if not t:
                     break
-                _queue_attack(u, t, pending, damage_log, target_log, attack_log)
-                unit_targeting_pending[t.uid] = unit_targeting_pending.get(t.uid, 0.0) + u.atk
+                _queue_attack(u, t, pending, damage_log, target_log, attack_log, damage=damage)
+                unit_targeting_pending[t.uid] = unit_targeting_pending.get(t.uid, 0.0) + damage
 
         for unit in all_units:
             if unit.uid in pending:

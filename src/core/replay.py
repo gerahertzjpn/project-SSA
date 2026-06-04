@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-REPLAY_SCHEMA_VERSION = "0.5.2"
+REPLAY_SCHEMA_VERSION = "0.7.2"
 COMBAT_TRACE_FORMAT = "compact_v4"
 
 

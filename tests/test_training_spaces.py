@@ -1,6 +1,13 @@
 import numpy as np
 
-from src.core.constants import ActionType, CORE_HP, UnitType
+from src.core.constants import (
+    ActionType,
+    BARON_HP,
+    CORE_HP,
+    SPECIAL_DEST_ALLY_LORD,
+    SPECIAL_DEST_ENEMY_LORD,
+    UnitType,
+)
 from src.core.combat import build_player_units
 from src.core.engine import GameEngine
 from src.core.state import Battle, MovingGroup, make_initial_state
@@ -32,6 +39,7 @@ from src.training.spaces import (
     mirrored_player_id,
     policy_observation,
     route_metrics_for_node,
+    special_lord_destination_node,
 )
 from src.core.map import ALL_NODES
 
@@ -58,7 +66,8 @@ def test_training_observation_vector_is_fixed_and_finite():
     obs = observe_state(make_initial_state(seed=1))
     vector = encode_observation(obs, "A1")
 
-    assert OBSERVATION_VERSION == "train_obs_v0.6"
+    assert OBSERVATION_VERSION == "train_obs_v1.0"
+    assert ACTION_DIM == 1356
     assert vector.shape == (OBSERVATION_DIM,)
     assert vector.dtype == np.float32
     assert np.isfinite(vector).all()
@@ -111,6 +120,47 @@ def test_training_action_mask_and_decode_initial_actions():
     assert action.source == "A1"
     assert action.destination == "CP3"
     assert action.intent == "CAPTURE"
+
+    bundled_index = action_index(
+        "PRODUCE_MOVE",
+        source="A1",
+        destination="CP3",
+        intent="CAPTURE",
+        unit_type=UnitType.SKIRMISHER,
+    )
+    assert mask[bundled_index]
+
+    bundled = decode_action(bundled_index, obs, "A1")
+    assert bundled.action_type == ActionType.MULTI
+    assert [step.action_type for step in bundled.sub_actions] == [ActionType.PRODUCE, ActionType.MOVE]
+    assert bundled.sub_actions[0].unit_type == UnitType.SKIRMISHER
+    assert bundled.sub_actions[1].source == "A1"
+    assert bundled.sub_actions[1].destination == "CP3"
+
+
+def test_multi_action_moves_existing_units_before_production():
+    class BundleBot:
+        def act(self, obs):
+            return decode_action(
+                action_index(
+                    "PRODUCE_MOVE",
+                    source="A1",
+                    destination="CP1",
+                    intent="CAPTURE",
+                    unit_type=UnitType.SKIRMISHER,
+                ),
+                obs,
+                "A1",
+            )
+
+    state = make_initial_state(seed=12)
+    engine = GameEngine(state, {"A1": BundleBot()}, record_trace=False, record_replay=False)
+
+    engine.tick()
+
+    assert state.nodes["A1"].units == {UnitType.SKIRMISHER.value: 1}
+    assert len(state.moving_groups) == 1
+    assert state.moving_groups[0].units == {UnitType.VANGUARD.value: 2}
 
 
 def test_b_side_action_space_uses_policy_perspective_and_decodes_to_absolute_nodes():
@@ -212,6 +262,81 @@ def test_training_observation_exposes_core_type_for_all_cores():
     assert vector[node_offset("A2") + core_type_start] == np.float32(1.0)
     assert vector[node_offset("B1") + core_type_start] == np.float32(1.0)
     assert vector[node_offset("CP1") + core_type_start] == np.float32(0.0)
+
+
+def test_training_observation_exposes_allied_lord_route_and_eta():
+    state = make_initial_state(seed=5)
+    state.tick = 12
+    state.baron.allied_lord_owner = "B2"
+    state.baron.allied_lord_hp = 91.0
+    state.baron.allied_lord_target = "A3"
+    state.baron.allied_lord_path = ["Baron", "CP2", "A3"]
+    state.baron.allied_lord_ready_tick = 14
+    state.baron.allied_lord_arrival_tick = 22
+    state.baron.allied_lord_alive = True
+    obs = observe_state(state, "A1")
+    vector = encode_observation(obs, "A1")
+
+    assert vector[14] == np.float32(1.0)
+    assert vector[15] == np.float32(91.0 / float(BARON_HP))
+    assert vector[16] == np.float32(2.0 / 300.0)
+    assert vector[17] == np.float32(10.0 / 300.0)
+    assert vector[20] == np.float32(1.0)  # enemy relation one-hot
+
+    scalar_start = (
+        NODE_TYPE_FEATURES
+        + CORE_TYPE_FEATURES
+        + OWNER_RELATION_FEATURES
+        + STATIONED_UNIT_FEATURES
+    )
+    lord_path_offset = scalar_start + 9
+    lord_target_offset = scalar_start + 10
+
+    assert vector[node_offset("CP2") + lord_path_offset] == np.float32(1.0)
+    assert vector[node_offset("A3") + lord_path_offset] == np.float32(1.0)
+    assert vector[node_offset("A3") + lord_target_offset] == np.float32(1.0)
+    assert vector[node_offset("B3") + lord_path_offset] == np.float32(0.0)
+
+    mirrored_obs, mirrored_player = policy_observation(observe_state(state, "B1"), "B1")
+    assert mirrored_player == "A1"
+    assert mirrored_obs["baron"]["allied_lord_owner"] == "A2"
+    assert mirrored_obs["baron"]["allied_lord_target"] == "B3"
+    assert mirrored_obs["baron"]["allied_lord_path"] == ["Baron", "CP6", "B3"]
+
+
+def test_training_action_space_exposes_lord_join_and_hunt_targets():
+    state = make_initial_state(seed=8)
+    state.baron.allied_lord_owner = "A2"
+    state.baron.allied_lord_hp = float(BARON_HP)
+    state.baron.allied_lord_target = "B3"
+    state.baron.allied_lord_path = ["Baron", "CP5", "B3"]
+    state.baron.allied_lord_ready_tick = state.tick + 2
+    state.baron.allied_lord_arrival_tick = state.tick + 12
+    state.baron.allied_lord_alive = True
+    obs_a = observe_state(state, "A1")
+    obs_b = observe_state(state, "B1")
+
+    join_index = action_index("MOVE", source="A1", destination=SPECIAL_DEST_ALLY_LORD, intent="JOIN_LORD")
+    hunt_index = action_index("MOVE", source="A1", destination=SPECIAL_DEST_ENEMY_LORD, intent="HUNT_LORD")
+
+    mask_a = legal_action_mask(obs_a, "A1")
+    assert mask_a[join_index]
+    assert not mask_a[hunt_index]
+    assert special_lord_destination_node(obs_a, "A1", SPECIAL_DEST_ALLY_LORD, "A1") == "Baron"
+
+    action = decode_action(join_index, obs_a, "A1")
+    assert action.action_type == ActionType.MOVE
+    assert action.source == "A1"
+    assert action.destination == SPECIAL_DEST_ALLY_LORD
+    assert action.intent == "JOIN_LORD"
+
+    mask_b = legal_action_mask(obs_b, "B1")
+    assert not mask_b[join_index]
+    assert mask_b[hunt_index]
+    hunt = decode_action(hunt_index, obs_b, "B1")
+    assert hunt.source == "B1"
+    assert hunt.destination == SPECIAL_DEST_ENEMY_LORD
+    assert hunt.intent == "HUNT_LORD"
 
 
 def test_route_tick_estimate_is_discrete_per_segment():

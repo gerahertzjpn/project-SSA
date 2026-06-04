@@ -67,6 +67,8 @@ def test_save_replay_writes_versioned_schema(tmp_path):
     assert replay["meta"]["total_ticks"] == state.tick
     assert "unit_ready_tick" in replay["ticks"][-1]["nodes"]["CP1"]
     assert "unit_entry_side" in replay["ticks"][-1]["nodes"]["CP1"]
+    assert "visual_units" in replay["ticks"][-1]
+    assert replay["ticks"][-1]["visual_units"]
 
 
 def test_engine_replay_uses_compact_battle_tick_summary():
@@ -105,7 +107,9 @@ def test_active_battle_snapshot_uses_side_summary():
     assert "entry_sides" in snapshots[-1]
     assert "formation" in snapshots[-1]
     assert isinstance(snapshots[-1]["formation"][0], list)
-    assert len(snapshots[-1]["formation"][0]) == 8
+    assert len(snapshots[-1]["formation"][0]) == 11
+    assert isinstance(snapshots[-1]["formation"][0][8], (int, float))
+    assert isinstance(snapshots[-1]["formation"][0][9], (int, float))
     assert "units" not in snapshots[-1]
 
 
@@ -114,6 +118,100 @@ def test_replay_moving_group_includes_stable_started_tick():
 
     engine.tick()
     moving = engine.replay_ticks[-1]["moving_groups"][0]
+    observed = engine.observe("A1")["moving_groups"][0]
 
     assert moving["player"] == "A1"
     assert moving["started"] == engine.replay_ticks[-1]["tick"]
+    assert moving["team"] == "TEAM_A"
+    assert moving["segment_src"] == "A1"
+    assert moving["segment_dst"] == "CP1"
+    assert moving["lane_id"] == "A1|CP1"
+    assert moving["approach_id"] == "A1->CP1"
+    assert moving["visual"]["lane_id"] == moving["lane_id"]
+    assert moving["visual"]["approach_id"] == moving["approach_id"]
+    assert moving["visual"]["phase"] == moving["phase"]
+    assert "x" in moving["visual"]
+    assert "y" in moving["visual"]
+    assert moving["visual_units"][UnitType.VANGUARD.value]
+
+    assert observed["segment_src"] == moving["segment_src"]
+    assert observed["segment_dst"] == moving["segment_dst"]
+    assert observed["lane_id"] == moving["lane_id"]
+    assert observed["approach_id"] == moving["approach_id"]
+    assert "visual" not in observed
+    assert "visual_units" not in observed
+
+
+def test_replay_visual_unit_ids_survive_move_to_battle():
+    _, engine = make_node_battle_engine()
+
+    engine.tick()
+    moving_ids = set(engine.replay_ticks[-1]["moving_groups"][0]["visual_units"][UnitType.VANGUARD.value])
+
+    for _ in range(DIRECT_MOVE_TICKS + 2):
+        engine.tick()
+        battle_rows = [
+            unit
+            for unit in engine.replay_ticks[-1]["visual_units"]
+            if unit.get("layer") == "battle" and unit.get("owner") == "A1"
+        ]
+        if battle_rows:
+            battle_ids = {unit["id"] for unit in battle_rows}
+            assert moving_ids & battle_ids
+            assert all("x" in unit and "y" in unit for unit in battle_rows)
+            return
+
+    raise AssertionError("A1 moving visual ids never reached a battle visual layer")
+
+
+def test_replay_moving_group_visual_preserves_transit_entry_and_exit_approaches():
+    state = make_initial_state(seed=42)
+    state.nodes["A3"].units = {UnitType.VANGUARD.value: 2}
+    state.nodes["CP1"].owner = "NEUTRAL"
+    state.nodes["CP1"].neutral_hp = 0
+    state.nodes["CP3"].owner = "NEUTRAL"
+    state.nodes["CP3"].neutral_hp = 0
+    engine = GameEngine(
+        state,
+        make_bots({
+            "A3": [Action(ActionType.MOVE, source="A3", destination="CP3")],
+        }),
+    )
+
+    for _ in range(12):
+        engine.tick()
+        if state.moving_groups and state.moving_groups[0].phase == "node_transit":
+            break
+
+    moving = engine.replay_ticks[-1]["moving_groups"][0]
+
+    assert moving["phase"] == "node_transit"
+    assert moving["segment_node"] == "CP1"
+    assert moving["segment_src"] == "CP1"
+    assert moving["segment_dst"] == "CP3"
+    assert moving["lane_id"] == "CP1|CP3"
+    assert moving["approach_id"] == "CP1->CP3"
+    assert moving["entry_approach_id"] == "A3->CP1"
+    assert moving["visual"]["transit_node"] == "CP1"
+    assert moving["visual"]["entry_approach_id"] == "A3->CP1"
+
+
+def test_moving_group_snapshot_marks_threat_zone_approaches():
+    state = make_initial_state(seed=43)
+    state.nodes["CP1"].owner = "A1"
+    state.nodes["CP1"].neutral_hp = 0
+    state.nodes["CP1"].units = {UnitType.VANGUARD.value: 2}
+    engine = GameEngine(
+        state,
+        make_bots({
+            "A1": [Action(ActionType.MOVE, source="CP1", destination="Baron")],
+        }),
+    )
+
+    engine.tick()
+    moving = engine.replay_ticks[-1]["moving_groups"][0]
+    observed = engine.observe("A1")["moving_groups"][0]
+
+    assert moving["approach_id"] == "CP1->Baron"
+    assert moving["threat_zone_ids"] == ["Lord"]
+    assert observed["threat_zone_ids"] == ["Lord"]

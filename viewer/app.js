@@ -810,7 +810,10 @@ function mapForcesAtNode(nodeId, tick = {}) {
   const node = tick.nodes?.[nodeId] || {};
   const forces = [];
   const inside = (tick.moving_groups || []).filter((group) => movementNodeId(group) === nodeId);
-  const battle = (tick.active_battles || []).find((item) => item.location_kind === "node" && item.location_id === nodeId);
+  const battle = (tick.active_battles || []).find((item) => (
+    (item.location_kind === "node" || item.location_kind === "approach") &&
+    item.location_id === nodeId
+  ));
   const alliedLord = alliedLordBattleInfo(battle);
 
   if (unitTotal(node.units) > 0) {
@@ -901,7 +904,7 @@ function renderUnitCanvas(tick, nextTick, alpha = 0) {
   }
 
   const battleNodeIds = new Set((tick.active_battles || [])
-    .filter((battle) => battle.location_kind === "node")
+    .filter((battle) => battle.location_kind === "node" || battle.location_kind === "approach")
     .map((battle) => battle.location_id));
 
   drawStationedUnitLayer(ctx, tick, battleNodeIds);
@@ -1008,11 +1011,18 @@ function drawBattleFormation(ctx, battle, nextBattle, alpha = 0, battleEvent = n
     const laneCount = laneCounters.get(laneKey) || 0;
     laneCounters.set(laneKey, laneCount + 1);
 
-    const pos = Math.max(-1, Math.min(1, (Number(unit.pos || 10) - 10) / 10));
     const lane = battleUnitLaneOffset(unit, laneCount);
     const jitter = deterministicJitter(`${battle.battle_id}:${unit.uid ?? unit.fallbackIndex ?? laneKey}`, 2.8);
-    const x = base[0] + axis[0] * pos * span + perp[0] * lane + jitter[0];
-    const y = base[1] + axis[1] * pos * span + perp[1] * lane + jitter[1];
+    let x;
+    let y;
+    if (Number.isFinite(unit.x) && Number.isFinite(unit.y)) {
+      x = scaleX(unit.x) + jitter[0];
+      y = scaleY(unit.y) + jitter[1];
+    } else {
+      const pos = Math.max(-1, Math.min(1, (Number(unit.pos || 10) - 10) / 10));
+      x = base[0] + axis[0] * pos * span + perp[0] * lane + jitter[0];
+      y = base[1] + axis[1] * pos * span + perp[1] * lane + jitter[1];
+    }
     const hpRatio = unit.maxHp > 0 ? unit.hp / unit.maxHp : 1;
 
     uidPositions.set(unit.uid, { x, y, team: unit.team, type: unit.type });
@@ -1439,7 +1449,11 @@ function isMapEvent(event = {}) {
   if (event.type === "BATTLE_RESOLVED" || event.type === "CAPTURE") {
     return true;
   }
-  if (event.type === "BATTLE_STARTED" && (event.location_id === "Baron" || event.location_kind === "edge")) {
+  if (event.type === "BATTLE_STARTED" && (
+    event.location_id === "Baron" ||
+    event.location_kind === "edge" ||
+    event.location_kind === "approach"
+  )) {
     return true;
   }
   if (event.type === "BATTLE_TICK") {
@@ -1452,6 +1466,10 @@ function mapEventPosition(event = {}) {
   if (event.location_kind === "edge" && event.location_id) {
     const [src, dst] = String(event.location_id).split("|");
     return interpolate(src, dst, Number(event.edge_position ?? 0.5));
+  }
+  if (event.location_kind === "approach" && event.approach_id) {
+    const [src, dst] = String(event.approach_id).split("->");
+    return interpolate(src, dst, Number(event.edge_position ?? 0.75));
   }
   const nodeId = event.location_id || event.node || event.dst || event.src;
   return scalePoint(NODE_POSITIONS[nodeId]);
@@ -1471,7 +1489,13 @@ function mapEventLabel(event = {}) {
     return `${event.player || "?"} captured`;
   }
   if (event.type === "BATTLE_STARTED") {
-    return event.location_kind === "edge" ? "edge fight" : "lord fight";
+    if (event.location_kind === "edge") {
+      return "edge fight";
+    }
+    if (event.location_kind === "approach") {
+      return "approach fight";
+    }
+    return "lord fight";
   }
   if (event.type === "BATTLE_TICK") {
     const deaths = Object.entries(event.summary?.deaths || {}).flatMap(([team, units]) => (
@@ -1527,7 +1551,10 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
   const inside = (tick.moving_groups || []).filter((group) => movementNodeId(group) === nodeId);
   const incoming = (tick.moving_groups || []).filter((group) => isEdgeMovement(group) && group.dst === nodeId);
   const outgoing = (tick.moving_groups || []).filter((group) => isEdgeMovement(group) && group.src === nodeId);
-  const battle = (tick.active_battles || []).find((item) => item.location_kind === "node" && item.location_id === nodeId);
+  const battle = (tick.active_battles || []).find((item) => (
+    (item.location_kind === "node" || item.location_kind === "approach") &&
+    item.location_id === nodeId
+  ));
   const forceCards = stateForceCards(nodeId, node, tick, inside);
   const coreHp = coreHpMarkup(nodeId, node, tick);
   const orderCards = [
@@ -1573,7 +1600,10 @@ function stateNodeCard(nodeId, tick, nextTick, alpha) {
 function stateForceCards(nodeId, node = {}, tick = {}, insideGroups = []) {
   const cards = [];
   const currentTick = Number(tick.tick || 0);
-  const battle = (tick.active_battles || []).find((item) => item.location_kind === "node" && item.location_id === nodeId);
+  const battle = (tick.active_battles || []).find((item) => (
+    (item.location_kind === "node" || item.location_kind === "approach") &&
+    item.location_id === nodeId
+  ));
   const alliedLord = alliedLordBattleInfo(battle);
 
   if (unitTotal(node.units) > 0) {
@@ -1993,6 +2023,10 @@ function battlePosition(battle) {
   if (battle.location_kind === "node") {
     return scalePoint(NODE_POSITIONS[battle.location_id]);
   }
+  if (battle.location_kind === "approach" && battle.approach_id) {
+    const [src, dst] = String(battle.approach_id).split("->");
+    return interpolate(src, dst, Number(battle.edge_position ?? 0.75));
+  }
 
   const [src, dst] = String(battle.location_id).split("|");
   return interpolate(src, dst, Number(battle.edge_position ?? 0.5));
@@ -2060,13 +2094,13 @@ function alliedLordMarkers(tick, nextTick, alpha = 0) {
       continue;
     }
 
-    const nodeId = battle.location_kind === "node" ? battle.location_id : null;
+    const nodeId = battle.location_kind === "node" || battle.location_kind === "approach" ? battle.location_id : null;
     markers.push({
       owner,
       pos: battlePosition(battle),
       nodeId,
       target: nodeId,
-      action: battle.location_kind === "node" ? "node battle" : "edge battle",
+      action: battle.location_kind === "edge" ? "edge battle" : "node battle",
       inBattle: true,
       priority: 3,
     });
@@ -2370,7 +2404,8 @@ function nodeActivityClass(nodeId, tick) {
   }
 
   const hasBattle = (tick.active_battles || []).some((battle) => (
-    battle.location_kind === "node" && battle.location_id === nodeId
+    (battle.location_kind === "node" || battle.location_kind === "approach") &&
+    battle.location_id === nodeId
   ));
   const hasMovement = (tick.moving_groups || []).some((group) => (
     group.src === nodeId || group.dst === nodeId || movementNodeId(group) === nodeId
@@ -2698,6 +2733,8 @@ function interpolateFormation(formation = [], nextFormation = [], alpha = 0) {
       ...unit,
       hp: interpolateValue(unit.hp, nextUnit?.hp ?? unit.hp, alpha),
       pos: interpolateValue(unit.pos, nextUnit?.pos ?? unit.pos, alpha),
+      x: Number.isFinite(unit.x) ? interpolateValue(unit.x, nextUnit?.x ?? unit.x, alpha) : unit.x,
+      y: Number.isFinite(unit.y) ? interpolateValue(unit.y, nextUnit?.y ?? unit.y, alpha) : unit.y,
     };
   });
 }
@@ -2730,6 +2767,9 @@ function normalizeFormation(formation = []) {
         pos: Number.isFinite(renderPos) ? renderPos : simPos,
         simPos,
         range: Number(row[6]) || 0,
+        x: row.length >= 10 ? Number(row[8]) : NaN,
+        y: row.length >= 10 ? Number(row[9]) : NaN,
+        rangeMap: row.length >= 11 ? Number(row[10]) : null,
       };
     }
 

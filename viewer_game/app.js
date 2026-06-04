@@ -577,10 +577,11 @@ function drawRooms(ctx) {
     const [x, y] = NODE_POSITIONS[nodeId];
     const owner = node.owner || "NEUTRAL";
     const room = roomSize(nodeId);
+    const deadCore = isDeadCoreNode(nodeId, node, tick);
 
     ctx.save();
-    ctx.fillStyle = ownerFill(owner, nodeId);
-    ctx.strokeStyle = ownerStroke(owner, nodeId);
+    ctx.fillStyle = deadCore ? "#f2f5f8" : ownerFill(owner, nodeId);
+    ctx.strokeStyle = deadCore ? "#ffffff" : ownerStroke(owner, nodeId);
     ctx.lineWidth = selectedMatches("node", nodeId) ? 3.5 : 2;
     roundedRectPath(ctx, x - room.w / 2, y - room.h / 2, room.w, room.h, room.r);
     ctx.fill();
@@ -594,12 +595,12 @@ function drawRooms(ctx) {
       drawHpBar(ctx, x - room.w / 2 + 8, y + room.h / 2 - 12, room.w - 16, tick.baron.hp, LORD_HP, COLORS.neutral);
     }
 
-    ctx.fillStyle = COLORS.text;
+    ctx.fillStyle = deadCore ? "#151b22" : COLORS.text;
     ctx.font = `${nodeId === "Baron" ? 15 : 13}px ui-sans-serif, system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(displayNode(nodeId), x, y - 1);
-    ctx.fillStyle = COLORS.muted;
+    ctx.fillStyle = deadCore ? "#303945" : COLORS.muted;
     ctx.font = "8px ui-sans-serif, system-ui, sans-serif";
     ctx.fillText(owner === "NEUTRAL" ? "N" : owner, x, y + room.h * 0.28);
     ctx.restore();
@@ -609,7 +610,7 @@ function drawRooms(ctx) {
 function desiredUnits(tick, nextTick, alpha) {
   const desired = [];
   const battleNodeIds = new Set((tick.active_battles || [])
-    .filter((battle) => battle.location_kind === "node")
+    .filter((battle) => battle.location_kind === "node" || battle.location_kind === "approach")
     .map((battle) => battle.location_id));
 
   for (const nodeId of NODE_IDS) {
@@ -667,13 +668,17 @@ function movingDesired(tick, nextTick, alpha) {
   const edgeIndexes = new Map();
 
   for (const group of tick.moving_groups || []) {
-    const nextGroup = findNextGroup(group, nextGroups, used);
+    const nextGroup = findNextVisualGroup(group, nextGroups, used);
     const nextProgress = sameMovementSegment(group, nextGroup) ? nextGroup.progress : 1;
     const progress = lerp(Number(group.progress || 0), Number(nextProgress ?? 0), alpha);
 
     let anchor = null;
     let axis = [1, 0];
-    if (isEdgeMovement(group)) {
+    const visualAnchor = groupVisualAnchor(group, nextGroup, alpha);
+    if (visualAnchor) {
+      anchor = visualAnchor;
+      axis = groupVisualAxis(group, nextGroup, [1, 0]);
+    } else if (isEdgeMovement(group)) {
       const key = edgeKey(group.src, group.dst);
       const laneIndex = edgeIndexes.get(key) || 0;
       edgeIndexes.set(key, laneIndex + 1);
@@ -721,13 +726,22 @@ function battleDesired(tick, nextTick, alpha) {
       const key = `${unit.team}:${unit.type}:${Math.round(unit.pos)}`;
       const count = laneCounts.get(key) || 0;
       laneCounts.set(key, count + 1);
-      const pos = Math.max(-1, Math.min(1, (Number(unit.pos || 10) - 10) / 10));
       const lane = battleLane(unit, count);
       const jitter = deterministicJitter(`${battle.battle_id}:${unit.uid ?? index}`, 2.2);
+      let x;
+      let y;
+      if (Number.isFinite(unit.x) && Number.isFinite(unit.y)) {
+        x = unit.x + jitter[0];
+        y = unit.y + jitter[1];
+      } else {
+        const pos = Math.max(-1, Math.min(1, (Number(unit.pos || 10) - 10) / 10));
+        x = base[0] + axis[0] * pos * span + perp[0] * lane + jitter[0];
+        y = base[1] + axis[1] * pos * span + perp[1] * lane + jitter[1];
+      }
       result.push({
         id: `battle:${battle.battle_id}:${unit.uid ?? `${unit.team}:${unit.type}:${index}`}`,
-        x: base[0] + axis[0] * pos * span + perp[0] * lane + jitter[0],
-        y: base[1] + axis[1] * pos * span + perp[1] * lane + jitter[1],
+        x,
+        y,
         team: unit.team,
         type: unit.type,
         hpRatio: unit.maxHp > 0 ? unit.hp / unit.maxHp : 1,
@@ -1202,6 +1216,13 @@ function ownerStroke(owner, nodeId) {
   return nodeId === "Baron" ? COLORS.neutral : COLORS.roomLine;
 }
 
+function isDeadCoreNode(nodeId, node = {}, tick = {}) {
+  if (!CORE_NODES.has(nodeId)) {
+    return false;
+  }
+  return tick?.players?.[nodeId]?.alive === false || nodeCoreHp(nodeId, node, tick) <= 0;
+}
+
 function drawHpBar(ctx, x, y, width, hp, maxHp, color = COLORS.green) {
   const pct = Math.max(0, Math.min(1, Number(hp || 0) / Math.max(1, Number(maxHp || 1))));
   ctx.fillStyle = "#07090c";
@@ -1311,11 +1332,19 @@ function battlePosition(battle) {
   if (battle.location_kind === "node") {
     return NODE_POSITIONS[battle.location_id] || null;
   }
+  if (battle.location_kind === "approach" && battle.approach_id) {
+    const [src, dst] = String(battle.approach_id).split("->");
+    return edgePoint(src, dst, Number(battle.edge_position ?? 0.75));
+  }
   const [src, dst] = String(battle.location_id).split("|");
   return edgePoint(src, dst, Number(battle.edge_position ?? 0.5));
 }
 
 function battleAxis(battle) {
+  if (battle.location_kind === "approach" && battle.approach_id) {
+    const [src, dst] = String(battle.approach_id).split("->");
+    return edgeAxis(src, dst);
+  }
   if (battle.location_kind === "edge") {
     const [src, dst] = String(battle.location_id).split("|");
     return edgeAxis(src, dst);
@@ -1343,6 +1372,8 @@ function interpolateFormation(formation = [], nextFormation = [], alpha = 0) {
       ...unit,
       hp: lerp(unit.hp, nextUnit?.hp ?? unit.hp, alpha),
       pos: lerp(unit.pos, nextUnit?.pos ?? unit.pos, alpha),
+      x: Number.isFinite(unit.x) ? lerp(unit.x, nextUnit?.x ?? unit.x, alpha) : unit.x,
+      y: Number.isFinite(unit.y) ? lerp(unit.y, nextUnit?.y ?? unit.y, alpha) : unit.y,
     };
   });
 }
@@ -1361,6 +1392,9 @@ function normalizeFormation(formation = []) {
         pos: Number.isFinite(renderPos) ? renderPos : simPos,
         simPos,
         range: Number(row[6]) || 0,
+        x: row.length >= 10 ? Number(row[8]) : NaN,
+        y: row.length >= 10 ? Number(row[9]) : NaN,
+        rangeMap: row.length >= 11 ? Number(row[10]) : null,
       };
     }
     return {
@@ -1417,12 +1451,64 @@ function findNextGroup(group, nextGroups, used) {
   return null;
 }
 
+function findNextVisualGroup(group, nextGroups, used) {
+  const direct = findNextGroup(group, nextGroups, used);
+  if (direct) {
+    return direct;
+  }
+
+  const key = visualMovementKey(group);
+  if (!key) {
+    return null;
+  }
+
+  let bestIndex = -1;
+  let bestScore = Number.POSITIVE_INFINITY;
+  const point = visualPoint(group);
+  for (let index = 0; index < nextGroups.length; index += 1) {
+    if (used.has(index)) {
+      continue;
+    }
+    const candidate = nextGroups[index];
+    if (visualMovementKey(candidate) !== key) {
+      continue;
+    }
+    const candidatePoint = visualPoint(candidate);
+    const score = point && candidatePoint
+      ? Math.hypot(candidatePoint[0] - point[0], candidatePoint[1] - point[1])
+      : index;
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  if (bestIndex >= 0) {
+    used.add(bestIndex);
+    return nextGroups[bestIndex];
+  }
+  return null;
+}
+
 function sameMovementSegment(group, candidate) {
   return Boolean(candidate) &&
     group.phase === candidate.phase &&
     Number(group.segment_index ?? 0) === Number(candidate.segment_index ?? 0) &&
     group.src === candidate.src &&
     group.dst === candidate.dst;
+}
+
+function visualMovementKey(group = {}) {
+  if (!group.player || group.started === undefined || group.started === null) {
+    return "";
+  }
+  return [
+    group.player || "",
+    group.intent || "",
+    group.started,
+    group.final_dst || "",
+    (group.path || []).join(">"),
+    unitSignature(group.units),
+  ].join("|");
 }
 
 function movementSignature(group = {}) {
@@ -1467,6 +1553,45 @@ function movementNodeId(group) {
     return group.dst;
   }
   return null;
+}
+
+function groupVisualAnchor(group, nextGroup, alpha) {
+  const current = visualPoint(group);
+  const next = visualPoint(nextGroup);
+  if (current && next) {
+    return [
+      lerp(current[0], next[0], alpha),
+      lerp(current[1], next[1], alpha),
+    ];
+  }
+  return current;
+}
+
+function groupVisualAxis(group, nextGroup, fallback = [1, 0]) {
+  const current = visualPoint(group);
+  const next = visualPoint(nextGroup);
+  if (current && next) {
+    const dx = next[0] - current[0];
+    const dy = next[1] - current[1];
+    const len = Math.hypot(dx, dy);
+    if (len > 0.001) {
+      return [dx / len, dy / len];
+    }
+  }
+  const heading = Number(group?.visual?.heading);
+  if (Number.isFinite(heading)) {
+    return [Math.cos(heading), Math.sin(heading)];
+  }
+  return fallback;
+}
+
+function visualPoint(group) {
+  const x = Number(group?.visual?.x);
+  const y = Number(group?.visual?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return null;
+  }
+  return [x, y];
 }
 
 function nodeCoreHp(nodeId, node = {}, tick = {}) {

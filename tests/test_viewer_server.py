@@ -31,9 +31,14 @@ def test_ui_generation_replaces_old_replays_and_returns_numbered_list(tmp_path: 
     assert (tmp_path / "replay_1.json").exists()
 
     replay = load_replay(str(tmp_path / "replay_0.json"))
-    assert replay["meta"]["schema_version"] == "0.5.2"
-    assert replay["meta"]["rules"]["no_shoot_while_moving"] is True
-    assert result["server"]["schema_version"] == "0.5.2"
+    assert replay["meta"]["schema_version"] == "0.7.2"
+    assert replay["meta"]["rules"]["no_shoot_while_moving"] is False
+    assert replay["meta"]["rules"]["ranger_can_attack_after_moving"] is True
+    assert replay["meta"]["rules"]["approach_threat_battles"] is True
+    assert replay["meta"]["rules"]["node_ranged_approach_battles"] is True
+    assert replay["meta"]["rules"]["combat_2d_map"] is True
+    assert replay["meta"]["rules"]["map_distance_movement"] is True
+    assert result["server"]["schema_version"] == "0.7.2"
 
 
 def test_replay_files_are_sorted_by_numeric_index(tmp_path: Path, monkeypatch):

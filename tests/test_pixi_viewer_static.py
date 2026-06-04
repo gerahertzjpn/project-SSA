@@ -1,0 +1,82 @@
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+VIEWER_PIXI = ROOT / "viewer_pixi"
+
+
+def test_pixi_viewer_assets_exist_and_are_wired():
+    index = (VIEWER_PIXI / "index.html").read_text(encoding="utf-8")
+
+    assert '<link rel="stylesheet" href="./styles.css' in index
+    assert '<script type="module" src="./app.js' in index
+    assert '"pixi.js"' in index
+    assert "pixi.js@8.10.0" in index
+    assert 'id="pixiStage"' in index
+    assert 'id="replaySelect"' in index
+    assert 'id="generateBtn"' in index
+    assert 'id="generateCountInput"' in index
+    assert 'id="generateSeedInput"' in index
+    assert 'id="generateStatus"' in index
+    assert 'id="tickSlider"' in index
+    assert "../viewer_game/index.html" in index
+    assert "../viewer/index.html" in index
+
+
+def test_pixi_viewer_uses_pixi_application_and_replay_positions():
+    script = (VIEWER_PIXI / "app.js").read_text(encoding="utf-8")
+
+    assert 'from "pixi.js"' in script
+    assert "new Application()" in script
+    assert "await app.init" in script
+    assert "app.ticker.add" in script
+    assert "visualTrackDesired" in script
+    assert "tick.visual_units" in script
+    assert "normalizeVisualUnits" in script
+    assert "SPRITE_EASE" in script
+    assert "spriteEaseFor" in script
+    assert "battle.formation" in script
+    assert "row.length >= 10" in script
+    assert "unit.x" in script
+    assert "unit.y" in script
+    assert "syncSprites" in script
+    assert "findHandoffSprite" in script
+    assert "drawAttackLines" in script
+    assert "battleTickEventForVisual" in script
+    assert "mapStateSignature" in script
+    assert "lastMapSignature" in script
+    assert "HANDOFF_BACKFILL_DISTANCE" in script
+    assert "applyVisualHandoffBackfill" in script
+    assert "shouldBackfillHandoff" in script
+    assert "smoothstep" in script
+    assert "replayInterpolated" in script
+    assert "drawLordShape" in script
+    assert "isDeadCoreNode" in script
+    assert "drawCoreHpBar" in script
+    assert "coreHpValue" in script
+    assert "deadCoreBg" in script
+    assert "deadUnit" in script
+    assert "DEATH_HOLD_SECONDS" in script
+    assert "DEATH_FADE_OUT_PER_SECOND" in script
+    assert "ATTACK_PREVIEW_ALPHA = 0.5" in script
+    assert ".ellipse(" not in script
+    assert "/api/models" in script
+    assert "/api/generate-replays" in script
+    assert "generateReplays" in script
+    assert "validateGeneratorControls" in script
+    assert "maxUiRuns" in script
+    assert "replays_viewer_debug_smoke" in script
+
+
+def test_pixi_viewer_layout_is_fullscreen_hud():
+    styles = (VIEWER_PIXI / "styles.css").read_text(encoding="utf-8")
+
+    assert "#pixiStage" in styles
+    assert "#pixiStage canvas" in styles
+    assert ".top-hud" in styles
+    assert ".generate-status" in styles
+    assert ".mini-field" in styles
+    assert ".bottom-hud" in styles
+    assert ".inspect-panel" in styles
+    assert "position: absolute" in styles
+    assert "overflow: hidden" in styles

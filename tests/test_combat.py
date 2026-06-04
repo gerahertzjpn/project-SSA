@@ -20,6 +20,9 @@ from src.core.constants import (
     BARON_ATTACK_RATE,
     BARON_ATK,
     BARON_HP,
+    BARON_SECONDARY_ATTACK_RATE,
+    BARON_SECONDARY_ATK,
+    CORE_ATTACK_RATE,
     CORE_ATTACK_RANGE,
     LORD_ATTACK_RANGE,
     TRAVEL_TIME,
@@ -166,28 +169,38 @@ def test_baron_fight_survives():
 def test_lord_stats_reflect_current_balance():
     lord = build_player_units({UnitType.LORD.value: 1}, "A1", "attacker")[0]
     baron = build_baron_unit(BARON_HP)
+    damaged_baron = build_baron_unit(BARON_HP - 7)
 
     assert lord.max_hp == BARON_HP
     assert lord.atk == BARON_ATK
     assert lord.attack_rate == BARON_ATTACK_RATE
+    assert lord.secondary_atk == BARON_SECONDARY_ATK
+    assert lord.secondary_attack_rate == BARON_SECONDARY_ATTACK_RATE
     assert lord.range == LORD_ATTACK_RANGE
     assert baron.max_hp == BARON_HP
     assert baron.atk == BARON_ATK
     assert baron.attack_rate == BARON_ATTACK_RATE
+    assert baron.secondary_atk == BARON_SECONDARY_ATK
+    assert baron.secondary_attack_rate == BARON_SECONDARY_ATTACK_RATE
     assert baron.range == LORD_ATTACK_RANGE
+    assert damaged_baron.hp == BARON_HP - 7
+    assert damaged_baron.max_hp == BARON_HP
 
 
 def test_lord_attack_rate_fires_multiple_shots():
     lord = build_player_units({UnitType.LORD.value: 1}, "A1", "attacker")[0]
-    targets = build_player_units({UnitType.SKIRMISHER.value: 3}, "B1", "defender")
+    targets = build_player_units({UnitType.SKIRMISHER.value: 8}, "B1", "defender")
     for index, target in enumerate(targets):
         target.pos = lord.pos + 1.0 + index * 0.1
 
     frame = tick_battle_units([lord, *targets], record_trace=True)
     lord_frame = next(item for item in frame if item["uid"] == lord.uid)
 
-    assert len(lord_frame["attacks"]) == BARON_ATTACK_RATE
-    assert len({shot["target"] for shot in lord_frame["attacks"]}) == BARON_ATTACK_RATE
+    assert len(lord_frame["attacks"]) == BARON_ATTACK_RATE + BARON_SECONDARY_ATTACK_RATE
+    assert [shot["damage"] for shot in lord_frame["attacks"]] == (
+        [float(BARON_ATK)] * BARON_ATTACK_RATE
+        + [float(BARON_SECONDARY_ATK)] * BARON_SECONDARY_ATTACK_RATE
+    )
     assert sum(target.is_alive() for target in targets) == 0
 
 
@@ -211,6 +224,22 @@ def test_cores_are_on_team_side_with_high_range():
     assert right_core.pos == DEFENDER_SIDE
     assert left_core.range == CORE_ATTACK_RANGE
     assert right_core.range == CORE_ATTACK_RANGE
+    assert left_core.attack_rate == CORE_ATTACK_RATE
+    assert right_core.attack_rate == CORE_ATTACK_RATE
+
+
+def test_core_attack_rate_fires_multiple_shots():
+    core = build_core_unit("A1")
+    targets = build_player_units({UnitType.RANGER.value: 3}, "B1", "defender")
+    for index, target in enumerate(targets):
+        target.pos = core.pos + 1.0 + index * 0.1
+        target.speed = 0.0
+
+    frame = tick_battle_units([core, *targets], record_trace=True)
+    core_frame = next(item for item in frame if item["uid"] == core.uid)
+
+    assert len(core_frame["attacks"]) == CORE_ATTACK_RATE
+    assert [shot["damage"] for shot in core_frame["attacks"]] == [float(core.atk)] * CORE_ATTACK_RATE
 
 
 def test_large_armies_deploy_compactly_without_crossing_the_combat_line():
@@ -485,7 +514,7 @@ def test_reborn_lord_can_move_and_shoot_before_contact():
 
     assert lord.pos > ATTACKER_SIDE
     assert target.hp < before_hp
-    assert len(lord_frame["attacks"]) == BARON_ATTACK_RATE
+    assert len(lord_frame["attacks"]) == BARON_ATTACK_RATE + BARON_SECONDARY_ATTACK_RATE
 
 
 def test_reborn_lord_ignores_enemies_behind_him():

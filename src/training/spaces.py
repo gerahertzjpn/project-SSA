@@ -12,20 +12,30 @@ from src.core.constants import (
     CORE_HP,
     DEATH_TIME_START_TICK,
     PLAYER_IDS,
+    SPECIAL_DEST_ALLY_LORD,
+    SPECIAL_DEST_ENEMY_LORD,
+    SPECIAL_LORD_DESTINATIONS,
     TEAM_A_PLAYERS,
     TEAM_B_PLAYERS,
     TICK_LIMIT,
-    TRAVEL_TIME,
     UNIT_COST,
     UnitType,
     ActionType,
 )
 from src.core.engine import Action
 from src.core.map import ADJACENCY, ALL_NODES, NODE_TYPES, NodeType
+from src.core.map2d import (
+    MOVEMENT_MAP_UNITS_PER_TICK,
+    WORLD_SIZE,
+    approach_edge_length,
+    node_enter_length,
+    node_exit_length,
+    node_transit_length,
+)
 from src.core.units import UNIT_STATS
 
 
-OBSERVATION_VERSION = "train_obs_v0.6"
+OBSERVATION_VERSION = "train_obs_v1.0"
 
 UNIT_ORDER = (UnitType.VANGUARD, UnitType.RANGER, UnitType.SKIRMISHER)
 CORE_TYPES = ("standard",)
@@ -33,12 +43,12 @@ RELATIONS = ("self", "ally", "enemy", "neutral")
 COMBAT_RELATIONS = ("self", "ally", "enemy")
 MOVEMENT_BUCKETS = ("inside", "outgoing", "incoming")
 MOVE_INTENTS = ("CAPTURE", "TRANSIT")
-GLOBAL_FEATURES = 14
+GLOBAL_FEATURES = 25
 NODE_TYPE_FEATURES = 3
 CORE_TYPE_FEATURES = len(CORE_TYPES)
 OWNER_RELATION_FEATURES = len(RELATIONS)
 STATIONED_UNIT_FEATURES = len(RELATIONS) * len(UNIT_ORDER)
-NODE_SCALAR_FEATURES = 9
+NODE_SCALAR_FEATURES = 11
 MOVEMENT_FEATURES = len(MOVEMENT_BUCKETS) * len(COMBAT_RELATIONS) * len(UNIT_ORDER)
 BATTLE_FEATURES = 4 + len(COMBAT_RELATIONS) * len(UNIT_ORDER)
 NODE_FEATURES = (
@@ -52,7 +62,6 @@ NODE_FEATURES = (
     + BATTLE_FEATURES
 )
 OBSERVATION_DIM = GLOBAL_FEATURES + len(ALL_NODES) * NODE_FEATURES
-NODE_HALF_CROSSING_TICKS = float(TRAVEL_TIME) / 2.0
 ROUTE_EDGE_NORM = max(1, len(ALL_NODES) - 1)
 ROUTE_TICK_NORM = float(TICK_LIMIT)
 
@@ -66,15 +75,38 @@ class ActionSpec:
     intent: str = "CAPTURE"
 
 
-ACTION_SPECS: tuple[ActionSpec, ...] = (
-    (ActionSpec("HOLD"),)
-    + tuple(ActionSpec("PRODUCE", unit_type=unit_type) for unit_type in UNIT_ORDER)
-    + tuple(
+MOVE_ACTION_SPECS: tuple[ActionSpec, ...] = (
+    tuple(
         ActionSpec("MOVE", source=source_id, destination=destination_id, intent=intent)
         for intent in MOVE_INTENTS
         for source_id in ALL_NODES
         for destination_id in ALL_NODES
         if source_id != destination_id
+    )
+    + tuple(
+        ActionSpec("MOVE", source=source_id, destination=SPECIAL_DEST_ALLY_LORD, intent="JOIN_LORD")
+        for source_id in ALL_NODES
+    )
+    + tuple(
+        ActionSpec("MOVE", source=source_id, destination=SPECIAL_DEST_ENEMY_LORD, intent="HUNT_LORD")
+        for source_id in ALL_NODES
+    )
+)
+
+ACTION_SPECS: tuple[ActionSpec, ...] = (
+    (ActionSpec("HOLD"),)
+    + tuple(ActionSpec("PRODUCE", unit_type=unit_type) for unit_type in UNIT_ORDER)
+    + MOVE_ACTION_SPECS
+    + tuple(
+        ActionSpec(
+            "PRODUCE_MOVE",
+            unit_type=unit_type,
+            source=move_spec.source,
+            destination=move_spec.destination,
+            intent=move_spec.intent,
+        )
+        for unit_type in UNIT_ORDER
+        for move_spec in MOVE_ACTION_SPECS
     )
 )
 ACTION_DIM = len(ACTION_SPECS)
@@ -129,6 +161,8 @@ def team_of(player_id: str) -> str:
 def mirrored_node_id(node_id: str | None) -> str | None:
     if node_id is None:
         return None
+    if str(node_id) in SPECIAL_LORD_DESTINATIONS:
+        return str(node_id)
     return MIRROR_NODES.get(str(node_id), str(node_id))
 
 
@@ -277,6 +311,13 @@ def _mirror_baron(baron: dict) -> dict:
             mirrored[key] = mirrored_player_id(baron.get(key))
     if "allied_lord_target" in mirrored:
         mirrored["allied_lord_target"] = mirrored_node_id(baron.get("allied_lord_target"))
+    if isinstance(baron.get("allied_lord_path"), list):
+        mirrored["allied_lord_path"] = [
+            mirrored_node_id(node_id)
+            for node_id in baron.get("allied_lord_path", [])
+        ]
+    if isinstance(baron.get("allied_lord_support_units"), dict):
+        mirrored["allied_lord_support_units"] = dict(baron.get("allied_lord_support_units") or {})
     return mirrored
 
 
@@ -328,6 +369,11 @@ def _mirror_formation_unit(unit: list) -> list:
     if len(mirrored) > 5:
         try:
             mirrored[5] = round(COMBAT_LINE_MAX - float(mirrored[5]), 2)
+        except (TypeError, ValueError):
+            pass
+    if len(mirrored) > 8:
+        try:
+            mirrored[8] = round(float(WORLD_SIZE[0]) - float(mirrored[8]), 2)
         except (TypeError, ValueError):
             pass
     return mirrored
@@ -430,11 +476,31 @@ def estimate_route_ticks(path: list[str], speed: float) -> float:
     if len(path) <= 1:
         return 0.0
     segment_speed = max(0.001, float(speed))
-    edge_count = len(path) - 1
-    intermediate_count = max(0, len(path) - 2)
-    half_ticks = _discrete_segment_ticks(NODE_HALF_CROSSING_TICKS / segment_speed)
-    full_ticks = _discrete_segment_ticks(float(TRAVEL_TIME) / segment_speed)
-    return float(half_ticks * 2 + full_ticks * (edge_count + intermediate_count))
+    total = 0
+    for index, node_id in enumerate(path):
+        if index == 0:
+            total += _discrete_segment_ticks(_movement_ticks_for_distance(node_exit_length(node_id), segment_speed))
+            continue
+
+        prev_node = path[index - 1]
+        total += _discrete_segment_ticks(
+            _movement_ticks_for_distance(approach_edge_length(prev_node, node_id), segment_speed)
+        )
+
+        if index == len(path) - 1:
+            total += _discrete_segment_ticks(_movement_ticks_for_distance(node_enter_length(node_id), segment_speed))
+        else:
+            total += _discrete_segment_ticks(
+                _movement_ticks_for_distance(
+                    node_transit_length(prev_node, node_id, path[index + 1]),
+                    segment_speed,
+                )
+            )
+    return float(total)
+
+
+def _movement_ticks_for_distance(distance: float, speed: float) -> float:
+    return float(distance) / (MOVEMENT_MAP_UNITS_PER_TICK * max(0.001, float(speed)))
 
 
 def _discrete_segment_ticks(ticks: float) -> int:
@@ -496,12 +562,125 @@ def route_metrics_for_node(obs: dict, player_id: str, destination: str) -> tuple
     )
 
 
+def special_lord_destination_node(
+    obs: dict,
+    player_id: str,
+    destination: str | None,
+    source: str | None = None,
+) -> Optional[str]:
+    if destination not in SPECIAL_LORD_DESTINATIONS:
+        return destination if destination in ALL_NODES else None
+
+    baron = obs.get("baron", {}) or {}
+    if not baron.get("allied_lord_alive") or baron.get("allied_lord_expended"):
+        return None
+    owner = baron.get("allied_lord_owner")
+    if not owner:
+        return None
+    same_team = team_of(owner) == team_of(player_id)
+    if destination == SPECIAL_DEST_ALLY_LORD and not same_team:
+        return None
+    if destination == SPECIAL_DEST_ENEMY_LORD and same_team:
+        return None
+
+    battle_node = _special_lord_battle_node(obs, player_id, owner, source)
+    if battle_node:
+        return battle_node
+
+    group_node = _special_lord_group_node(obs, player_id, owner, source)
+    if group_node:
+        return group_node
+
+    tick = int(obs.get("tick", 0) or 0)
+    if int(baron.get("allied_lord_ready_tick", 0) or 0) > tick:
+        return "Baron"
+
+    for node_id, node in (obs.get("nodes", {}) or {}).items():
+        if node_id not in ALL_NODES:
+            continue
+        if node.get("owner") == owner and int((node.get("units", {}) or {}).get(UnitType.LORD.value, 0) or 0) > 0:
+            return node_id
+        if int(((node.get("visiting_units", {}) or {}).get(owner, {}) or {}).get(UnitType.LORD.value, 0) or 0) > 0:
+            return node_id
+    return None
+
+
+def _special_lord_battle_node(
+    obs: dict,
+    player_id: str,
+    owner: str,
+    source: str | None,
+) -> Optional[str]:
+    for battle in obs.get("active_battles", []) or []:
+        side = (battle.get("sides", {}) or {}).get(owner, {})
+        if int((side.get("units", {}) or {}).get(UnitType.LORD.value, 0) or 0) <= 0:
+            continue
+        if battle.get("location_kind") == "edge":
+            endpoints = _edge_battle_endpoints(battle)
+            return _best_accessible_target_obs(obs, player_id, source, endpoints)
+        node_id = battle.get("location_id")
+        return str(node_id) if node_id in ALL_NODES else None
+    return None
+
+
+def _special_lord_group_node(
+    obs: dict,
+    player_id: str,
+    owner: str,
+    source: str | None,
+) -> Optional[str]:
+    for group in obs.get("moving_groups", []) or []:
+        if group.get("player") != owner:
+            continue
+        if int((group.get("units", {}) or {}).get(UnitType.LORD.value, 0) or 0) <= 0:
+            continue
+        phase = str(group.get("phase") or "")
+        if phase in {"node_exit", "node_enter", "node_transit"}:
+            node_id = group.get("segment_node") or group.get("dst") or group.get("src")
+            return str(node_id) if node_id in ALL_NODES else None
+        if phase == "edge":
+            return _best_accessible_target_obs(
+                obs,
+                player_id,
+                source,
+                [group.get("dst"), group.get("src")],
+            )
+        node_id = group.get("dst")
+        return str(node_id) if node_id in ALL_NODES else None
+    return None
+
+
+def _best_accessible_target_obs(
+    obs: dict,
+    player_id: str,
+    source: str | None,
+    candidates: list[str | None],
+) -> Optional[str]:
+    valid = [str(node_id) for node_id in candidates if node_id in ALL_NODES]
+    if not valid:
+        return None
+    if not source or source not in ALL_NODES:
+        return valid[0]
+    scored = []
+    for node_id in valid:
+        route = find_route_obs(player_id, source, node_id, obs)
+        if route:
+            units = _source_units_for_player(obs["nodes"][source], player_id)
+            scored.append((estimate_route_ticks(route, group_speed(units)), len(route), ALL_NODES.index(node_id), node_id))
+    if scored:
+        scored.sort()
+        return scored[0][3]
+    return valid[0]
+
+
 def _intent_allowed(spec: ActionSpec, obs: dict, player_id: str) -> bool:
-    if spec.kind != "MOVE":
+    if not _has_move(spec):
         return True
     destination = spec.destination
     if not destination:
         return False
+    if destination in SPECIAL_LORD_DESTINATIONS:
+        return True
     if spec.intent == "CAPTURE":
         return True
     nodes = obs["nodes"]
@@ -509,6 +688,27 @@ def _intent_allowed(spec: ActionSpec, obs: dict, player_id: str) -> bool:
         return False
     owner = nodes[destination]["owner"]
     return owner == "NEUTRAL" or _friendly_owner(owner, player_id)
+
+
+def _has_produce(spec: ActionSpec) -> bool:
+    return spec.kind in ("PRODUCE", "PRODUCE_MOVE") and spec.unit_type is not None
+
+
+def _has_move(spec: ActionSpec) -> bool:
+    return spec.kind in ("MOVE", "PRODUCE_MOVE") and bool(spec.source and spec.destination)
+
+
+def _move_allowed(spec: ActionSpec, obs: dict, player_id: str) -> bool:
+    if not _has_move(spec):
+        return True
+    if not _intent_allowed(spec, obs, player_id):
+        return False
+    if spec.source not in movable_sources(obs, player_id):
+        return False
+    destination = special_lord_destination_node(obs, player_id, spec.destination, spec.source)
+    if destination is None:
+        return False
+    return find_route_obs(player_id, spec.source, destination, obs) is not None
 
 
 def legal_action_mask(obs: dict, player_id: str) -> np.ndarray:
@@ -522,14 +722,15 @@ def _legal_action_mask_absolute(obs: dict, player_id: str) -> np.ndarray:
     mask[0] = True
 
     for index, spec in enumerate(ACTION_SPECS):
-        if spec.kind == "PRODUCE" and spec.unit_type is not None:
-            mask[index] = resources >= UNIT_COST[spec.unit_type]
-        elif spec.kind == "MOVE" and spec.source and spec.destination:
-            if not _intent_allowed(spec, obs, player_id):
-                continue
-            if spec.source not in movable_sources(obs, player_id):
-                continue
-            mask[index] = find_route_obs(player_id, spec.source, spec.destination, obs) is not None
+        if spec.kind == "HOLD":
+            mask[index] = True
+            continue
+        if _has_produce(spec) and resources < UNIT_COST[spec.unit_type]:
+            continue
+        if _has_move(spec) and not _move_allowed(spec, obs, player_id):
+            continue
+        if _has_produce(spec) or _has_move(spec):
+            mask[index] = True
     return mask
 
 
@@ -562,6 +763,26 @@ def _decode_policy_action(action_index: int, policy_obs: dict, policy_player: st
             source=source,
             destination=destination,
             intent=spec.intent,
+        )
+    if spec.kind == "PRODUCE_MOVE" and spec.unit_type and spec.source and spec.destination:
+        if not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
+            return Action(ActionType.HOLD)
+        source = spec.source
+        destination = spec.destination
+        if uses_mirrored_policy_perspective(actual_player):
+            source = mirrored_node_id(source)
+            destination = mirrored_node_id(destination)
+        return Action(
+            ActionType.MULTI,
+            sub_actions=[
+                Action(ActionType.PRODUCE, unit_type=spec.unit_type),
+                Action(
+                    ActionType.MOVE,
+                    source=source,
+                    destination=destination,
+                    intent=spec.intent,
+                ),
+            ],
         )
     return Action(ActionType.HOLD)
 
@@ -603,6 +824,29 @@ def _team_alive_counts(obs: dict, player_id: str) -> tuple[int, int]:
     return own, enemy
 
 
+def _lord_relation_features(obs: dict, player_id: str) -> list[float]:
+    baron = obs.get("baron", {}) or {}
+    if not baron.get("allied_lord_alive"):
+        relation = "neutral"
+    else:
+        relation = owner_relation(baron.get("allied_lord_owner", "NEUTRAL"), player_id)
+    return [1.0 if relation == item else 0.0 for item in RELATIONS]
+
+
+def _lord_route_flags(obs: dict) -> tuple[set[str], set[str]]:
+    baron = obs.get("baron", {}) or {}
+    if not baron.get("allied_lord_alive"):
+        return set(), set()
+    path = {
+        str(node_id)
+        for node_id in (baron.get("allied_lord_path", []) or [])
+        if str(node_id) in ALL_NODES
+    }
+    target = str(baron.get("allied_lord_target") or "")
+    targets = {target} if target in ALL_NODES else set()
+    return path, targets
+
+
 def _moving_node_totals(obs: dict, player_id: str) -> dict[str, list[float]]:
     totals = {node_id: [0.0] * MOVEMENT_FEATURES for node_id in ALL_NODES}
 
@@ -633,7 +877,7 @@ def _moving_node_totals(obs: dict, player_id: str) -> dict[str, list[float]]:
 def _battle_node_totals(obs: dict, player_id: str) -> dict[str, list[float]]:
     totals = {node_id: [0.0] * BATTLE_FEATURES for node_id in ALL_NODES}
     for battle in obs.get("active_battles", []) or []:
-        if battle.get("location_kind") != "node":
+        if battle.get("location_kind") not in {"node", "approach"}:
             continue
         node_id = battle.get("location_id")
         if node_id not in totals:
@@ -699,13 +943,19 @@ def encode_observation(obs: dict, player_id: str) -> np.ndarray:
 def _encode_observation_absolute(obs: dict, player_id: str) -> np.ndarray:
     own_resources, enemy_resources = _team_resource_totals(obs, player_id)
     own_alive, enemy_alive = _team_alive_counts(obs, player_id)
-    baron_hp = float((obs.get("baron", {}) or {}).get("hp", 0.0) or 0.0)
+    baron = obs.get("baron", {}) or {}
+    tick = int(obs.get("tick", 0) or 0)
+    baron_hp = float(baron.get("hp", 0.0) or 0.0)
+    allied_lord_hp = float(baron.get("allied_lord_hp", 0.0) or 0.0)
+    allied_lord_ready_in = max(0, int(baron.get("allied_lord_ready_tick", 0) or 0) - tick)
+    allied_lord_eta = max(0, int(baron.get("allied_lord_arrival_tick", 0) or 0) - tick)
+    allied_lord_support_units = baron.get("allied_lord_support_units", {}) or {}
 
     features: list[float] = [
-        float(obs.get("tick", 0) or 0) / float(TICK_LIMIT),
-        max(0.0, float(TICK_LIMIT - int(obs.get("tick", 0) or 0))) / float(TICK_LIMIT),
-        max(0.0, float(DEATH_TIME_START_TICK - int(obs.get("tick", 0) or 0))) / float(TICK_LIMIT),
-        1.0 if int(obs.get("tick", 0) or 0) >= DEATH_TIME_START_TICK else 0.0,
+        float(tick) / float(TICK_LIMIT),
+        max(0.0, float(TICK_LIMIT - tick)) / float(TICK_LIMIT),
+        max(0.0, float(DEATH_TIME_START_TICK - tick)) / float(TICK_LIMIT),
+        1.0 if tick >= DEATH_TIME_START_TICK else 0.0,
         float(obs.get("resources", 0.0) or 0.0) / 100.0,
         own_resources / 300.0,
         enemy_resources / 300.0,
@@ -716,12 +966,19 @@ def _encode_observation_absolute(obs: dict, player_id: str) -> np.ndarray:
         baron_hp / float(BARON_HP),
         float(len(obs.get("moving_groups", []) or [])) / 40.0,
         float(len(obs.get("active_battles", []) or [])) / 10.0,
+        1.0 if baron.get("allied_lord_alive") else 0.0,
+        allied_lord_hp / float(BARON_HP),
+        min(1.0, allied_lord_ready_in / float(TICK_LIMIT)),
+        min(1.0, allied_lord_eta / float(TICK_LIMIT)),
+        *_lord_relation_features(obs, player_id),
+        *_normal_unit_counts(allied_lord_support_units),
     ]
 
     moving_totals = _moving_node_totals(obs, player_id)
     battle_totals = _battle_node_totals(obs, player_id)
     edge_battle_totals = _edge_battle_node_totals(obs, player_id)
     own_team = team_of(player_id)
+    lord_path_nodes, lord_target_nodes = _lord_route_flags(obs)
 
     for node_id in ALL_NODES:
         node = obs["nodes"][node_id]
@@ -765,6 +1022,8 @@ def _encode_observation_absolute(obs: dict, player_id: str) -> np.ndarray:
             min(1.0, ready_remaining / 10.0),
             1.0 if own_team in aggro else 0.0,
             1.0 if any(team in aggro for team in {"TEAM_A", "TEAM_B"} - {own_team}) else 0.0,
+            1.0 if node_id in lord_path_nodes else 0.0,
+            1.0 if node_id in lord_target_nodes else 0.0,
         ])
         features.extend(moving_totals[node_id])
         features.extend(battle_totals[node_id])

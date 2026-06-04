@@ -3,6 +3,8 @@ from .constants import (
     BARON_ATTACK_RATE,
     BARON_ATK,
     BARON_HP,
+    BARON_SECONDARY_ATTACK_RATE,
+    BARON_SECONDARY_ATK,
     LORD_ATTACK_RANGE,
     NEUTRAL_GUARD_HP,
     UnitType,
@@ -13,18 +15,18 @@ from .constants import (
 # skirmishers close quickly and kill rangers, vanguards absorb skirmisher hits.
 UNIT_STATS: dict[UnitType, dict] = {
     UnitType.VANGUARD: {
-        "hp": 13,
+        "hp": 14,
         "atk": 3,
         "range": 1.0,
-        "speed": 1.0,  # positions per combat tick
+        "speed": 1.5,  # positions per combat tick
         "slot": "front",
         "base_pos": 3.2,  # starting position offset from own side
     },
     UnitType.RANGER: {
         "hp": 4,
-        "atk": 7,
-        "range": 3.0,
-        "speed": 1.0,
+        "atk": 10,
+        "range": 3.5,
+        "speed": 1.5,
         "slot": "back",
         "base_pos": 0.8,
     },
@@ -32,7 +34,7 @@ UNIT_STATS: dict[UnitType, dict] = {
         "hp": 3,
         "atk": 4,
         "range": 1.0,
-        "speed": 2.5,
+        "speed": 3.0,
         "slot": "mid",
         "base_pos": 1.9,
     },
@@ -40,6 +42,8 @@ UNIT_STATS: dict[UnitType, dict] = {
         "hp": BARON_HP,
         "atk": BARON_ATK,
         "attack_rate": BARON_ATTACK_RATE,
+        "secondary_atk": BARON_SECONDARY_ATK,
+        "secondary_attack_rate": BARON_SECONDARY_ATTACK_RATE,
         "range": LORD_ATTACK_RANGE,
         "speed": 1.0,
         "slot": "front",
@@ -70,8 +74,15 @@ class UnitInstance:
     speed: float
     pos: float           # 1D position (attackers start low, defenders start high)
     attack_rate: int = 1
+    secondary_atk: float = 0.0
+    secondary_attack_rate: int = 0
     move_direction: float = 0.0
     render_offset: float = 0.0
+    x: float = 0.0
+    y: float = 0.0
+    forward_x: float = 1.0
+    forward_y: float = 0.0
+    visual_id: str = ""
 
     def is_alive(self) -> bool:
         return self.hp > 0

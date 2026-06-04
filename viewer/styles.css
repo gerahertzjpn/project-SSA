@@ -325,7 +325,12 @@ select {
 }
 
 .node.dead {
-  opacity: 0.45;
+  border-color: #fff;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 52%),
+    #f2f5f8;
+  color: #151b22;
+  opacity: 0.92;
 }
 
 .node.active {

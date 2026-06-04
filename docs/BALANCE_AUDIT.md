@@ -2,6 +2,11 @@
 
 Date: 2026-06-03
 
+Status: historical after the 2026-06-04 `combat_2d_map` switch. The match-level
+notes remain useful context, but the micro-combat tables in this file were
+measured with the legacy 1D combat helper and must not be treated as current
+2D-combat balance evidence.
+
 ## Goal
 
 Rebalance the game before the next large training run and separate two questions:
