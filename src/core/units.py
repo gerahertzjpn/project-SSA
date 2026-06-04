@@ -14,14 +14,14 @@ from .constants import (
 UNIT_STATS: dict[UnitType, dict] = {
     UnitType.VANGUARD: {
         "hp": 13,
-        "atk": 2,
+        "atk": 3,
         "range": 1.0,
-        "speed": 1.5,  # positions per combat tick
+        "speed": 1.0,  # positions per combat tick
         "slot": "front",
         "base_pos": 3.2,  # starting position offset from own side
     },
     UnitType.RANGER: {
-        "hp": 3,
+        "hp": 4,
         "atk": 7,
         "range": 3.0,
         "speed": 1.0,
@@ -29,10 +29,10 @@ UNIT_STATS: dict[UnitType, dict] = {
         "base_pos": 0.8,
     },
     UnitType.SKIRMISHER: {
-        "hp": 4,
-        "atk": 3,
-        "range": 1.5,
-        "speed": 3.0,
+        "hp": 3,
+        "atk": 4,
+        "range": 1.0,
+        "speed": 2.5,
         "slot": "mid",
         "base_pos": 1.9,
     },

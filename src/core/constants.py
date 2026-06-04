@@ -34,7 +34,7 @@ RESOURCE_PER_TICK = 2.0
 
 UNIT_COST = {
     UnitType.VANGUARD: 3,
-    UnitType.ARCHER: 5,
+    UnitType.ARCHER: 4,
     UnitType.SKIRMISHER: 2,
 }
 

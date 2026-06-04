@@ -5,6 +5,7 @@ from src.core.constants import ActionType, UnitType, PLAYER_IDS, TRAVEL_TIME
 from src.core.engine import Action, GameEngine
 from src.core.combat import ATTACKER_SIDE, CENTER_SIDE, DEFENDER_SIDE
 from src.core.state import MovingGroup, make_initial_state
+from src.core.units import UNIT_STATS
 
 
 class QueueBot:
@@ -423,7 +424,7 @@ def test_movement_speed_uses_slowest_unit_in_group():
     engine.tick()
     groups = {group.player_id: group for group in state.moving_groups}
 
-    assert groups["A1"].speed == 3.0
+    assert groups["A1"].speed == UNIT_STATS[UnitType.SKIRMISHER]["speed"]
     assert groups["A2"].speed == 1.0
     assert groups["A1"].travel_ticks < groups["A2"].travel_ticks
 

@@ -230,8 +230,16 @@ def test_large_skirmisher_army_does_not_hit_rangers_on_spawn_tick():
 
     frame = tick_battle_units(units, record_trace=True)
 
-    assert all(not item["attacks"] for item in frame)
-    assert sum(unit.is_alive() for unit in units if unit.team == "A1") == 20
+    assert all(
+        not item["attacks"]
+        for item in frame
+        if item["type"] == UnitType.SKIRMISHER.value
+    )
+    assert any(
+        item["attacks"]
+        for item in frame
+        if item["type"] == UnitType.RANGER.value
+    )
     assert sum(unit.is_alive() for unit in units if unit.team == "B1") == 10
 
 
@@ -240,6 +248,8 @@ def test_fast_opposing_units_stop_at_range_instead_of_crossing_mid_tick():
     vanguard = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
     skirmisher.pos = ATTACKER_SIDE
     vanguard.pos = DEFENDER_SIDE
+    skirmisher.hp = skirmisher.max_hp = 20
+    vanguard.hp = vanguard.max_hp = 20
     skirmisher.speed = 2.3
     vanguard.speed = 1.4
 
@@ -349,7 +359,7 @@ def test_combat_approach_uses_unit_speed():
     assert fast.pos > slow.pos
 
 
-def test_regular_unit_moves_without_attacking_when_target_starts_out_of_range():
+def test_ranger_can_attack_after_closing_distance():
     ranger = build_player_units({UnitType.RANGER.value: 1}, "A1", "attacker")[0]
     target = build_player_units({UnitType.VANGUARD.value: 1}, "B1", "defender")[0]
     target.pos = ranger.pos + ranger.range + 1.0
@@ -361,8 +371,8 @@ def test_regular_unit_moves_without_attacking_when_target_starts_out_of_range():
     ranger_frame = next(item for item in frame if item["uid"] == ranger.uid)
 
     assert ranger.pos > ATTACKER_SIDE
-    assert target.hp == before_hp
-    assert ranger_frame["attacks"] == []
+    assert target.hp < before_hp
+    assert len(ranger_frame["attacks"]) == 1
 
 
 def test_melee_unit_can_attack_after_closing_distance():
@@ -410,7 +420,7 @@ def test_melee_engagement_width_distributes_contact_attacks():
         unit.pos = 10.0
         unit.speed = 0.0
     for index, unit in enumerate(rangers):
-        unit.pos = 11.5 + index * 0.25
+        unit.pos = 10.0 + skirmishers[0].range + index * 0.25
         unit.speed = 0.0
         unit.range = 0.0
 

@@ -46,6 +46,7 @@ LORD_RANGE = LORD_ATTACK_RANGE
 CORE_RANGE = CORE_ATTACK_RANGE
 LORD_CONTACT_RANGE = 0.5
 MELEE_ENGAGEMENT_WIDTH = 1.0
+MELEE_CONTACT_SNAP = 0.05
 RANGE_EPSILON = 1e-5
 
 _SLOT_ORDER = {
@@ -237,7 +238,7 @@ def _target_range_limit(
         ),
         default=float("inf"),
     )
-    if nearest <= base_limit:
+    if nearest <= base_limit + MELEE_CONTACT_SNAP:
         return nearest + MELEE_ENGAGEMENT_WIDTH + RANGE_EPSILON
     return base_limit
 
@@ -486,7 +487,7 @@ def _attack_rate(unit: UnitInstance) -> int:
 
 
 def _can_attack_after_moving(unit: UnitInstance) -> bool:
-    return unit.unit_type in (UnitType.VANGUARD.value, UnitType.SKIRMISHER.value)
+    return unit.unit_type in (UnitType.VANGUARD.value, UnitType.SKIRMISHER.value, UnitType.RANGER.value)
 
 
 def _queue_attack(
