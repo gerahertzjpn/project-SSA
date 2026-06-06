@@ -29,6 +29,8 @@ class TeamPPOConfig:
     controlled_players: tuple[str, ...] = DEFAULT_CONTROLLED_PLAYERS
     opponent_bot: str = "scripted"
     ally_bot: str = "scripted"
+    opponent_policy_checkpoint: Optional[str] = None
+    opponent_policy_deterministic: bool = False
     max_ticks: int = 300
     workers: int = field(default_factory=lambda: max(1, os.cpu_count() or 1))
     rollout_steps: int = 300
@@ -48,11 +50,16 @@ class TeamPPOConfig:
     checkpoint_interval: int = 1
     torch_threads: int = 1
     device: str = "auto"
+    role_assignment_mode: str = "fixed"
 
     def __post_init__(self) -> None:
         self.controlled_players = tuple(self.controlled_players)
         if not self.controlled_players:
             raise ValueError("TeamPPOConfig requires at least one controlled player")
+        if self.role_assignment_mode not in {"fixed", "shuffle"}:
+            raise ValueError("role_assignment_mode must be 'fixed' or 'shuffle'")
+        if self.role_assignment_mode == "shuffle" and len(self.controlled_players) != 3:
+            raise ValueError("role_assignment_mode='shuffle' expects exactly three controlled players")
 
 
 def _env_config(config: TeamPPOConfig, seed: int) -> TeamTrainingEnvConfig:
@@ -61,6 +68,8 @@ def _env_config(config: TeamPPOConfig, seed: int) -> TeamTrainingEnvConfig:
         seed=seed,
         opponent_bot=config.opponent_bot,
         ally_bot=config.ally_bot,
+        opponent_policy_checkpoint=config.opponent_policy_checkpoint,
+        opponent_policy_deterministic=config.opponent_policy_deterministic,
         max_ticks=config.max_ticks,
         record_replay=False,
         record_trace=False,
@@ -136,6 +145,36 @@ def _empty_agent_buffers(config: TeamPPOConfig) -> dict[str, dict]:
     }
 
 
+def _role_assignment(config: TeamPPOConfig, rng: np.random.Generator) -> dict[str, str]:
+    """Map policy ids to environment slots for one episode."""
+    players = tuple(config.controlled_players)
+    if config.role_assignment_mode == "fixed":
+        return {player_id: player_id for player_id in players}
+    slots = list(players)
+    rng.shuffle(slots)
+    return {
+        policy_id: env_slot
+        for policy_id, env_slot in zip(players, slots)
+    }
+
+
+def _invert_assignment(policy_to_env: dict[str, str]) -> dict[str, str]:
+    return {
+        env_slot: policy_id
+        for policy_id, env_slot in policy_to_env.items()
+    }
+
+
+def _assignment_key(policy_to_env: dict[str, str]) -> str:
+    return json.dumps(
+        {
+            policy_id: env_slot
+            for policy_id, env_slot in sorted(policy_to_env.items())
+        },
+        sort_keys=True,
+    )
+
+
 def _collect_rollout_worker(request: dict) -> dict:
     torch.set_num_threads(int(request["torch_threads"]))
     seed = int(request["seed"])
@@ -147,6 +186,11 @@ def _collect_rollout_worker(request: dict) -> dict:
     for player_id, policy_state in request["policy_states"].items():
         policies[player_id].load_state_dict(policy_state)
         policies[player_id].eval()
+
+    assignment_rng = np.random.default_rng(seed + 7919)
+    policy_to_env = _role_assignment(config, assignment_rng)
+    env_to_policy = _invert_assignment(policy_to_env)
+    assignment_counts: dict[str, int] = {_assignment_key(policy_to_env): 1}
 
     env = TeamTrainingEnv(_env_config(config, seed))
     observations, _ = env.reset(seed=seed)
@@ -163,28 +207,31 @@ def _collect_rollout_worker(request: dict) -> dict:
         masks = env.action_masks()
         actions = {}
         step_outputs = {}
-        for player_id in config.controlled_players:
-            step = policies[player_id].act(observations[player_id], masks[player_id], deterministic=False)
-            actions[player_id] = step.action
-            step_outputs[player_id] = step
+        for env_slot in config.controlled_players:
+            policy_id = env_to_policy[env_slot]
+            step = policies[policy_id].act(observations[env_slot], masks[env_slot], deterministic=False)
+            actions[env_slot] = step.action
+            step_outputs[policy_id] = step
 
         result = env.step(actions)
         done = bool(result.terminal or result.truncated)
 
-        for player_id in config.controlled_players:
-            step = step_outputs[player_id]
-            reward_components = result.info.get("reward_components", {}).get(player_id, {}) or {}
-            buffers[player_id]["observations"].append(observations[player_id])
-            buffers[player_id]["masks"].append(masks[player_id])
-            buffers[player_id]["actions"].append(step.action)
-            buffers[player_id]["logprobs"].append(step.logprob)
-            buffers[player_id]["values"].append(step.value)
-            buffers[player_id]["rewards"].append(float(result.rewards[player_id]))
-            buffers[player_id]["dones"].append(done)
-            buffers[player_id]["entropies"].append(step.entropy)
-            return_sums[player_id] += float(result.rewards[player_id])
-            shaping_sums[player_id] += float(reward_components.get("shaping", 0.0) or 0.0)
-            terminal_sums[player_id] += float(reward_components.get("terminal", 0.0) or 0.0)
+        for policy_id in config.controlled_players:
+            env_slot = policy_to_env[policy_id]
+            step = step_outputs[policy_id]
+            reward_components = result.info.get("reward_components", {}).get(env_slot, {}) or {}
+            reward = float(result.rewards[env_slot])
+            buffers[policy_id]["observations"].append(observations[env_slot])
+            buffers[policy_id]["masks"].append(masks[env_slot])
+            buffers[policy_id]["actions"].append(step.action)
+            buffers[policy_id]["logprobs"].append(step.logprob)
+            buffers[policy_id]["values"].append(step.value)
+            buffers[policy_id]["rewards"].append(reward)
+            buffers[policy_id]["dones"].append(done)
+            buffers[policy_id]["entropies"].append(step.entropy)
+            return_sums[policy_id] += reward
+            shaping_sums[policy_id] += float(reward_components.get("shaping", 0.0) or 0.0)
+            terminal_sums[policy_id] += float(reward_components.get("terminal", 0.0) or 0.0)
 
         observations = result.observations
         episode_steps += 1
@@ -201,6 +248,10 @@ def _collect_rollout_worker(request: dict) -> dict:
             reset_seed = seed + 10_000 + step_index
             observations, _ = env.reset(seed=reset_seed)
             controlled_team = env.controlled_team
+            policy_to_env = _role_assignment(config, assignment_rng)
+            env_to_policy = _invert_assignment(policy_to_env)
+            assignment_key = _assignment_key(policy_to_env)
+            assignment_counts[assignment_key] = assignment_counts.get(assignment_key, 0) + 1
             return_sums = {player_id: 0.0 for player_id in config.controlled_players}
             shaping_sums = {player_id: 0.0 for player_id in config.controlled_players}
             terminal_sums = {player_id: 0.0 for player_id in config.controlled_players}
@@ -208,10 +259,11 @@ def _collect_rollout_worker(request: dict) -> dict:
 
     last_values = {}
     last_masks = env.action_masks()
-    for player_id in config.controlled_players:
-        last_values[player_id] = policies[player_id].act(
-            observations[player_id],
-            last_masks[player_id],
+    for policy_id in config.controlled_players:
+        env_slot = policy_to_env[policy_id]
+        last_values[policy_id] = policies[policy_id].act(
+            observations[env_slot],
+            last_masks[env_slot],
             deterministic=True,
         ).value
 
@@ -225,6 +277,7 @@ def _collect_rollout_worker(request: dict) -> dict:
         },
         "last_values": last_values,
         "episodes": episodes,
+        "role_assignment_counts": assignment_counts,
     }
 
 
@@ -312,14 +365,21 @@ def collect_team_rollouts(
         worker_results = pool.map(_collect_rollout_worker, requests)
 
     episodes = []
+    role_assignment_counts: dict[str, int] = {}
     for result in worker_results:
         episodes.extend(result["episodes"])
+        for key, value in result.get("role_assignment_counts", {}).items():
+            role_assignment_counts[key] = role_assignment_counts.get(key, 0) + int(value)
 
     agents = {
         player_id: _merge_agent_rollouts(worker_results, config, player_id)
         for player_id in config.controlled_players
     }
-    return {"agents": agents, "episodes": episodes}
+    return {
+        "agents": agents,
+        "episodes": episodes,
+        "role_assignment_counts": role_assignment_counts,
+    }
 
 
 def update_team_policies(
@@ -343,6 +403,8 @@ def update_team_policies(
 
 def summarize_team_rollout(rollout: dict, config: TeamPPOConfig) -> dict:
     summary = summarize_training_episodes(rollout["episodes"])
+    summary["role_assignment_mode"] = config.role_assignment_mode
+    summary["role_assignment_counts"] = rollout.get("role_assignment_counts", {})
     summary["agents"] = {}
     for player_id in config.controlled_players:
         agent = rollout["agents"][player_id]
@@ -373,6 +435,9 @@ def evaluate_team_policies(
 
     for episode_index in range(episodes):
         env_seed = seed + episode_index
+        assignment_rng = np.random.default_rng(env_seed + 7919)
+        policy_to_env = _role_assignment(config, assignment_rng)
+        env_to_policy = _invert_assignment(policy_to_env)
         env = TeamTrainingEnv(_env_config(config, env_seed))
         observations, _ = env.reset(seed=env_seed)
         done = False
@@ -384,24 +449,26 @@ def evaluate_team_policies(
         while not done:
             masks = env.action_masks()
             selected_actions = {}
-            for player_id in config.controlled_players:
-                step = policies[player_id].act(
-                    observations[player_id],
-                    masks[player_id],
+            for env_slot in config.controlled_players:
+                policy_id = env_to_policy[env_slot]
+                step = policies[policy_id].act(
+                    observations[env_slot],
+                    masks[env_slot],
                     deterministic=deterministic,
                     device=device,
                 )
-                selected_actions[player_id] = step.action
-                actions_by_player[player_id].append(step.action)
-                masks_by_player[player_id].append(masks[player_id])
-                entropies_by_player[player_id].append(step.entropy)
+                selected_actions[env_slot] = step.action
+                actions_by_player[policy_id].append(step.action)
+                masks_by_player[policy_id].append(masks[env_slot])
+                entropies_by_player[policy_id].append(step.entropy)
 
             result = env.step(selected_actions)
-            for player_id in config.controlled_players:
-                reward_components = result.info.get("reward_components", {}).get(player_id, {}) or {}
-                return_sums[player_id] += float(result.rewards[player_id])
-                shaping_sums[player_id] += float(reward_components.get("shaping", 0.0) or 0.0)
-                terminal_sums[player_id] += float(reward_components.get("terminal", 0.0) or 0.0)
+            for policy_id in config.controlled_players:
+                env_slot = policy_to_env[policy_id]
+                reward_components = result.info.get("reward_components", {}).get(env_slot, {}) or {}
+                return_sums[policy_id] += float(result.rewards[env_slot])
+                shaping_sums[policy_id] += float(reward_components.get("shaping", 0.0) or 0.0)
+                terminal_sums[policy_id] += float(reward_components.get("terminal", 0.0) or 0.0)
             observations = result.observations
             steps += 1
             done = bool(result.terminal or result.truncated)
@@ -450,6 +517,9 @@ def _team_policy_eval_worker(request: dict) -> dict:
         env_seed = int(env_seed)
         torch.manual_seed(int(request["sample_seed_offset"]) + env_seed)
         np.random.seed((int(request["sample_seed_offset"]) + env_seed) % (2**32 - 1))
+        assignment_rng = np.random.default_rng(env_seed + 7919)
+        policy_to_env = _role_assignment(config, assignment_rng)
+        env_to_policy = _invert_assignment(policy_to_env)
 
         env = TeamTrainingEnv(_env_config(config, env_seed))
         observations, _ = env.reset(seed=env_seed)
@@ -462,24 +532,26 @@ def _team_policy_eval_worker(request: dict) -> dict:
         while not done:
             masks = env.action_masks()
             selected_actions = {}
-            for player_id in config.controlled_players:
-                step = policies[player_id].act(
-                    observations[player_id],
-                    masks[player_id],
+            for env_slot in config.controlled_players:
+                policy_id = env_to_policy[env_slot]
+                step = policies[policy_id].act(
+                    observations[env_slot],
+                    masks[env_slot],
                     deterministic=bool(request["deterministic"]),
                     device="cpu",
                 )
-                selected_actions[player_id] = step.action
-                actions_by_player[player_id].append(step.action)
-                masks_by_player[player_id].append(masks[player_id])
-                entropies_by_player[player_id].append(step.entropy)
+                selected_actions[env_slot] = step.action
+                actions_by_player[policy_id].append(step.action)
+                masks_by_player[policy_id].append(masks[env_slot])
+                entropies_by_player[policy_id].append(step.entropy)
 
             result = env.step(selected_actions)
-            for player_id in config.controlled_players:
-                reward_components = result.info.get("reward_components", {}).get(player_id, {}) or {}
-                return_sums[player_id] += float(result.rewards[player_id])
-                shaping_sums[player_id] += float(reward_components.get("shaping", 0.0) or 0.0)
-                terminal_sums[player_id] += float(reward_components.get("terminal", 0.0) or 0.0)
+            for policy_id in config.controlled_players:
+                env_slot = policy_to_env[policy_id]
+                reward_components = result.info.get("reward_components", {}).get(env_slot, {}) or {}
+                return_sums[policy_id] += float(result.rewards[env_slot])
+                shaping_sums[policy_id] += float(reward_components.get("shaping", 0.0) or 0.0)
+                terminal_sums[policy_id] += float(reward_components.get("terminal", 0.0) or 0.0)
             observations = result.observations
             steps += 1
             done = bool(result.terminal or result.truncated)
@@ -511,6 +583,7 @@ def evaluate_team_policies_parallel(
     workers: int,
     pool: Optional[mp.pool.Pool] = None,
 ) -> dict:
+    policy_device = next(next(iter(policies.values())).parameters()).device
     if episodes <= 0:
         return evaluate_team_policies(
             policies,
@@ -518,7 +591,7 @@ def evaluate_team_policies_parallel(
             episodes=0,
             seed=seed,
             deterministic=deterministic,
-            device=torch.device("cpu"),
+            device=policy_device,
         )
     if workers <= 1 or episodes <= 1:
         return evaluate_team_policies(
@@ -527,7 +600,7 @@ def evaluate_team_policies_parallel(
             episodes=episodes,
             seed=seed,
             deterministic=deterministic,
-            device=torch.device("cpu"),
+            device=policy_device,
         )
 
     env_seeds = [int(seed + index) for index in range(episodes)]

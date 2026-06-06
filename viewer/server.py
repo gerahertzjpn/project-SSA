@@ -28,6 +28,8 @@ from src.bots.policy_bot import (
 
 REPLAY_DIR = ROOT / "replays_viewer_debug_smoke"
 MAX_UI_RUNS = 100
+MAX_POLICY_CHECKPOINT_SCAN = 120
+MAX_DISCOVERED_POLICY_MODELS = 30
 REPLAY_NAME = re.compile(r"^replay_\d+\.json$")
 SERVER_STARTED_AT = int(time.time())
 SERVER_COMMIT = current_code_commit()
@@ -56,6 +58,9 @@ def available_models() -> list[dict]:
     models = [
         {"id": "random", "label": "Random bot"},
         {"id": "scripted", "label": "Scripted bot"},
+        {"id": "scripted_core", "label": "Scripted core-focus"},
+        {"id": "scripted_core_raider", "label": "Scripted core Raider"},
+        {"id": "scripted_core_bmp", "label": "Scripted core BMP"},
     ]
     seen_checkpoints: set[Path] = set()
     team_checkpoint = default_team_policy_checkpoint()
@@ -102,11 +107,17 @@ def discover_policy_checkpoints() -> list[Path]:
     root = ROOT / "training_runs"
     if not root.exists():
         return []
-    checkpoints = [
-        path
-        for path in root.glob("*/checkpoints/*.pt")
-        if path.is_file() and checkpoint_is_compatible(path)
-    ]
+    candidates = sorted(
+        (path for path in root.glob("*/checkpoints/*.pt") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    checkpoints: list[Path] = []
+    for path in candidates[:MAX_POLICY_CHECKPOINT_SCAN]:
+        if checkpoint_is_compatible(path):
+            checkpoints.append(path)
+            if len(checkpoints) >= MAX_DISCOVERED_POLICY_MODELS:
+                break
     return sorted(checkpoints, key=lambda path: (path.parent.parent.name, path.name))
 
 

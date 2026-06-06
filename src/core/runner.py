@@ -6,7 +6,7 @@ import subprocess
 from typing import Optional
 
 from src.bots.random_bot import RandomBot
-from src.bots.scripted_bot import ScriptedBot
+from src.bots.scripted_bot import ScriptedBot, make_scripted_bot_variant
 from src.bots.policy_bot import (
     PolicyBot,
     checkpoint_is_compatible,
@@ -20,17 +20,25 @@ from src.core.constants import (
     BARON_HP,
     BARON_SECONDARY_ATTACK_RATE,
     BARON_SECONDARY_ATK,
+    BUILDING_BUILD_TICKS,
+    BUILDING_COST,
+    BUILDING_STATS,
     ALLIED_LORD_PUSH_DELAY_TICKS,
     CORE_ATK,
     CORE_ATTACK_RATE,
     CORE_HP,
     CORE_ATTACK_RANGE,
+    FACTION_TYPES,
     LORD_ATTACK_RANGE,
+    NEUTRAL_GUARD_ATK,
     NEUTRAL_GUARD_HP,
     PLAYER_IDS,
     TEAM_A_PLAYERS,
     TEAM_B_PLAYERS,
     TRAVEL_TIME,
+    UNIT_COST,
+    UNIT_FACTION,
+    UNIT_ROSTER_BY_FACTION,
 )
 from src.core.engine import GameEngine
 from src.core.combat import DEPLOYMENT_DEPTH, MELEE_CONTACT_SNAP, RENDER_SLOT_SPACING, SIM_SLOT_SPACING
@@ -38,6 +46,7 @@ from src.core.combat2d import COMBAT_RANGE_TO_MAP_UNITS
 from src.core.map2d import MAP2D_VERSION, MOVEMENT_MAP_UNITS_PER_TICK, map2d_replay_meta
 from src.core.replay import save_replay
 from src.core.state import GameState, make_initial_state
+from src.core.units import UNIT_STATS
 
 
 @dataclass(frozen=True)
@@ -91,8 +100,9 @@ def make_bots(bot_type: str, seed_offset: int = 0) -> dict:
 
 
 def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
-    if model_id == "scripted":
-        return ScriptedBot(player_id, team)
+    scripted_variant = make_scripted_bot_variant(model_id, player_id, team)
+    if scripted_variant is not None:
+        return scripted_variant
     if model_id == "random":
         return RandomBot(player_id, team, seed=seed)
     if model_id.startswith("policy:"):
@@ -167,6 +177,23 @@ def rules_meta() -> dict:
         "allied_lord_returns_fire_when_attacked_from_behind": True,
         "lord_support_join_actions": True,
         "enemy_lord_hunt_actions": True,
+        "fog_of_war": False,
+        "construction_v0": True,
+        "faction_schema": list(FACTION_TYPES),
+        "unit_cost": {unit.value: cost for unit, cost in UNIT_COST.items()},
+        "unit_faction": {unit.value: faction for unit, faction in UNIT_FACTION.items()},
+        "unit_roster_by_faction": {
+            faction: [unit.value for unit in roster]
+            for faction, roster in UNIT_ROSTER_BY_FACTION.items()
+        },
+        "unit_stats": {
+            unit.value: dict(stats)
+            for unit, stats in UNIT_STATS.items()
+            if unit in UNIT_COST
+        },
+        "building_cost": {building.value: cost for building, cost in BUILDING_COST.items()},
+        "building_build_ticks": {building.value: ticks for building, ticks in BUILDING_BUILD_TICKS.items()},
+        "building_stats": {building.value: dict(stats) for building, stats in BUILDING_STATS.items()},
         "allied_lord_attacks_forward_only": False,
         "allied_lord_prefers_forward_targets": True,
         "allied_lord_push_delay_ticks": ALLIED_LORD_PUSH_DELAY_TICKS,
@@ -180,7 +207,8 @@ def rules_meta() -> dict:
         "baron_secondary_atk": BARON_SECONDARY_ATK,
         "baron_secondary_attack_rate": BARON_SECONDARY_ATTACK_RATE,
         "neutral_guard_hp": NEUTRAL_GUARD_HP,
-        "neutral_guard_total_atk": "2 * guard_strength",
+        "neutral_guard_atk": NEUTRAL_GUARD_ATK,
+        "neutral_guard_total_atk": f"{NEUTRAL_GUARD_ATK} * guard_strength",
         "neutral_income": "ceil(guard_strength / 2)",
         "lord_attack_range": LORD_ATTACK_RANGE,
         "core_attack_range": CORE_ATTACK_RANGE,

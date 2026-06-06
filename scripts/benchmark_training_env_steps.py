@@ -162,8 +162,9 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--seed", type=int, default=20260602)
     parser.add_argument("--player", default="A1")
-    parser.add_argument("--opponent-bot", choices=["scripted", "random"], default="scripted")
-    parser.add_argument("--ally-bot", choices=["scripted", "random"], default="scripted")
+    scripted_choices = ["scripted", "scripted_core", "scripted_core_raider", "scripted_core_bmp"]
+    parser.add_argument("--opponent-bot", choices=scripted_choices + ["random"], default="scripted")
+    parser.add_argument("--ally-bot", choices=scripted_choices + ["random"], default="scripted")
     parser.add_argument("--max-ticks", type=int, default=None)
     parser.add_argument("--progress", action="store_true")
     parser.add_argument("--progress-sec", type=float, default=60.0)

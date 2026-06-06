@@ -11,7 +11,7 @@ from src.training.ppo_trainer import (
     summarize_action_distribution,
     summarize_training_episodes,
 )
-from src.training.spaces import ACTION_DIM, OBSERVATION_DIM
+from src.training.spaces import ACTION_DIM, MOVE_ACTION_START, OBSERVATION_DIM
 
 
 def test_masked_policy_never_selects_illegal_action():
@@ -24,6 +24,23 @@ def test_masked_policy_never_selects_illegal_action():
         for _ in range(20):
             step = policy.act(obs, mask, deterministic=deterministic)
             assert step.action == 3
+
+
+def test_action_only_path_matches_full_policy_action_for_same_rng():
+    policy = MaskedActorCritic(hidden_size=32)
+    rng = np.random.default_rng(123)
+    obs = rng.normal(size=OBSERVATION_DIM).astype(np.float32)
+    mask = np.zeros(ACTION_DIM, dtype=np.bool_)
+    legal = rng.choice(np.arange(ACTION_DIM), size=50, replace=False)
+    mask[legal] = True
+
+    for deterministic in (False, True):
+        for seed in range(20):
+            torch.manual_seed(seed)
+            full_action = policy.act(obs, mask, deterministic=deterministic).action
+            torch.manual_seed(seed)
+            action_only = policy.act_action_only(obs, mask, deterministic=deterministic)
+            assert action_only == full_action
 
 
 def test_checkpoint_roundtrip_restores_policy_and_optimizer(tmp_path: Path):
@@ -53,7 +70,7 @@ def test_default_eval_episodes_are_large_enough_for_win_rate():
 
 
 def test_action_distribution_summary_exposes_argmax_collapse():
-    summary = summarize_action_distribution([0, 0, 0, 1, 4])
+    summary = summarize_action_distribution([0, 0, 0, 1, MOVE_ACTION_START])
 
     assert summary["total_actions"] == 5
     assert summary["unique_actions"] == 3

@@ -22,7 +22,10 @@ from .constants import (
     MAX_COMBAT_TICKS, TEAM_A_PLAYERS, TEAM_B_PLAYERS, CORE_HP,
     DEATH_TIME_START_TICK, NEUTRAL_GUARD_HP, death_time_core_damage_for_tick,
     ALLIED_LORD_PUSH_DELAY_TICKS, SPECIAL_DEST_ALLY_LORD, SPECIAL_DEST_ENEMY_LORD,
-    SPECIAL_LORD_DESTINATIONS,
+    SPECIAL_LORD_DESTINATIONS, BUILDING_STATS, BuildingType,
+    BOOSTER_SPEED_BONUS, LIFE_SPAWN_INTERVAL_TICKS, LIFE_SPAWN_UNIT, POWER_HP_BONUS,
+    BUILDING_REGEN_DELAY_TICKS, BUILDING_ZERO_HP_REGEN_DELAY_MULTIPLIER,
+    BUILDING_REGEN_HP_PER_TICK,
 )
 from .state import GameState, MovingGroup, NodeState, Battle, get_enemy_team, get_team
 from .map import ADJACENCY, NODE_TYPES, NodeType
@@ -42,6 +45,7 @@ from .map2d import (
 from .visual2d import moving_group_visual
 from .combat import (
     build_player_units, build_neutral_units, build_core_unit, build_baron_unit,
+    build_building_unit,
     count_survivors_by_player,
     render_position,
 )
@@ -52,7 +56,7 @@ from .combat2d import (
     has_hostile_units_2d,
     unit_range_map,
 )
-from .production import apply_production, collect_income
+from .production import apply_build, apply_production, collect_income, player_has_completed_building
 from .units import UNIT_STATS
 
 
@@ -68,6 +72,7 @@ NODE_RANGED_MIN_RANGE = 1.0
 class Action:
     action_type: ActionType
     unit_type: Optional[UnitType] = None   # for PRODUCE
+    building_type: Optional[BuildingType] = None  # for BUILD
     destination: Optional[str] = None      # for MOVE
     source: Optional[str] = None           # for MOVE (which node to send from)
     intent: str = "CAPTURE"               # CAPTURE/ATTACK engages neutrals, TRANSIT does not
@@ -92,6 +97,7 @@ class GameEngine:
         self.record_trace = record_trace
         self.record_replay = record_replay
         self.replay_ticks = []
+        self._pending_neutral_reengages: list[tuple[str, str]] = []
         if self.record_replay:
             self._initialize_visual_state()
 
@@ -304,13 +310,15 @@ class GameEngine:
         self._advance_moving_groups(tick_events)
 
         collect_income(state)
+        self._apply_life_building_spawns(tick_events)
 
         actions: dict[str, Action] = {}
         for player_id, bot in self.bots.items():
             player = state.players[player_id]
             if not player.alive:
                 continue
-            actions[player_id] = bot.act(self._observe(player_id))
+            obs = self._observe(player_id) if getattr(bot, "requires_observation", True) else {}
+            actions[player_id] = bot.act(obs)
 
         for player_id, action in actions.items():
             for step in self._action_steps(action):
@@ -318,6 +326,18 @@ class GameEngine:
                     event = self._apply_move(player_id, step)
                     if event:
                         tick_events.append(event)
+
+        for player_id, action in actions.items():
+            for step in self._action_steps(action):
+                if step.action_type != ActionType.BUILD or not step.building_type or not step.destination:
+                    continue
+                if apply_build(state, player_id, step.destination, step.building_type):
+                    tick_events.append({
+                        "type": "BUILD_STARTED",
+                        "player": player_id,
+                        "node": step.destination,
+                        "building_type": step.building_type.value,
+                    })
 
         for player_id, action in actions.items():
             for step in self._action_steps(action):
@@ -334,6 +354,8 @@ class GameEngine:
                     self._remember_node_entry_side(core_node, player_id, self._default_player_side(player_id))
 
         self._apply_death_time_damage(tick_events)
+        self._cleanup_non_hostile_battles(tick_events)
+        self._regenerate_buildings(tick_events)
         self._check_victory()
         if self.record_replay:
             self.replay_ticks.append(self._snapshot_tick(state, tick_events))
@@ -347,9 +369,9 @@ class GameEngine:
             return [action]
         steps = [
             step for step in (action.sub_actions or [])
-            if isinstance(step, Action) and step.action_type in (ActionType.PRODUCE, ActionType.MOVE)
+            if isinstance(step, Action) and step.action_type in (ActionType.PRODUCE, ActionType.MOVE, ActionType.BUILD)
         ]
-        return steps[:2]
+        return steps[:3]
 
     def observe(self, player_id: str) -> dict:
         return self._observe(player_id)
@@ -360,6 +382,10 @@ class GameEngine:
 
     def _advance_moving_groups(self, tick_events: list) -> None:
         state = self.state
+        if not state.moving_groups:
+            return
+
+        state.moving_groups = self._refresh_moving_lord_push_groups(state.moving_groups, tick_events)
         if not state.moving_groups:
             return
 
@@ -386,12 +412,18 @@ class GameEngine:
                 continue
             phased_groups.append(group)
 
-        remaining = self._start_reached_threat_zone_battles(phased_groups, tick_events)
+        remaining = self._join_reached_approach_battles(phased_groups, tick_events)
+
+        remaining = self._start_reached_threat_zone_battles(remaining, tick_events)
+
+        remaining = self._join_reached_approach_battles(remaining, tick_events)
 
         remaining = self._join_reached_edge_battles(remaining, tick_events)
 
         remaining = self._create_edge_collisions(remaining, tick_events)
+        remaining = self._join_reached_approach_battles(remaining, tick_events)
         remaining = self._start_reached_threat_zone_battles(remaining, tick_events)
+        remaining = self._join_reached_approach_battles(remaining, tick_events)
         remaining = self._join_reached_edge_battles(remaining, tick_events)
 
         still_moving: list[MovingGroup] = []
@@ -408,6 +440,110 @@ class GameEngine:
         still_moving = self._start_node_entry_battles(still_moving, tick_events)
         still_moving = self._start_node_transit_battles(still_moving, tick_events)
         state.moving_groups = still_moving
+
+    def _refresh_moving_lord_push_groups(
+        self,
+        groups: list[MovingGroup],
+        tick_events: list,
+    ) -> list[MovingGroup]:
+        refreshed: list[MovingGroup] = []
+        for group in groups:
+            if not group.units.get(UnitType.LORD.value):
+                refreshed.append(group)
+                continue
+
+            if (
+                self.state.baron.allied_lord_owner != group.player_id
+                or not self.state.baron.allied_lord_alive
+            ):
+                refreshed.append(group)
+                continue
+
+            if group.intent != "LORD_PUSH":
+                group.intent = "LORD_PUSH"
+                tick_events.append({
+                    "type": "LORD_PUSH_METADATA_REPAIRED",
+                    "player": group.player_id,
+                    "src": group.src,
+                    "dst": group.dst,
+                    "reason": "moving_lord_non_push_intent",
+                })
+
+            target = self._living_lord_target(group.player_id)
+            if target is None:
+                self._kill_allied_lord(expended=False)
+                tick_events.append({
+                    "type": "LORD_STOPPED",
+                    "player": group.player_id,
+                    "src": group.src,
+                    "reason": "no_living_enemy_core",
+                })
+                if unit_total(group.units) > 0:
+                    refreshed.append(group)
+                continue
+
+            if target != group.final_dst:
+                event = self._retarget_moving_lord_push_group(group, target)
+                if event:
+                    tick_events.append(event)
+            else:
+                self.state.baron.allied_lord_target = target
+            refreshed.append(group)
+        return refreshed
+
+    def _retarget_moving_lord_push_group(self, group: MovingGroup, target: str) -> Optional[dict]:
+        previous_target = group.final_dst or self.state.baron.allied_lord_target
+        previous_path = list(group.path or [group.src, group.dst])
+        progress = max(0.0, min(1.0, float(group.progress or 0.0)))
+
+        if group.phase == "node_transit" and group.segment_node:
+            anchor = str(group.segment_node)
+            route = self._find_unrestricted_route(anchor, target)
+            if not route:
+                return None
+            path = [str(group.src)] + list(route)
+            segment_index = 2
+            if len(path) < 3:
+                return None
+        else:
+            anchor = str(group.dst)
+            route = self._find_unrestricted_route(anchor, target)
+            if anchor == target:
+                path = [str(group.src), str(group.dst)]
+            elif route:
+                path = [str(group.src), str(group.dst)] + list(route[1:])
+            else:
+                return None
+            segment_index = {
+                "node_exit": 0,
+                "edge": 1,
+                "node_enter": 2,
+            }.get(group.phase, int(group.segment_index or 0))
+            if segment_index >= len(self._movement_segments(path, group.speed)):
+                return None
+
+        group.path = path
+        group.final_dst = target
+        self._set_group_segment(group, segment_index, progress=progress)
+        self.state.baron.allied_lord_target = target
+        self.state.baron.allied_lord_path = list(path)
+        self.state.baron.allied_lord_arrival_tick = group.arrival_tick
+        self.state.baron.allied_lord_ready_tick = 0
+        return {
+            "type": "LORD_RETARGETED",
+            "player": group.player_id,
+            "team": get_team(group.player_id),
+            "src": group.src,
+            "target": target,
+            "previous_target": previous_target,
+            "previous_path": previous_path,
+            "path": list(path),
+            "units": dict(group.units),
+            "speed": round(group.speed, 3),
+            "ready_tick": self.state.tick,
+            "arrives": group.arrival_tick,
+            "reason": "moving_target_destroyed",
+        }
 
     def _join_reached_lord_push_groups(
         self,
@@ -515,6 +651,7 @@ class GameEngine:
                 include_owner_units=include_owner_units,
                 include_visitors=True,
                 include_core=True,
+                include_buildings=True,
             )
 
         return self._start_node_battle(
@@ -523,6 +660,7 @@ class GameEngine:
             objective="pvp",
             include_owner_units=include_owner_units,
             include_visitors=include_visitors,
+            include_buildings=include_owner_units,
         )
 
     def _start_node_transit_battles(
@@ -561,6 +699,7 @@ class GameEngine:
                         has_enemy_visitors,
                     ),
                     include_visitors=has_enemy_visitors,
+                    include_buildings=True,
                 )
                 tick_events.append(event)
                 battle = self.state.active_battles[self._node_key(node_id)]
@@ -680,6 +819,7 @@ class GameEngine:
             include_owner_units=True,
             include_visitors=True,
             include_core=True,
+            include_buildings=True,
             location_kind="approach",
             approach_id=approach_id,
             threat_zone_ids=threat_zone_ids,
@@ -705,12 +845,29 @@ class GameEngine:
             if group.progress + 1e-9 < start or group.progress - 1e-9 > end:
                 continue
 
+            if NODE_TYPES[node_id] == NodeType.CORE and get_team(group.player_id) != get_team(node_id):
+                return self._start_node_battle(
+                    group=group,
+                    node_id=node_id,
+                    objective="core",
+                    core_owner=node_id,
+                    include_owner_units=True,
+                    include_visitors=True,
+                    include_core=True,
+                    include_buildings=True,
+                    location_kind="approach",
+                    approach_id=approach_id,
+                    threat_zone_ids=[f"ranged:{node_id}"],
+                    edge_position=start,
+                )
+
             return self._start_node_battle(
                 group=group,
                 node_id=node_id,
                 objective="pvp",
                 include_owner_units=True,
                 include_visitors=True,
+                include_buildings=True,
                 location_kind="approach",
                 approach_id=approach_id,
                 threat_zone_ids=[f"ranged:{node_id}"],
@@ -731,6 +888,62 @@ class GameEngine:
             else:
                 remaining.append(group)
         return remaining
+
+    def _join_reached_approach_battles(
+        self,
+        groups: list[MovingGroup],
+        tick_events: list,
+    ) -> list[MovingGroup]:
+        remaining: list[MovingGroup] = []
+        for group in groups:
+            battle = self._approach_battle_for_group(group)
+            if battle and self._group_reached_approach_battle(group, battle):
+                tick_events.append(self._join_battle(battle, group, reinforced=True))
+            else:
+                remaining.append(group)
+        return remaining
+
+    def _approach_battle_for_group(self, group: MovingGroup) -> Optional[Battle]:
+        if not self._movement_phase_can_collide_on_edge(group):
+            return None
+        segment_src, segment_dst = self._moving_group_segment_nodes(group)
+        if not segment_src or not segment_dst:
+            return None
+        try:
+            group_approach_id = directed_approach_id(segment_src, segment_dst)
+        except (KeyError, ValueError):
+            return None
+        group_endpoints = {segment_src, segment_dst}
+
+        for battle in self.state.active_battles.values():
+            if battle.location_kind != "approach" or not battle.approach_id:
+                continue
+            battle_src, battle_dst = self._approach_endpoints(battle.approach_id)
+            if not battle_src or not battle_dst:
+                continue
+            if {battle_src, battle_dst} != group_endpoints:
+                continue
+            if group_approach_id == battle.approach_id or (segment_src == battle_dst and segment_dst == battle_src):
+                return battle
+        return None
+
+    def _group_reached_approach_battle(self, group: MovingGroup, battle: Battle) -> bool:
+        segment_src, segment_dst = self._moving_group_segment_nodes(group)
+        if not segment_src or not segment_dst:
+            return False
+        battle_src, battle_dst = self._approach_endpoints(battle.approach_id)
+        if not battle_src or not battle_dst:
+            return False
+        target_progress = float(battle.edge_position)
+        if segment_src == battle_dst and segment_dst == battle_src:
+            target_progress = 1.0 - target_progress
+        return float(group.progress) >= target_progress - EDGE_COLLISION_THRESHOLD
+
+    def _approach_endpoints(self, approach_id: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+        if not approach_id or "->" not in approach_id:
+            return None, None
+        src, dst = str(approach_id).split("->", 1)
+        return src or None, dst or None
 
     def _create_edge_collisions(
         self,
@@ -766,9 +979,13 @@ class GameEngine:
         return [group for idx, group in enumerate(groups) if idx not in used]
 
     def _groups_collide_on_edge(self, first: MovingGroup, second: MovingGroup) -> bool:
-        if first.phase != "edge" or second.phase != "edge":
+        if not self._movement_phase_can_collide_on_edge(first) or not self._movement_phase_can_collide_on_edge(second):
             return False
-        if first.src != second.dst or first.dst != second.src:
+        first_src, first_dst = self._moving_group_segment_nodes(first)
+        second_src, second_dst = self._moving_group_segment_nodes(second)
+        if not first_src or not first_dst or not second_src or not second_dst:
+            return False
+        if first_src != second_dst or first_dst != second_src:
             return False
         if first.team == second.team:
             return False
@@ -776,17 +993,23 @@ class GameEngine:
             return False
         return first.progress + second.progress >= 1.0 - EDGE_COLLISION_THRESHOLD
 
+    def _movement_phase_can_collide_on_edge(self, group: MovingGroup) -> bool:
+        return group.phase in {"edge", "node_exit", "node_transit", "node_enter"}
+
     def _create_edge_battle(self, first: MovingGroup, second: MovingGroup) -> Battle:
-        key = self._edge_key(first.src, first.dst)
+        first_src, first_dst = self._moving_group_segment_nodes(first)
+        if not first_src or not first_dst:
+            first_src, first_dst = first.src, first.dst
+        key = self._edge_key(first_src, first_dst)
         edge_position = self._edge_collision_position(first, second)
         battle = Battle(
             battle_id=key,
             location_kind="edge",
-            location_id=self._edge_id(first.src, first.dst),
+            location_id=self._edge_id(first_src, first_dst),
             units=[],
             started_at_tick=self.state.tick,
             last_tick=self.state.tick,
-            edge_endpoints=self._canonical_edge(first.src, first.dst),
+            edge_endpoints=self._canonical_edge(first_src, first_dst),
             edge_position=edge_position,
             objective="pvp",
         )
@@ -797,13 +1020,19 @@ class GameEngine:
 
     def _edge_collision_position(self, first: MovingGroup, second: MovingGroup) -> float:
         first_progress, second_progress = self._edge_collision_contact_progress(first, second)
-        if first.src == second.dst and first.dst == second.src:
+        first_src, first_dst = self._moving_group_segment_nodes(first)
+        second_src, second_dst = self._moving_group_segment_nodes(second)
+        first_src = first_src or first.src
+        first_dst = first_dst or first.dst
+        second_src = second_src or second.src
+        second_dst = second_dst or second.dst
+        if first_src == second_dst and first_dst == second_src:
             position = (first_progress + (1.0 - second_progress)) / 2.0
         else:
             position = first_progress
         position = max(0.0, min(1.0, position))
-        edge_start, _ = self._canonical_edge(first.src, first.dst)
-        return position if first.src == edge_start else 1.0 - position
+        edge_start, _ = self._canonical_edge(first_src, first_dst)
+        return position if first_src == edge_start else 1.0 - position
 
     def _edge_collision_contact_progress(self, first: MovingGroup, second: MovingGroup) -> tuple[float, float]:
         first_step = 1.0 / max(1.0, float(first.travel_ticks))
@@ -825,12 +1054,16 @@ class GameEngine:
         return first_after, second_after
 
     def _edge_battle_for_group(self, group: MovingGroup) -> Optional[Battle]:
-        if group.phase != "edge":
+        if not self._movement_phase_can_collide_on_edge(group):
             return None
-        return self.state.active_battles.get(self._edge_key(group.src, group.dst))
+        segment_src, segment_dst = self._moving_group_segment_nodes(group)
+        if not segment_src or not segment_dst:
+            return None
+        return self.state.active_battles.get(self._edge_key(segment_src, segment_dst))
 
     def _group_reached_edge_battle(self, group: MovingGroup, battle: Battle) -> bool:
-        if battle.edge_endpoints and group.src == battle.edge_endpoints[1]:
+        segment_src, _ = self._moving_group_segment_nodes(group)
+        if battle.edge_endpoints and segment_src == battle.edge_endpoints[1]:
             target_progress = 1.0 - battle.edge_position
         else:
             target_progress = battle.edge_position
@@ -871,7 +1104,8 @@ class GameEngine:
         if not units_to_send:
             return None
 
-        speed = self._group_speed(units_to_send)
+        base_speed = self._group_speed(units_to_send)
+        speed = self._movement_speed_for_departure(player_id, src, base_speed)
         group = MovingGroup(
             player_id=player_id,
             team=get_team(player_id),
@@ -901,6 +1135,7 @@ class GameEngine:
             "units": units_to_send,
             "intent": group.intent,
             "speed": round(speed, 3),
+            "base_speed": round(base_speed, 3),
             "arrives": group.arrival_tick,
         }
 
@@ -1101,6 +1336,48 @@ class GameEngine:
                 speeds.append(float(UNIT_STATS[unit_enum]["speed"]))
         return min(speeds) if speeds else 1.0
 
+    def _movement_speed_for_departure(self, player_id: str, src: str, base_speed: float) -> float:
+        if src != self.state.players[player_id].core_node:
+            return base_speed
+        if not player_has_completed_building(self.state, player_id, BuildingType.BOOSTER):
+            return base_speed
+        return max(0.001, float(base_speed) + float(BOOSTER_SPEED_BONUS))
+
+    def _apply_life_building_spawns(self, tick_events: list) -> None:
+        interval = max(1, int(LIFE_SPAWN_INTERVAL_TICKS))
+        unit_type = LIFE_SPAWN_UNIT
+        unit_value = unit_type.value
+        for player_id, player in self.state.players.items():
+            if not player.alive or player.faction != "infected":
+                continue
+            core_node = self.state.nodes[player.core_node]
+            for building in core_node.buildings:
+                if (
+                    building.owner != player_id
+                    or building.building_type != BuildingType.LIFE.value
+                    or building.hp <= 0
+                    or not building.is_complete(self.state.tick)
+                ):
+                    continue
+                if (self.state.tick - int(building.complete_tick)) % interval != 0:
+                    continue
+                core_node.units[unit_value] = int(core_node.units.get(unit_value, 0) or 0) + 1
+                if self.record_replay:
+                    self._merge_visual_units_into_bucket(
+                        core_node.visual_units.setdefault(player_id, {}),
+                        player_id,
+                        {unit_value: 1},
+                    )
+                self._remember_node_entry_side(core_node, player_id, self._default_player_side(player_id))
+                tick_events.append({
+                    "type": "LIFE_SPAWN",
+                    "player": player_id,
+                    "node": player.core_node,
+                    "unit_type": unit_value,
+                    "building_type": BuildingType.LIFE.value,
+                })
+                break
+
     def _movement_segments(self, path: list[str], speed: float) -> list[dict]:
         segments = []
         for index, node_id in enumerate(path):
@@ -1149,6 +1426,14 @@ class GameEngine:
 
     def _set_group_segment(self, group: MovingGroup, segment_index: int, progress: float = 0.0) -> None:
         segments = self._movement_segments(group.path, group.speed)
+        if not segments:
+            raise ValueError(f"moving group path has no segments: {group.path}")
+        if segment_index < 0 or segment_index >= len(segments):
+            raise ValueError(
+                "moving group segment index out of range: "
+                f"segment_index={segment_index}, segments={len(segments)}, path={group.path}, "
+                f"player={group.player_id}, intent={group.intent}"
+            )
         segment = segments[segment_index]
         group.segment_index = segment_index
         group.phase = segment["phase"]
@@ -1193,7 +1478,8 @@ class GameEngine:
         if group.phase == "edge" and segments[next_index]["phase"] == "node_transit":
             event = self._handle_transit_checkpoint(group)
             if event:
-                return event, False
+                keep_moving = bool(event.pop("_keep_moving", False))
+                return event, keep_moving
 
         self._set_group_segment(group, next_index, progress=0.0)
         return None, True
@@ -1244,8 +1530,46 @@ class GameEngine:
                     objective="pvp",
                     include_owner_units=True,
                     include_visitors=True,
+                    include_buildings=True,
                 )
             return None
+
+        if (
+            not node.units
+            and not self._has_hostile_buildings(node, group.player_id)
+            and not self._has_enemy_visitors(node, group.player_id)
+        ):
+            previous_owner = node.owner
+            self._set_node_owner(node, group.player_id)
+            lord_continue = self._continue_lord_group_in_place_after_empty_capture(
+                group,
+                node_id=node_id,
+                reason="empty_enemy_transit_checkpoint",
+            )
+            if not lord_continue:
+                self._merge_units(
+                    node,
+                    group.units,
+                    player_id=group.player_id,
+                    entry_side=self._entry_side(group.player_id, group.src, node_id),
+                    visual_units=group.visual_units,
+                )
+                self._lock_node_player(node, group.player_id)
+            event = {
+                "type": "CAPTURE",
+                "node": node_id,
+                "player": group.player_id,
+                "previous_owner": previous_owner,
+                "empty_enemy": True,
+                "transit_checkpoint": True,
+                "final_dst": group.final_dst or group.dst,
+            }
+            if lord_continue:
+                keep_moving = bool(lord_continue.pop("_keep_moving", False))
+                event["lord_continued"] = lord_continue
+                if keep_moving:
+                    event["_keep_moving"] = True
+            return event
 
         return self._start_node_battle(
             group=group,
@@ -1253,6 +1577,108 @@ class GameEngine:
             objective="pvp",
             include_owner_units=True,
             include_visitors=True,
+            include_buildings=True,
+        )
+
+    def _continue_lord_group_in_place_after_empty_capture(
+        self,
+        group: MovingGroup,
+        node_id: str,
+        reason: str,
+    ) -> Optional[dict]:
+        if (
+            not group.units.get(UnitType.LORD.value)
+            or self.state.baron.allied_lord_owner != group.player_id
+            or not self.state.baron.allied_lord_alive
+        ):
+            return None
+
+        target = self._living_lord_target(group.player_id)
+        if target is None:
+            self._kill_allied_lord(expended=False)
+            return {
+                "type": "LORD_STOPPED",
+                "player": group.player_id,
+                "src": node_id,
+                "reason": "no_living_enemy_core",
+            }
+        if target == node_id:
+            return None
+
+        path = self._find_unrestricted_route(node_id, target)
+        if not path or len(path) < 2:
+            self._kill_allied_lord(expended=False)
+            return {
+                "type": "LORD_STOPPED",
+                "player": group.player_id,
+                "src": node_id,
+                "target": target,
+                "reason": "no_route_to_living_enemy_core",
+            }
+
+        group.src = node_id
+        group.dst = path[1]
+        group.intent = "LORD_PUSH"
+        group.path = list(path)
+        group.segment_index = 0
+        group.segment_node = None
+        group.speed = self._group_speed(group.units)
+        group.final_dst = target
+        group.started_tick = self.state.tick
+        self._set_group_segment(group, 0, progress=0.0)
+        self.state.baron.allied_lord_target = target
+        self.state.baron.allied_lord_path = list(path)
+        self.state.baron.allied_lord_arrival_tick = group.arrival_tick
+        self.state.baron.allied_lord_visual_units = {}
+        self.state.baron.allied_lord_ready_tick = 0
+
+        return {
+            "type": "LORD_CONTINUED",
+            "player": group.player_id,
+            "team": get_team(group.player_id),
+            "src": node_id,
+            "target": target,
+            "path": path,
+            "units": dict(group.units),
+            "speed": round(group.speed, 3),
+            "ready_tick": self.state.tick,
+            "arrives": group.arrival_tick,
+            "reason": reason,
+            "_keep_moving": True,
+        }
+
+    def _continue_lord_group_after_empty_capture(
+        self,
+        group: MovingGroup,
+        node_id: str,
+        reason: str,
+    ) -> Optional[dict]:
+        if (
+            not group.units.get(UnitType.LORD.value)
+            or self.state.baron.allied_lord_owner != group.player_id
+            or not self.state.baron.allied_lord_alive
+        ):
+            return None
+
+        target = self._living_lord_target(group.player_id)
+        if target is None:
+            self._kill_allied_lord(expended=False)
+            return {
+                "type": "LORD_STOPPED",
+                "player": group.player_id,
+                "src": node_id,
+                "reason": "no_living_enemy_core",
+            }
+        if target == node_id:
+            return None
+        return self._create_lord_push_group(
+            player_id=group.player_id,
+            node_id=node_id,
+            target=target,
+            units=dict(group.units),
+            visual_units=group.visual_units,
+            event_type="LORD_CONTINUED",
+            reason=reason,
         )
 
     # ------------------------------------------------------------------
@@ -1263,6 +1689,8 @@ class GameEngine:
         dst = group.dst
         if self._node_key(dst) in self.state.active_battles:
             battle = self.state.active_battles[self._node_key(dst)]
+            if dst == "Baron":
+                self._ensure_delayed_lord_in_baron_battle(battle)
             return self._join_battle(battle, group, reinforced=True)
 
         special_event = self._handle_lord_special_arrival(group)
@@ -1416,6 +1844,7 @@ class GameEngine:
             include_owner_units=True,
             include_visitors=True,
             include_core=True,
+            include_buildings=True,
         )
 
     def _handle_control_point_arrival(self, group: MovingGroup) -> Optional[dict]:
@@ -1460,7 +1889,7 @@ class GameEngine:
                     objective="pvp",
                     include_visitors=True,
                 )
-            node.owner = group.player_id
+            self._set_node_owner(node, group.player_id)
             self._merge_units(
                 node,
                 group.units,
@@ -1478,6 +1907,7 @@ class GameEngine:
                     objective="pvp",
                     include_owner_units=True,
                     include_visitors=True,
+                    include_buildings=True,
                 )
             self._merge_units(
                 node,
@@ -1488,12 +1918,45 @@ class GameEngine:
             self._lock_node_player(node, group.player_id)
             return {"type": "REINFORCE", "node": group.dst, "player": group.player_id}
 
+        if (
+            not node.units
+            and not self._has_hostile_buildings(node, group.player_id)
+            and not self._has_enemy_visitors(node, group.player_id)
+        ):
+            previous_owner = node.owner
+            self._set_node_owner(node, group.player_id)
+            lord_continue = self._continue_lord_group_after_empty_capture(
+                group,
+                node_id=group.dst,
+                reason="empty_enemy_control_point",
+            )
+            if not lord_continue:
+                self._merge_units(
+                    node,
+                    group.units,
+                    player_id=group.player_id,
+                    entry_side=self._entry_side(group.player_id, group.src, group.dst),
+                    visual_units=group.visual_units,
+                )
+                self._lock_node_player(node, group.player_id)
+            event = {
+                "type": "CAPTURE",
+                "node": group.dst,
+                "player": group.player_id,
+                "previous_owner": previous_owner,
+                "empty_enemy": True,
+            }
+            if lord_continue:
+                event["lord_continued"] = lord_continue
+            return event
+
         return self._start_node_battle(
             group=group,
             node_id=group.dst,
             objective="pvp",
             include_owner_units=True,
             include_visitors=True,
+            include_buildings=True,
         )
 
     def _handle_baron_arrival(self, group: MovingGroup) -> Optional[dict]:
@@ -1540,6 +2003,33 @@ class GameEngine:
                 )
                 self._lock_node_player(baron_node, group.player_id)
                 return {"type": "REINFORCE", "node": "Baron", "player": group.player_id}
+            if not baron_node.units and not self._has_enemy_visitors(baron_node, group.player_id):
+                previous_owner = baron_node.owner
+                self._set_node_owner(baron_node, group.player_id)
+                lord_continue = self._continue_lord_group_after_empty_capture(
+                    group,
+                    node_id="Baron",
+                    reason="empty_enemy_baron",
+                )
+                if not lord_continue:
+                    self._merge_units(
+                        baron_node,
+                        group.units,
+                        player_id=group.player_id,
+                        entry_side=self._entry_side(group.player_id, group.src, group.dst),
+                        visual_units=group.visual_units,
+                    )
+                    self._lock_node_player(baron_node, group.player_id)
+                event = {
+                    "type": "CAPTURE",
+                    "node": "Baron",
+                    "player": group.player_id,
+                    "previous_owner": previous_owner,
+                    "empty_enemy": True,
+                }
+                if lord_continue:
+                    event["lord_continued"] = lord_continue
+                return event
             return self._start_node_battle(
                 group=group,
                 node_id="Baron",
@@ -1548,7 +2038,7 @@ class GameEngine:
                 include_visitors=True,
             )
 
-        baron_node.owner = group.player_id
+        self._set_node_owner(baron_node, group.player_id)
         self._merge_units(
             baron_node,
             group.units,
@@ -1639,6 +2129,56 @@ class GameEngine:
                 "player": owner,
                 "src": "Baron",
                 "reason": "no_living_enemy_core",
+            }
+
+        active_battle = self._active_lord_battle(owner)
+        if active_battle:
+            push_units, push_visual_units = self._ready_lord_push_payload(owner)
+            support_units = dict(push_units)
+            support_units.pop(UnitType.LORD.value, None)
+            support_visual_units = dict(push_visual_units)
+            support_visual_units.pop(UnitType.LORD.value, None)
+            if unit_total(support_units) > 0:
+                self._add_player_units_to_battle(
+                    active_battle,
+                    player_id=owner,
+                    units=support_units,
+                    src=active_battle.location_id,
+                    dst=active_battle.location_id,
+                    intent="LORD_PUSH",
+                    visual_units=support_visual_units,
+                )
+
+            route = (
+                self._find_unrestricted_route(active_battle.location_id, target)
+                if active_battle.location_id in self.state.nodes
+                else None
+            )
+            speed = self._group_speed(push_units)
+            active_battle.participant_intents[owner] = "LORD_PUSH"
+            active_battle.participant_final_dsts[owner] = target
+            if route:
+                active_battle.participant_paths[owner] = list(route)
+                baron.allied_lord_path = list(route)
+                baron.allied_lord_arrival_tick = self._estimate_arrival_tick(
+                    self.state.tick,
+                    route,
+                    speed,
+                )
+            baron.allied_lord_ready_tick = 0
+            baron.allied_lord_visual_units = {}
+            return {
+                "type": "LORD_PUSH_STARTED",
+                "player": owner,
+                "team": get_team(owner),
+                "src": active_battle.location_id,
+                "target": target,
+                "path": list(route or active_battle.participant_paths.get(owner, [])),
+                "units": push_units,
+                "speed": round(speed, 3),
+                "ready_tick": self.state.tick,
+                "arrives": baron.allied_lord_arrival_tick,
+                "reason": "spawn_delay_elapsed_in_battle",
             }
 
         push_units, push_visual_units = self._ready_lord_push_payload(owner)
@@ -1855,6 +2395,134 @@ class GameEngine:
             "arrives": group.arrival_tick,
         }
 
+    def _surviving_lord_push_owner(
+        self,
+        battle: Battle,
+        survivors_by_player: dict[str, dict],
+    ) -> Optional[str]:
+        owner = self.state.baron.allied_lord_owner
+        if not owner or not self.state.baron.allied_lord_alive:
+            return None
+        units = survivors_by_player.get(owner, {})
+        if int(units.get(UnitType.LORD.value, 0) or 0) <= 0:
+            return None
+        return owner
+
+    def _remove_surviving_lord_from_resolution(
+        self,
+        battle: Battle,
+        survivors_by_player: dict[str, dict],
+        visual_survivors_by_owner: dict[str, dict],
+    ) -> bool:
+        owner = self._surviving_lord_push_owner(battle, survivors_by_player)
+        if not owner:
+            return False
+
+        units = dict(survivors_by_player.get(owner, {}))
+        lord_count = int(units.get(UnitType.LORD.value, 0) or 0)
+        if lord_count <= 0:
+            return False
+        if lord_count == 1:
+            units.pop(UnitType.LORD.value, None)
+        else:
+            units[UnitType.LORD.value] = lord_count - 1
+
+        survivors_by_player[owner] = units
+        visual_survivors_by_owner[owner] = self._trim_visual_units_to_counts(
+            visual_survivors_by_owner.get(owner, {}),
+            owner,
+            units,
+        )
+        return True
+
+    def _continue_surviving_lord_push(
+        self,
+        battle: Battle,
+        survivors_by_player: dict[str, dict],
+        visual_survivors_by_owner: dict[str, dict],
+        event_type: str = "LORD_CONTINUED",
+        reason: Optional[str] = None,
+    ) -> Optional[dict]:
+        player_id = self._surviving_lord_push_owner(battle, survivors_by_player)
+        if not player_id:
+            return None
+
+        final_dst = battle.participant_final_dsts.get(player_id)
+        living_target = self._living_lord_target(player_id)
+        if living_target:
+            final_dst = living_target
+        if not final_dst:
+            self._kill_allied_lord(expended=False)
+            return {
+                "type": "LORD_STOPPED",
+                "player": player_id,
+                "src": battle.location_id,
+                "reason": "no_living_enemy_core",
+            }
+        if final_dst == battle.location_id:
+            return None
+
+        path = self._find_unrestricted_route(battle.location_id, final_dst)
+        if not path or len(path) < 2:
+            self._kill_allied_lord(expended=False)
+            return {
+                "type": "LORD_STOPPED",
+                "player": player_id,
+                "src": battle.location_id,
+                "target": final_dst,
+                "reason": "no_route_to_living_enemy_core",
+            }
+
+        units = dict(survivors_by_player.get(player_id, {}))
+        visual_units = self._trim_visual_units_to_counts(
+            visual_survivors_by_owner.get(player_id, {}),
+            player_id,
+            units,
+        )
+        survivors_by_player[player_id] = {}
+        visual_survivors_by_owner[player_id] = {}
+
+        speed = self._group_speed(units)
+        group = MovingGroup(
+            player_id=player_id,
+            team=get_team(player_id),
+            units=units,
+            src=battle.location_id,
+            dst=path[1],
+            arrival_tick=self._estimate_arrival_tick(self.state.tick, path, speed),
+            started_tick=self.state.tick,
+            travel_ticks=1.0,
+            progress=0.0,
+            intent="LORD_PUSH",
+            path=path,
+            speed=speed,
+            final_dst=final_dst,
+            visual_units=visual_units,
+        )
+        self._set_group_segment(group, 0, progress=0.0)
+        self.state.moving_groups.append(group)
+        self.state.baron.allied_lord_target = final_dst
+        self.state.baron.allied_lord_path = list(path)
+        self.state.baron.allied_lord_arrival_tick = group.arrival_tick
+        self.state.baron.allied_lord_visual_units = {}
+        self.state.baron.allied_lord_ready_tick = 0
+
+        event = {
+            "type": event_type,
+            "player": player_id,
+            "team": get_team(player_id),
+            "src": battle.location_id,
+            "target": final_dst,
+            "path": path,
+            "units": units,
+            "speed": round(speed, 3),
+            "ready_tick": self.state.tick,
+            "arrives": group.arrival_tick,
+        }
+        if reason:
+            event["reason"] = reason
+        return event
+
     def _start_node_battle(
         self,
         group: MovingGroup,
@@ -1865,6 +2533,7 @@ class GameEngine:
         include_core: bool = False,
         include_neutral: bool = False,
         include_baron: bool = False,
+        include_buildings: bool = False,
         include_allied_lord: bool = False,
         include_visitors: bool = False,
         location_kind: str = "node",
@@ -1877,6 +2546,8 @@ class GameEngine:
         if existing:
             if objective == "neutral":
                 self._aggro_neutrals(existing, group.player_id, node_id)
+            if node_id == "Baron":
+                self._ensure_delayed_lord_in_baron_battle(existing)
             return self._join_battle(existing, group, reinforced=True)
 
         node = self.state.nodes[node_id]
@@ -1933,6 +2604,10 @@ class GameEngine:
             node.visiting_units.clear()
             node.visiting_visual_units.clear()
 
+        if include_buildings:
+            building_owner = core_owner if include_core and core_owner else node.owner
+            self._add_buildings_to_battle(battle, node_id, building_owner)
+
         if include_core and core_owner:
             core_unit = build_core_unit(core_owner, hp=self.state.players[core_owner].core_hp)
             self._assign_visual_ids_to_units(
@@ -1969,17 +2644,7 @@ class GameEngine:
             battle.units.append(baron_unit)
 
         if include_allied_lord and self._delayed_allied_lord_waiting_at_baron():
-            owner = self.state.baron.allied_lord_owner
-            if owner:
-                self._add_player_units_to_battle(
-                    battle,
-                    player_id=owner,
-                    units={UnitType.LORD.value: 1},
-                    src=node_id,
-                    dst=node_id,
-                    intent="LORD_PUSH",
-                    visual_units=self.state.baron.allied_lord_visual_units,
-                )
+            self._ensure_delayed_lord_in_baron_battle(battle)
 
         self._join_battle(battle, group, reinforced=False)
         self.state.active_battles[key] = battle
@@ -1998,15 +2663,19 @@ class GameEngine:
         }
 
     def _join_battle(self, battle: Battle, group: MovingGroup, reinforced: bool) -> dict:
+        if battle.location_id == "Baron":
+            self._ensure_delayed_lord_in_baron_battle(battle)
+        src, dst = self._battle_join_route_for_group(battle, group)
         self._current_group = group
         try:
             self._add_player_units_to_battle(
                 battle,
                 player_id=group.player_id,
                 units=group.units,
-                src=group.src,
-                dst=group.dst,
+                src=src,
+                dst=dst,
                 intent=group.intent,
+                entry_side=getattr(group, "entry_side", None),
                 visual_units=group.visual_units,
             )
         finally:
@@ -2027,6 +2696,13 @@ class GameEngine:
             "intent": group.intent,
         }
 
+    def _battle_join_route_for_group(self, battle: Battle, group: MovingGroup) -> tuple[str, str]:
+        if battle.location_kind in {"edge", "approach"}:
+            segment_src, segment_dst = self._moving_group_segment_nodes(group)
+            if segment_src and segment_dst:
+                return str(segment_src), str(segment_dst)
+        return str(group.src), str(group.dst)
+
     def _add_player_units_to_battle(
         self,
         battle: Battle,
@@ -2042,9 +2718,29 @@ class GameEngine:
             return
         entry_side = entry_side or self._entry_side(player_id, src, dst)
         built_units = build_player_units(units, player_id, entry_side)
+        self._apply_power_building_hp_bonus(player_id, built_units)
         self._apply_allied_lord_hp_to_units(player_id, built_units)
         self._assign_visual_ids_to_units(built_units, player_id, visual_units)
         current_group = getattr(self, "_current_group", None)
+        units_include_lord = int((units or {}).get(UnitType.LORD.value, 0) or 0) > 0
+        existing_lord_push_metadata = (
+            battle.participant_intents.get(player_id) == "LORD_PUSH"
+            and any(
+                unit.team == player_id
+                and unit.unit_type == UnitType.LORD.value
+                and unit.is_alive()
+                for unit in battle.units
+            )
+        )
+        metadata_intent = (
+            "LORD_PUSH"
+            if (
+                units_include_lord
+                and self.state.baron.allied_lord_owner == player_id
+                and self.state.baron.allied_lord_alive
+            )
+            else intent
+        )
         group_progress = (
             getattr(current_group, "progress", None)
             if current_group is not None and getattr(current_group, "player_id", None) == player_id
@@ -2076,14 +2772,114 @@ class GameEngine:
             progress=group_progress,
         )
         battle.units.extend(built_units)
-        battle.participant_routes[player_id] = (src, dst)
-        battle.participant_intents[player_id] = intent
-        battle.participant_entry_sides[player_id] = entry_side
-        if current_group is not None and getattr(current_group, "player_id", None) == player_id:
-            battle.participant_paths[player_id] = list(getattr(current_group, "path", []) or [src, dst])
-            battle.participant_segment_indices[player_id] = getattr(current_group, "segment_index", 0)
-            battle.participant_speeds[player_id] = getattr(current_group, "speed", 1.0)
-            battle.participant_final_dsts[player_id] = getattr(current_group, "final_dst", dst) or dst
+        if not existing_lord_push_metadata:
+            battle.participant_routes[player_id] = (src, dst)
+            battle.participant_intents[player_id] = metadata_intent
+            battle.participant_entry_sides[player_id] = entry_side
+            if current_group is not None and getattr(current_group, "player_id", None) == player_id:
+                battle.participant_paths[player_id] = list(getattr(current_group, "path", []) or [src, dst])
+                battle.participant_segment_indices[player_id] = getattr(current_group, "segment_index", 0)
+                battle.participant_speeds[player_id] = getattr(current_group, "speed", 1.0)
+                battle.participant_final_dsts[player_id] = getattr(current_group, "final_dst", dst) or dst
+
+    def _apply_power_building_hp_bonus(self, player_id: str, units: list) -> None:
+        player = self.state.players.get(player_id)
+        if not player or player.faction != "robots":
+            return
+        if not player_has_completed_building(self.state, player_id, BuildingType.POWER):
+            return
+        for unit in units:
+            if unit.unit_type not in {unit_type.value for unit_type in UnitType}:
+                continue
+            if unit.unit_type == UnitType.LORD.value:
+                continue
+            unit.max_hp += float(POWER_HP_BONUS)
+            unit.hp += float(POWER_HP_BONUS)
+
+    def _add_buildings_to_battle(self, battle: Battle, node_id: str, owner: Optional[str]) -> None:
+        if not owner or owner not in self.state.players:
+            return
+        node = self.state.nodes[node_id]
+        building_units = []
+        visual_units: dict[str, list[str]] = {}
+        for index, building in enumerate(node.buildings):
+            if building.owner != owner or not building.is_complete(self.state.tick) or building.hp <= 0:
+                continue
+            unit = build_building_unit(building.building_type, owner, hp=building.hp)
+            unit.visual_id = f"building:{node_id}:{index}:{building.building_type}"
+            building_units.append(unit)
+            visual_units.setdefault(building.building_type, []).append(unit.visual_id)
+        if not building_units:
+            return
+        place_static_units_2d(building_units, node_id, role="building", owner=owner)
+        battle.units.extend(building_units)
+        battle.participant_entry_sides.setdefault(owner, self._default_player_side(owner))
+
+    def _sync_buildings_after_node_battle(self, battle: Battle) -> None:
+        node = self.state.nodes.get(battle.location_id)
+        if node is None or not node.buildings:
+            return
+        alive_hp: dict[tuple[str, str], float] = {}
+        for unit in battle.units:
+            if unit.unit_type not in {building_type.value for building_type in BuildingType}:
+                continue
+            if unit.is_alive():
+                key = (unit.team, unit.unit_type)
+                alive_hp[key] = max(alive_hp.get(key, 0.0), max(0.0, float(unit.hp)))
+            else:
+                alive_hp.setdefault((unit.team, unit.unit_type), 0.0)
+
+        for building in node.buildings:
+            if not building.is_complete(self.state.tick):
+                continue
+            key = (building.owner, building.building_type)
+            if key not in alive_hp:
+                continue
+            previous_hp = max(0.0, float(building.hp))
+            building.hp = max(0.0, min(float(building.max_hp), alive_hp[key]))
+            if building.hp < previous_hp:
+                building.last_damage_tick = int(self.state.tick)
+
+    def _regenerate_buildings(self, tick_events: list) -> None:
+        regen = max(0.0, float(BUILDING_REGEN_HP_PER_TICK))
+        if regen <= 0:
+            return
+        for node_id, node in self.state.nodes.items():
+            if f"node:{node_id}" in self.state.active_battles:
+                continue
+            if node.owner not in self.state.players:
+                continue
+            for building in node.buildings:
+                if building.owner != node.owner:
+                    continue
+                if building.owner not in self.state.players or not self.state.players[building.owner].alive:
+                    continue
+                if not building.is_complete(self.state.tick):
+                    continue
+                if building.hp >= building.max_hp:
+                    continue
+                last_damage_tick = int(getattr(building, "last_damage_tick", -1))
+                delay = self._building_regen_delay_ticks(building)
+                if last_damage_tick >= 0 and self.state.tick - last_damage_tick < delay:
+                    continue
+                previous_hp = max(0.0, float(building.hp))
+                building.hp = min(float(building.max_hp), previous_hp + regen)
+                if building.hp <= previous_hp:
+                    continue
+                tick_events.append({
+                    "type": "BUILDING_REGEN",
+                    "node": node_id,
+                    "player": building.owner,
+                    "building_type": building.building_type,
+                    "hp_before": round(previous_hp, 3),
+                    "hp_after": round(float(building.hp), 3),
+                })
+
+    def _building_regen_delay_ticks(self, building) -> int:
+        base_delay = max(0, int(BUILDING_REGEN_DELAY_TICKS))
+        if float(getattr(building, "hp", 0.0) or 0.0) <= 0.0:
+            return base_delay * max(1, int(BUILDING_ZERO_HP_REGEN_DELAY_MULTIPLIER))
+        return base_delay
 
     def _battle_placement_route_for_group(
         self,
@@ -2133,6 +2929,31 @@ class GameEngine:
             self.state.baron.allied_lord_hp = max(alive_hp)
         else:
             self._kill_allied_lord(expended=False)
+
+    def _battle_has_living_lord(self, battle: Battle, owner: str) -> bool:
+        return any(
+            unit.team == owner
+            and unit.unit_type == UnitType.LORD.value
+            and unit.is_alive()
+            for unit in battle.units
+        )
+
+    def _ensure_delayed_lord_in_baron_battle(self, battle: Battle) -> bool:
+        if battle.location_id != "Baron" or not self._delayed_allied_lord_waiting_at_baron():
+            return False
+        owner = self.state.baron.allied_lord_owner
+        if not owner or self._battle_has_living_lord(battle, owner):
+            return False
+        self._add_player_units_to_battle(
+            battle,
+            player_id=owner,
+            units={UnitType.LORD.value: 1},
+            src="Baron",
+            dst="Baron",
+            intent="LORD_PUSH",
+            visual_units=self.state.baron.allied_lord_visual_units,
+        )
+        return True
 
     def _refresh_active_lord_target(self, battle: Battle) -> Optional[dict]:
         owner = self.state.baron.allied_lord_owner
@@ -2259,10 +3080,27 @@ class GameEngine:
                 )
                 tick_events.append(resolution)
                 del self.state.active_battles[key]
+                self._start_pending_neutral_reengages(tick_events)
+
+    def _cleanup_non_hostile_battles(self, tick_events: list) -> None:
+        for key, battle in list(self.state.active_battles.items()):
+            if has_hostile_units_2d(battle.units, battle.neutral_aggro_teams):
+                continue
+
+            resolution = (
+                self._finish_edge_battle(battle)
+                if battle.location_kind == "edge"
+                else self._finish_node_battle(battle)
+            )
+            resolution["cleanup"] = "non_hostile"
+            tick_events.append(resolution)
+            del self.state.active_battles[key]
+            self._start_pending_neutral_reengages(tick_events)
 
     def _finish_node_battle(self, battle: Battle) -> dict:
         node = self.state.nodes[battle.location_id]
         self._sync_allied_lord_after_battle(battle)
+        self._sync_buildings_after_node_battle(battle)
         survivors_by_player = count_survivors_by_player(battle.units)
         visual_survivors_by_owner = self._visual_survivors_by_owner(battle.units)
         winner_player = self._strongest_survivor(survivors_by_player)
@@ -2283,21 +3121,18 @@ class GameEngine:
             )
             lord_expended = False
             if not core_alive:
+                if self._remove_surviving_lord_from_resolution(
+                    battle,
+                    survivors_by_player,
+                    visual_survivors_by_owner,
+                ):
+                    lord_expended = True
+                    self._kill_allied_lord(expended=True)
                 survivor_units = (
                     dict(survivors_by_player.get(winner_player, {}))
                     if winner_player
                     else {}
                 )
-                if winner_player and survivor_units.pop(UnitType.LORD.value, 0) > 0:
-                    lord_expended = True
-                    self._kill_allied_lord(expended=True)
-                if winner_player:
-                    survivors_by_player[winner_player] = survivor_units
-                    visual_survivors_by_owner[winner_player] = self._trim_visual_units_to_counts(
-                        visual_survivors_by_owner.get(winner_player, {}),
-                        winner_player,
-                        survivor_units,
-                    )
                 self.state.players[core_owner].alive = False
                 self.state.players[core_owner].core_hp = 0.0
                 self._remove_player_units(core_owner)
@@ -2312,7 +3147,7 @@ class GameEngine:
                     )
                     self._lock_node_player(node, winner_player)
             else:
-                node.owner = core_owner
+                self._set_node_owner(node, core_owner)
                 self._set_node_units(
                     node,
                     core_owner,
@@ -2340,7 +3175,13 @@ class GameEngine:
             )
             node.neutral_aggro_teams = set(battle.neutral_aggro_teams)
             if remaining_neutral_hp > 0 or not winner_player:
-                node.owner = "NEUTRAL"
+                lord_continue = self._continue_surviving_lord_push(
+                    battle,
+                    survivors_by_player,
+                    visual_survivors_by_owner,
+                    reason="neutral_battle_resolved",
+                )
+                self._set_node_owner(node, "NEUTRAL")
                 node.units = {}
                 if self.record_replay:
                     node.visual_units.clear()
@@ -2353,13 +3194,25 @@ class GameEngine:
                         node.visual_units["NEUTRAL"] = neutral_visual_units
                 self._forget_battle_entry_sides(node, battle)
                 node.neutral_hp = max(0, remaining_neutral_hp)
+                extra = {
+                    "result": "REPELLED",
+                    "remaining_neutral_hp": node.neutral_hp,
+                }
+                if lord_continue:
+                    extra["lord_continued"] = lord_continue
                 return self._resolution_event(
                     battle,
                     "NEUTRAL",
-                    {"result": "REPELLED", "remaining_neutral_hp": node.neutral_hp},
+                    extra,
                 )
 
-            node.owner = winner_player
+            lord_continue = self._continue_surviving_lord_push(
+                battle,
+                survivors_by_player,
+                visual_survivors_by_owner,
+                reason="neutral_capture_resolved",
+            )
+            self._set_node_owner(node, winner_player)
             node.neutral_hp = 0
             self._set_node_units(
                 node,
@@ -2369,7 +3222,10 @@ class GameEngine:
                 visual_units=visual_survivors_by_owner.get(winner_player, {}),
             )
             self._lock_node_player(node, winner_player)
-            return self._resolution_event(battle, winner_player, {"result": "CAPTURED"})
+            extra = {"result": "CAPTURED"}
+            if lord_continue:
+                extra["lord_continued"] = lord_continue
+            return self._resolution_event(battle, winner_player, extra)
 
         if battle.objective == "baron":
             baron_alive = any(u.is_alive() and u.unit_type == "BARON" for u in battle.units)
@@ -2382,7 +3238,7 @@ class GameEngine:
                 self.state.baron.controlled_by = winner_player
                 self.state.baron.hp = 0
                 self.state.baron.ticks_remaining = 30
-                node.owner = winner_player
+                self._set_node_owner(node, winner_player)
                 self._set_node_units(
                     node,
                     winner_player,
@@ -2404,7 +3260,7 @@ class GameEngine:
                 )
             else:
                 self.state.baron.hp = max(0, remaining_baron_hp)
-                node.owner = "NEUTRAL"
+                self._set_node_owner(node, "NEUTRAL")
                 node.units = {}
                 if self.record_replay:
                     node.visual_units.clear()
@@ -2425,28 +3281,15 @@ class GameEngine:
 
         if self._is_destroyed_core_node(battle.location_id):
             self._neutralize_destroyed_core_node(battle.location_id)
-            lord_continue = None
+            lord_continue = self._continue_surviving_lord_push(
+                battle,
+                survivors_by_player,
+                visual_survivors_by_owner,
+                event_type="LORD_RETARGETED",
+                reason="dead_core_pvp_resolved",
+            )
             if winner_player:
                 survivor_units = dict(survivors_by_player.get(winner_player, {}))
-                winner_visual_units = visual_survivors_by_owner.get(winner_player, {})
-                lord_count = int(survivor_units.pop(UnitType.LORD.value, 0) or 0)
-                if lord_count > 0 and battle.participant_intents.get(winner_player) == "LORD_PUSH":
-                    lord_visual_units = self._trim_visual_units_to_counts(
-                        winner_visual_units,
-                        winner_player,
-                        {UnitType.LORD.value: 1},
-                    )
-                    lord_continue = self._retarget_lord_push_from_node(
-                        player_id=winner_player,
-                        node_id=battle.location_id,
-                        visual_units=lord_visual_units,
-                        reason="dead_core_pvp_resolved",
-                    )
-                    visual_survivors_by_owner[winner_player] = self._trim_visual_units_to_counts(
-                        winner_visual_units,
-                        winner_player,
-                        survivor_units,
-                    )
                 if unit_total(survivor_units) > 0:
                     self._merge_visiting_units(
                         node,
@@ -2469,18 +3312,26 @@ class GameEngine:
                 },
             )
 
+        lord_continue = self._continue_surviving_lord_push(
+            battle,
+            survivors_by_player,
+            visual_survivors_by_owner,
+        )
         if winner_player:
             if node.owner == "NEUTRAL" and node.neutral_hp > 0:
+                survivor_units = dict(survivors_by_player.get(winner_player, {}))
                 self._merge_visiting_units(
                     node,
                     winner_player,
-                    survivors_by_player.get(winner_player, {}),
+                    survivor_units,
                     entry_side=self._battle_entry_side(battle, winner_player),
                     visual_units=visual_survivors_by_owner.get(winner_player, {}),
                 )
                 self._lock_node_player(node, winner_player)
+                if unit_total(survivor_units) > 0:
+                    self._queue_neutral_reengage(battle.location_id, winner_player)
             else:
-                node.owner = winner_player
+                self._set_node_owner(node, winner_player)
                 self._set_node_units(
                     node,
                     winner_player,
@@ -2489,17 +3340,76 @@ class GameEngine:
                     visual_units=visual_survivors_by_owner.get(winner_player, {}),
                 )
                 self._lock_node_player(node, winner_player)
-            lord_continue = self._continue_lord_push(battle, winner_player)
         else:
             node.units = {}
             node.visual_units.clear()
             self._forget_battle_entry_sides(node, battle)
-            lord_continue = None
 
         extra = {"result": "PVP_RESOLVED"}
         if lord_continue:
             extra["lord_continued"] = lord_continue
         return self._resolution_event(battle, winner_player, extra)
+
+    def _queue_neutral_reengage(self, node_id: str, player_id: str) -> None:
+        item = (node_id, player_id)
+        if item not in self._pending_neutral_reengages:
+            self._pending_neutral_reengages.append(item)
+
+    def _start_pending_neutral_reengages(self, tick_events: list) -> None:
+        if not self._pending_neutral_reengages:
+            return
+        pending = list(self._pending_neutral_reengages)
+        self._pending_neutral_reengages.clear()
+        for node_id, player_id in pending:
+            event = self._start_neutral_reengage_from_visitor(node_id, player_id)
+            if event:
+                tick_events.append(event)
+
+    def _start_neutral_reengage_from_visitor(self, node_id: str, player_id: str) -> Optional[dict]:
+        if self._node_key(node_id) in self.state.active_battles:
+            self._queue_neutral_reengage(node_id, player_id)
+            return None
+        node = self.state.nodes.get(node_id)
+        if not node or node.owner != "NEUTRAL" or node.neutral_hp <= 0:
+            return None
+        units = dict(node.visiting_units.get(player_id, {}))
+        if unit_total(units) <= 0:
+            return None
+
+        entry_side = node.unit_entry_side.get(player_id)
+        visual_units = self._take_node_visual_units(
+            node,
+            player_id,
+            units,
+            visiting=True,
+        )
+        node.visiting_units.pop(player_id, None)
+        node.visiting_visual_units.pop(player_id, None)
+
+        group = MovingGroup(
+            player_id=player_id,
+            team=get_team(player_id),
+            units=units,
+            src=node_id,
+            dst=node_id,
+            arrival_tick=self.state.tick,
+            started_tick=self.state.tick,
+            travel_ticks=0.0,
+            progress=1.0,
+            intent="CAPTURE",
+            path=[node_id],
+            speed=self._group_speed(units),
+            final_dst=node_id,
+            visual_units=visual_units,
+        )
+        setattr(group, "entry_side", entry_side)
+        return self._start_node_battle(
+            group=group,
+            node_id=node_id,
+            objective="neutral",
+            include_neutral=True,
+            include_visitors=True,
+        )
 
     def _finish_edge_battle(self, battle: Battle) -> dict:
         self._sync_allied_lord_after_battle(battle)
@@ -2513,8 +3423,35 @@ class GameEngine:
                 continue
             path = list(battle.participant_paths.get(player_id, [src, dst]))
             speed = float(battle.participant_speeds.get(player_id, self._group_speed(units)))
-            segment_index = int(battle.participant_segment_indices.get(player_id, 0))
+            # Edge battles resolve on the current edge segment. Once survivors
+            # continue, their path is re-anchored at this edge's endpoints, so
+            # the edge segment is always index 1 in the new path.
+            segment_index = 1
             continue_progress = self._edge_progress_for_participant(battle, src, dst)
+            intent = battle.participant_intents.get(player_id, "CAPTURE")
+            final_dst = battle.participant_final_dsts.get(player_id, dst)
+            if (
+                int((units or {}).get(UnitType.LORD.value, 0) or 0) > 0
+                and self.state.baron.allied_lord_owner == player_id
+                and self.state.baron.allied_lord_alive
+            ):
+                intent = "LORD_PUSH"
+                living_target = self._living_lord_target(player_id)
+                if living_target is None:
+                    self._kill_allied_lord(expended=False)
+                    units = dict(units)
+                    units.pop(UnitType.LORD.value, None)
+                    if unit_total(units) <= 0:
+                        continue
+                else:
+                    final_dst = living_target
+                    tail = self._find_unrestricted_route(dst, living_target)
+                    if dst == living_target:
+                        path = [src, dst]
+                    elif tail and len(tail) >= 2:
+                        path = [src, dst] + tail[1:]
+                    self.state.baron.allied_lord_target = living_target
+                    self.state.baron.allied_lord_path = list(path)
             group = MovingGroup(
                 player_id=player_id,
                 team=get_team(player_id),
@@ -2531,13 +3468,13 @@ class GameEngine:
                 started_tick=self.state.tick,
                 travel_ticks=float(TRAVEL_TIME) / speed,
                 progress=continue_progress,
-                intent=battle.participant_intents.get(player_id, "CAPTURE"),
+                intent=intent,
                 path=path,
                 segment_index=segment_index,
                 phase="edge",
                 segment_node=None,
                 speed=speed,
-                final_dst=battle.participant_final_dsts.get(player_id, dst),
+                final_dst=final_dst,
                 visual_units=self._trim_visual_units_to_counts(
                     visual_survivors_by_owner.get(player_id, {}),
                     player_id,
@@ -2545,6 +3482,14 @@ class GameEngine:
                 ),
             )
             self._set_group_segment(group, segment_index, progress=continue_progress)
+            if (
+                group.intent == "LORD_PUSH"
+                and int((group.units or {}).get(UnitType.LORD.value, 0) or 0) > 0
+                and self.state.baron.allied_lord_owner == player_id
+            ):
+                self.state.baron.allied_lord_path = list(group.path)
+                self.state.baron.allied_lord_arrival_tick = group.arrival_tick
+                self.state.baron.allied_lord_ready_tick = 0
             self.state.moving_groups.append(group)
             continuing.append({"player": player_id, "src": src, "dst": dst, "path": path, "units": units})
 
@@ -2609,13 +3554,22 @@ class GameEngine:
     def _remove_player_units(self, player_id: str) -> None:
         state = self.state
 
+        if state.baron.allied_lord_owner == player_id and state.baron.allied_lord_alive:
+            self._kill_allied_lord(expended=False)
+
         for node in state.nodes.values():
             if node.owner == player_id:
-                node.owner = "NEUTRAL"
+                self._set_node_owner(node, "NEUTRAL")
                 node.units = {}
+                node.buildings = []
                 node.visual_units.pop(player_id, None)
                 node.unit_ready_tick.pop(player_id, None)
                 node.unit_entry_side.pop(player_id, None)
+            else:
+                node.buildings = [
+                    building for building in node.buildings
+                    if building.owner != player_id
+                ]
             node.visiting_units.pop(player_id, None)
             node.visiting_visual_units.pop(player_id, None)
             node.unit_ready_tick.pop(player_id, None)
@@ -2651,8 +3605,9 @@ class GameEngine:
             previous_units,
         )
 
-        node.owner = "NEUTRAL"
+        self._set_node_owner(node, "NEUTRAL")
         node.units = {}
+        node.buildings = []
         node.visual_units.pop(previous_owner, None)
         node.unit_ready_tick.pop(node_id, None)
         node.unit_entry_side.pop(node_id, None)
@@ -2699,6 +3654,7 @@ class GameEngine:
         entry_side: Optional[str] = None,
         visual_units: Optional[dict] = None,
     ) -> None:
+        self._keep_only_owner_buildings(node)
         node.units = dict(units or {})
         if self.record_replay:
             node.visual_units.clear()
@@ -2718,6 +3674,7 @@ class GameEngine:
         entry_side: Optional[str] = None,
         visual_units: Optional[dict] = None,
     ) -> None:
+        self._keep_only_owner_buildings(node)
         for unit_type, count in units.items():
             node.units[unit_type] = node.units.get(unit_type, 0) + count
         if self.record_replay and unit_total(units) > 0:
@@ -2744,6 +3701,19 @@ class GameEngine:
             self._merge_visual_units_into_bucket(visual_bucket, player_id, units, visual_units)
         if unit_total(units) > 0:
             self._remember_node_entry_side(node, player_id, entry_side)
+
+    def _set_node_owner(self, node: NodeState, owner: str) -> None:
+        node.owner = owner
+        self._keep_only_owner_buildings(node)
+
+    def _keep_only_owner_buildings(self, node: NodeState) -> None:
+        if node.owner not in self.state.players:
+            node.buildings = []
+            return
+        node.buildings = [
+            building for building in node.buildings
+            if building.owner == node.owner
+        ]
 
     def _remember_node_entry_side(
         self,
@@ -2773,10 +3743,22 @@ class GameEngine:
         player_team = get_team(player_id)
         return any(get_team(visitor_id) != player_team for visitor_id in node.visiting_units)
 
+    def _has_hostile_buildings(self, node: NodeState, player_id: str) -> bool:
+        player_team = get_team(player_id)
+        return any(
+            building.owner in self.state.players
+            and get_team(building.owner) != player_team
+            and building.hp > 0
+            and building.is_complete(self.state.tick)
+            for building in node.buildings
+        )
+
     def _node_owner_is_hostile(self, node: NodeState, player_id: str) -> bool:
-        if node.owner not in self.state.players or not node.units:
+        if node.owner not in self.state.players:
             return False
-        return get_team(node.owner) != get_team(player_id)
+        if get_team(node.owner) == get_team(player_id):
+            return False
+        return bool(node.units) or self._has_hostile_buildings(node, player_id)
 
     def _node_owner_should_join_entry_battle(
         self,
@@ -2784,7 +3766,13 @@ class GameEngine:
         player_id: str,
         has_enemy_visitors: bool,
     ) -> bool:
-        if node.owner not in self.state.players or not node.units:
+        if node.owner not in self.state.players:
+            return False
+        has_owner_defense = bool(node.units) or any(
+            building.owner == node.owner and building.hp > 0 and building.is_complete(self.state.tick)
+            for building in node.buildings
+        )
+        if not has_owner_defense:
             return False
         return has_enemy_visitors or get_team(node.owner) != get_team(player_id)
 
@@ -2796,6 +3784,16 @@ class GameEngine:
         max_range = 0.0
         if node.owner in self.state.players and get_team(node.owner) != player_team:
             max_range = max(max_range, self._max_ranged_range(node.units))
+            for building in node.buildings:
+                if building.owner != node.owner or not building.is_complete(self.state.tick) or building.hp <= 0:
+                    continue
+                try:
+                    stats = BUILDING_STATS[BuildingType(building.building_type)]
+                except ValueError:
+                    continue
+                building_range = float(stats.get("range", 0.0) or 0.0)
+                if building_range > NODE_RANGED_MIN_RANGE:
+                    max_range = max(max_range, building_range)
         for visitor_id, units in (node.visiting_units or {}).items():
             if get_team(visitor_id) != player_team:
                 max_range = max(max_range, self._max_ranged_range(units))
@@ -2820,7 +3818,7 @@ class GameEngine:
         return {
             unit.team
             for unit in battle.units
-            if unit.unit_type not in {"NEUTRAL", "CORE", "BARON"}
+            if unit.unit_type not in {"NEUTRAL", "CORE", "BARON", *(building.value for building in BuildingType)}
         }
 
     def _strongest_survivor(self, survivors_by_player: dict[str, dict]) -> Optional[str]:
@@ -2872,11 +3870,14 @@ class GameEngine:
     def _apply_death_time_damage(self, tick_events: list) -> None:
         if self.state.tick < DEATH_TIME_START_TICK or self.state.tick >= TICK_LIMIT:
             return
-        for player_id, player in list(self.state.players.items()):
-            if not player.alive or player.core_hp <= 0:
-                continue
+        base_damage = death_time_core_damage_for_tick(self.state.tick)
+        if base_damage <= 0:
+            return
+        allocations = self._death_time_damage_allocations(base_damage)
+        for player_id, allocated_damage in allocations.items():
+            player = self.state.players[player_id]
             before = float(player.core_hp)
-            player.core_hp = max(0.0, before - death_time_core_damage_for_tick(self.state.tick))
+            player.core_hp = max(0.0, before - int(allocated_damage))
             damage = before - player.core_hp
             if damage <= 0:
                 continue
@@ -2884,13 +3885,34 @@ class GameEngine:
                 "type": "DEATH_TIME_CORE_DAMAGE",
                 "player": player_id,
                 "team": player.team,
-                "damage": round(damage, 3),
+                "damage": int(damage) if float(damage).is_integer() else round(damage, 3),
+                "allocated_damage": int(allocated_damage),
+                "base_damage": int(base_damage),
                 "core_hp": round(player.core_hp, 3),
             }
             if player.core_hp <= 0:
+                self.state.death_time_final_core_deaths[player.team] = (
+                    self.state.death_time_final_core_deaths.get(player.team, 0) + 1
+                )
                 self._destroy_core_by_environment(player_id)
                 event["core_destroyed"] = True
             tick_events.append(event)
+
+    def _death_time_damage_allocations(self, base_damage: int) -> dict[str, int]:
+        allocations: dict[str, int] = {}
+        for team, player_ids in (("TEAM_A", TEAM_A_PLAYERS), ("TEAM_B", TEAM_B_PLAYERS)):
+            alive = [
+                player_id
+                for player_id in player_ids
+                if self.state.players[player_id].alive and self.state.players[player_id].core_hp > 0
+            ]
+            if not alive:
+                continue
+            team_damage_pool = int(base_damage) * len(player_ids)
+            share, remainder = divmod(team_damage_pool, len(alive))
+            for index, player_id in enumerate(alive):
+                allocations[player_id] = share + (1 if index < remainder else 0)
+        return allocations
 
     def _destroy_core_by_environment(self, player_id: str) -> None:
         player = self.state.players[player_id]
@@ -2950,7 +3972,10 @@ class GameEngine:
             "TEAM_A": self._team_core_hp("TEAM_A"),
             "TEAM_B": self._team_core_hp("TEAM_B"),
         }
-        final_deaths = {"TEAM_A": 0, "TEAM_B": 0}
+        final_deaths = {
+            "TEAM_A": int(self.state.death_time_final_core_deaths.get("TEAM_A", 0) or 0),
+            "TEAM_B": int(self.state.death_time_final_core_deaths.get("TEAM_B", 0) or 0),
+        }
         for player_id, player in list(self.state.players.items()):
             if player.alive and player.core_hp > 0:
                 final_deaths[player.team] += 1
@@ -3250,9 +4275,23 @@ class GameEngine:
         scale = 0.7 if layer == "moving" else 1.0
         return {
             UnitType.RANGER.value: -8.0 * scale,
+            UnitType.BMP.value: -10.0 * scale,
+            "SPECIALIST_2": -10.0 * scale,
             "ARCHER": -8.0 * scale,
+            UnitType.SPITTER.value: -6.0 * scale,
+            UnitType.LASER.value: -9.0 * scale,
+            UnitType.SIEGE_PLATFORM.value: -11.0 * scale,
             UnitType.SKIRMISHER.value: 0.0,
+            UnitType.RAIDER.value: 2.0 * scale,
+            "SPECIALIST_1": 2.0 * scale,
+            UnitType.SWARMLING.value: 1.0 * scale,
+            UnitType.RAVAGER.value: 2.0 * scale,
+            UnitType.DRONE.value: 2.0 * scale,
+            UnitType.GUARDIAN_MECH.value: 1.0 * scale,
             UnitType.VANGUARD.value: 8.0 * scale,
+            UnitType.BRUTE.value: 8.0 * scale,
+            UnitType.BEHEMOTH.value: 9.0 * scale,
+            UnitType.WALKER.value: 8.0 * scale,
             UnitType.LORD.value: 0.0,
             "NEUTRAL": 0.0,
             "BARON": 0.0,
@@ -3266,6 +4305,10 @@ class GameEngine:
             return float(self.state.baron.max_hp)
         if unit_type == "CORE":
             return float(CORE_HP)
+        try:
+            return float(BUILDING_STATS[BuildingType(unit_type)]["hp"])
+        except (KeyError, ValueError):
+            pass
         try:
             enum_value = UnitType.RANGER if unit_type == "ARCHER" else UnitType(unit_type)
             return float(UNIT_STATS[enum_value]["hp"])
@@ -3296,8 +4339,10 @@ class GameEngine:
                     else None
                 ),
                 "neutral_hp": node.neutral_hp,
+                "neutral_max_hp": node.neutral_max_hp,
                 "neutral_income": node.neutral_income,
                 "neutral_aggro_teams": sorted(node.neutral_aggro_teams),
+                "buildings": self._building_snapshots(node),
                 "visiting_units": {
                     pid: dict(units) for pid, units in node.visiting_units.items()
                 },
@@ -3314,6 +4359,7 @@ class GameEngine:
             "alive": player.alive,
             "core_hp": player.core_hp,
             "core_node": player.core_node,
+            "faction": player.faction,
             "nodes": nodes_obs,
             "moving_groups": [
                 self._moving_group_snapshot(group, include_visual=False)
@@ -3322,6 +4368,7 @@ class GameEngine:
             "active_battles": self._battle_snapshots(),
             "baron": {
                 "hp": state.baron.hp,
+                "max_hp": state.baron.max_hp,
                 "controlled_by": state.baron.controlled_by,
                 "allied_lord_owner": state.baron.allied_lord_owner,
                 "allied_lord_hp": round(state.baron.allied_lord_hp, 3),
@@ -3341,6 +4388,7 @@ class GameEngine:
                     "resources": p.resources,
                     "core_hp": round(p.core_hp, 3),
                     "core_type": p.core_type,
+                    "faction": p.faction,
                 }
                 for pid, p in state.players.items()
             },
@@ -3365,7 +4413,9 @@ class GameEngine:
                         else None
                     ),
                     "neutral_hp": node.neutral_hp,
+                    "neutral_max_hp": node.neutral_max_hp,
                     "neutral_aggro_teams": sorted(node.neutral_aggro_teams),
+                    "buildings": self._building_snapshots(node),
                     "visiting_units": {
                         pid: dict(units) for pid, units in node.visiting_units.items()
                     },
@@ -3386,11 +4436,13 @@ class GameEngine:
                     "alive": player.alive,
                     "core_hp": round(player.core_hp, 3),
                     "core_type": player.core_type,
+                    "faction": player.faction,
                 }
                 for pid, player in state.players.items()
             },
             "baron": {
                 "hp": state.baron.hp,
+                "max_hp": state.baron.max_hp,
                 "controlled_by": state.baron.controlled_by,
                 "allied_lord_owner": state.baron.allied_lord_owner,
                 "allied_lord_hp": round(state.baron.allied_lord_hp, 3),
@@ -3465,6 +4517,30 @@ class GameEngine:
             }
         return snapshot
 
+    def _building_snapshots(self, node: NodeState) -> list[dict]:
+        snapshots = []
+        for building in node.buildings:
+            build_ticks = max(1, int(building.complete_tick) - int(building.started_tick))
+            elapsed = max(0, self.state.tick - int(building.started_tick))
+            progress = 1.0 if building.is_complete(self.state.tick) else min(1.0, elapsed / float(build_ticks))
+            snapshots.append({
+                "building_type": building.building_type,
+                "owner": building.owner,
+                "hp": round(max(0.0, float(building.hp)), 3),
+                "max_hp": round(max(0.0, float(building.max_hp)), 3),
+                "started_tick": int(building.started_tick),
+                "complete_tick": int(building.complete_tick),
+                "last_damage_tick": int(getattr(building, "last_damage_tick", -1)),
+                "regen_ready_tick": (
+                    int(getattr(building, "last_damage_tick", -1)) + self._building_regen_delay_ticks(building)
+                    if int(getattr(building, "last_damage_tick", -1)) >= 0
+                    else 0
+                ),
+                "progress": round(progress, 3),
+                "complete": building.is_complete(self.state.tick),
+            })
+        return snapshots
+
     def _moving_group_segment_nodes(self, group: MovingGroup) -> tuple[Optional[str], Optional[str]]:
         if group.phase == "node_transit" and group.segment_node:
             return group.segment_node, group.dst
@@ -3531,10 +4607,31 @@ class GameEngine:
             "RANGER": "R",
             "ARCHER": "R",
             "SKIRMISHER": "S",
+            "RAIDER": "RD",
+            "SPECIALIST_1": "RD",
+            "BMP": "MP",
+            "SPECIALIST_2": "MP",
+            "SWARMLING": "SW",
+            "SPITTER": "SP",
+            "BRUTE": "BR",
+            "RAVAGER": "RV",
+            "BEHEMOTH": "BH",
+            "WALKER": "WK",
+            "LASER": "LS",
+            "DRONE": "DR",
+            "GUARDIAN_MECH": "GM",
+            "SIEGE_PLATFORM": "SG",
             "NEUTRAL": "N",
             "CORE": "C",
             "BARON": "L",
             "LORD": "L",
+            "TURRET": "T",
+            "BOOSTER": "BO",
+            "POWER": "PW",
+            "LIFE": "LF",
+            "ECONOMY_COLLECTOR": "EC",
+            "TECH_1": "T1",
+            "TECH_2": "T2",
         }.get(unit_type, unit_type[:1])
 
     def _alive_unit_index(self, units: list) -> dict[int, tuple[str, str, str]]:

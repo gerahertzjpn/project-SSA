@@ -2,6 +2,71 @@
 
 Date: 2026-06-03
 
+## 2026-06-06 Three-Faction Roster Override
+
+The active interface changed again after construction v0, faction schema,
+faction-unique base buildings, and active human/infected/robot unit rosters were
+added:
+
+```text
+OBSERVATION_VERSION = train_obs_v3.0
+OBSERVATION_DIM = 5188
+ACTION_DIM = 5515
+```
+
+All earlier Sprint 3 checkpoints are stale unless they are explicitly rebuilt
+or migrated through a new compatible initialization path. The next large run
+must use the three-faction interface from
+`docs/CONSTRUCTION_AND_FACTION_SCHEMA.md`.
+
+Current generated matches still default all players to `humans`, but the code
+now supports explicit `player_factions` and faction-gated production for
+`humans`, `infected`, and `robots`. Fog of war remains out of scope.
+
+Building lifecycle override: buildings cannot be manually repaired, replaced, or
+demolished. A destroyed building stays in its slot at 0 HP, is disabled, and
+auto-regenerates after the configured no-damage delay. This keeps construction
+strategic without giving RL a repair/replace micro loop.
+
+Training warning: old Sprint 3 checkpoints are stale. The next serious run
+should train against `train_obs_v3.0` from a fresh compatible initialization.
+
+## 2026-06-04 Pre-Training Update
+
+This document now has one important override before the next Sprint 3 run:
+the current training interface is no longer the original Sprint 3 draft
+interface.
+
+Current interface:
+
+```text
+OBSERVATION_VERSION = train_obs_v1.0
+OBSERVATION_DIM = 1117
+ACTION_DIM = 1356
+```
+
+Current action model is still one categorical policy output, but it now includes
+bounded `PRODUCE_MOVE` composite actions. A policy can issue one production
+command and one movement command in the same world tick without adding unlimited
+micro-control. Movement resolves before production.
+
+Do not warm-start from the accepted Sprint 2 checkpoint for the next large run.
+It was trained before the 2D combat, Lord-route visibility, special Lord
+actions, and `PRODUCE_MOVE` interface changes. Treat it as proof evidence only,
+not as a compatible Sprint 3 initializer.
+
+Before starting any new long run, run:
+
+```powershell
+python scripts/preflight_sprint3_training.py --seed 20260604 --opponent-bot scripted --ally-bot scripted
+python scripts/benchmark_team_training_env_steps.py --duration-sec 30 --workers 16 --seed 20260604 --opponent-bot scripted --ally-bot scripted
+python scripts/crash_test_simulation.py --matches 100 --seed-base 2026060200
+python -m pytest -q
+```
+
+The next real training command should be fresh-policy Sprint 3 training unless
+we first create a new compatible `train_obs_v1.0` warm-start checkpoint.
+
 Sprint 2 status: closed for the single-agent proof. Accepted checkpoint:
 `training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt`.
 That checkpoint is proof evidence only before the `train_obs_v0.6` interface
@@ -34,8 +99,8 @@ matching the simulator's node-exit, edge, node-transit, and node-enter phases.
 - If game rules change during Sprint 3, current Sprint 3 checkpoints become
   stale until revalidated.
 - Observation interface changes also invalidate checkpoints with mismatched
-  metadata or input layers. Current interface is `train_obs_v0.6` /
-  `OBSERVATION_DIM=1080`.
+  metadata or input layers. Current interface is `train_obs_v1.0` /
+  `OBSERVATION_DIM=1117` / `ACTION_DIM=1356`.
 - Core nodes expose a stable `core_type` feature. The current only type is
   `standard`; this is intentionally present before future factions are added.
 - Policy observations/actions are left-side normalized: B-side players are
@@ -153,9 +218,9 @@ Add or adapt a team trainer.
 Smoke commands should look like this:
 
 ```powershell
-python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_smoke --overwrite --updates 2 --workers 4 --rollout-steps 128 --eval-episodes 20 --eval-interval 1 --checkpoint-interval 1 --ally-init training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt --opponent-bot scripted --seed 20260603 --torch-threads 1
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_smoke_v1 --overwrite --updates 2 --workers 4 --rollout-steps 128 --eval-episodes 20 --eval-interval 1 --checkpoint-interval 1 --opponent-bot scripted --seed 20260604 --torch-threads 1 --random-baseline-episodes 20
 
-python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_smoke --resume training_runs/sprint3_team_smoke/checkpoints/latest.pt --updates 1 --workers 4 --rollout-steps 128 --eval-episodes 20 --eval-interval 1 --checkpoint-interval 1 --opponent-bot scripted --seed 20260603 --torch-threads 1
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_smoke_v1 --resume training_runs/sprint3_team_smoke_v1/checkpoints/latest.pt --updates 1 --workers 4 --rollout-steps 128 --eval-episodes 20 --eval-interval 1 --checkpoint-interval 1 --opponent-bot scripted --seed 20260604 --torch-threads 1 --random-baseline-episodes 0
 ```
 
 Smoke pass criteria:
@@ -186,13 +251,14 @@ This eval does not need to pass quality gates yet. It only proves measurement.
 
 ### 4:00-6:30 - First Real Team Run
 
-Start with the cleaner version: trained `A1,A2,A3` vs scripted `B1,B2,B3`,
-all three initialized from the accepted Sprint 2 checkpoint.
+Start with the cleaner version: trained `A1,A2,A3` vs scripted `B1,B2,B3`.
+Use fresh policies under `train_obs_v1.0` unless a new compatible warm-start
+checkpoint has been created and explicitly accepted.
 
 Command target:
 
 ```powershell
-python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_scripted_warm_v1 --overwrite --updates 300 --workers 16 --rollout-steps 512 --eval-episodes 50 --eval-interval 10 --checkpoint-interval 10 --ally-init training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt --opponent-bot scripted --seed 20260603 --torch-threads 1
+python scripts/train_team_policy.py --run-dir training_runs/sprint3_team_scripted_fresh_v1 --overwrite --updates 300 --workers 16 --rollout-steps 512 --eval-episodes 50 --eval-interval 10 --checkpoint-interval 10 --opponent-bot scripted --ally-bot scripted --seed 20260604 --torch-threads 1 --random-baseline-episodes 100
 ```
 
 During the run, watch every 10 updates:
@@ -225,7 +291,7 @@ Evaluate promising checkpoints. Do not pick by train reward.
 Command target:
 
 ```powershell
-python scripts/evaluate_team_checkpoints.py --run-dir training_runs/sprint3_team_scripted_warm_v1 --updates 50,100,150,200,250,300 --modes argmax,stochastic --seed-bases 20260603,20270603,20280603,20290603 --episodes-per-seed 50 --workers 16 --torch-threads 1 --opponent-bot scripted --include-random-legal --include-scripted-control --out-dir training_runs/evals/sprint3_team_scripted_warm_v1_sweep
+python scripts/evaluate_team_checkpoints.py --run-dir training_runs/sprint3_team_scripted_fresh_v1 --updates 50,100,150,200,250,300 --modes argmax,stochastic --seed-bases 20260604,20270604,20280604,20290604 --episodes-per-seed 50 --workers 16 --torch-threads 1 --opponent-bot scripted --include-random-legal --include-scripted-control --out-dir training_runs/evals/sprint3_team_scripted_fresh_v1_sweep
 ```
 
 Pick candidates only if they are stable by seed block. One lucky aggregate is
@@ -293,5 +359,6 @@ git status --short
 python -m pytest -q
 ```
 
-If that is clean, start the preflight eval and then implement the multi-agent
-training skeleton.
+Then run the no-learning preflight and team throughput benchmark listed in the
+2026-06-04 update above. Only after those pass should the new fresh-policy
+Sprint 3 training command be launched.

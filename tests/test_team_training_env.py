@@ -1,8 +1,18 @@
+import json
+
 import numpy as np
 import pytest
+import torch
 
+from src.bots.scripted_bot import ScriptedBot
+from src.core.engine import GameEngine
+from src.core.state import get_team, make_initial_state
+from src.training.env import ExternalActionBot
+from src.bots.policy_bot import PolicyBot, _POLICY_STATE_CACHE
 from src.core.constants import PLAYER_IDS, TICK_LIMIT
 from src.training import ACTION_DIM, OBSERVATION_DIM, TeamTrainingEnv, TeamTrainingEnvConfig
+from src.training.policy import MaskedActorCritic
+from src.training.spaces import OBSERVATION_VERSION
 
 
 def test_team_training_env_reset_step_and_masks_are_valid():
@@ -106,3 +116,111 @@ def test_team_training_env_short_max_tick_limit_is_truncated():
 def test_team_training_env_requires_same_team_controlled_players():
     with pytest.raises(ValueError):
         TeamTrainingEnvConfig(controlled_players=("A1", "B1"))
+
+
+def test_team_training_env_can_use_frozen_policy_opponent(tmp_path):
+    _POLICY_STATE_CACHE.clear()
+    policy = MaskedActorCritic(hidden_size=32)
+    checkpoint_path = tmp_path / "team_policy.pt"
+    torch.save(
+        {
+            "policy_states": {
+                "A1": policy.state_dict(),
+                "A2": policy.state_dict(),
+                "A3": policy.state_dict(),
+            },
+            "config": {"hidden_size": 32},
+            "observation_version": OBSERVATION_VERSION,
+            "observation_dim": OBSERVATION_DIM,
+            "action_dim": ACTION_DIM,
+            "update": 1,
+            "total_steps": 1,
+        },
+        checkpoint_path,
+    )
+    env = TeamTrainingEnv(TeamTrainingEnvConfig(
+        seed=17,
+        opponent_bot="policy",
+        opponent_policy_checkpoint=str(checkpoint_path),
+        opponent_policy_deterministic=True,
+        max_ticks=30,
+    ))
+
+    observations, info = env.reset()
+    result = env.step({"A1": 0, "A2": 0, "A3": 0})
+
+    assert info["controlled_players"] == ["A1", "A2", "A3"]
+    assert result.info["tick"] == 1
+    assert isinstance(env.engine.bots["B1"], PolicyBot)
+    assert isinstance(env.engine.bots["B2"], PolicyBot)
+    assert isinstance(env.engine.bots["B3"], PolicyBot)
+    assert set(observations) == {"A1", "A2", "A3"}
+
+
+def test_team_training_env_policy_opponent_requires_checkpoint():
+    with pytest.raises(ValueError, match="opponent_policy_checkpoint"):
+        TeamTrainingEnv(TeamTrainingEnvConfig(
+            seed=18,
+            opponent_bot="policy",
+            max_ticks=30,
+        )).reset()
+
+
+class ObservationHungryExternalBot(ExternalActionBot):
+    requires_observation = True
+
+    def __init__(self, player_id: str, team: str):
+        super().__init__(player_id, team)
+        self.non_empty_observations = 0
+
+    def act(self, obs: dict):
+        if obs:
+            self.non_empty_observations += 1
+        return super().act(obs)
+
+
+class ObservationSkippingExternalBot(ExternalActionBot):
+    requires_observation = False
+
+    def __init__(self, player_id: str, team: str):
+        super().__init__(player_id, team)
+        self.non_empty_observations = 0
+
+    def act(self, obs: dict):
+        if obs:
+            self.non_empty_observations += 1
+        return super().act(obs)
+
+
+def make_external_team_engine(external_bot_cls):
+    state = make_initial_state(seed=20260605)
+    bots = {}
+    for player_id in PLAYER_IDS:
+        team = get_team(player_id)
+        bots[player_id] = (
+            external_bot_cls(player_id, team)
+            if team == "TEAM_A"
+            else ScriptedBot(player_id, team)
+        )
+    return GameEngine(state, bots, record_trace=False, record_replay=False)
+
+
+def test_external_action_observation_skip_preserves_engine_state():
+    hungry = make_external_team_engine(ObservationHungryExternalBot)
+    skipping = make_external_team_engine(ObservationSkippingExternalBot)
+
+    for _ in range(20):
+        hungry.tick()
+        skipping.tick()
+
+    assert sum(
+        bot.non_empty_observations
+        for bot in hungry.bots.values()
+        if isinstance(bot, ObservationHungryExternalBot)
+    ) > 0
+    assert sum(
+        bot.non_empty_observations
+        for bot in skipping.bots.values()
+        if isinstance(bot, ObservationSkippingExternalBot)
+    ) == 0
+    assert json.dumps(hungry.observe("A1"), sort_keys=True) == json.dumps(skipping.observe("A1"), sort_keys=True)

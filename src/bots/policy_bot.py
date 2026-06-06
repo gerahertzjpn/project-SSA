@@ -48,13 +48,13 @@ class PolicyBot(Bot):
     def act(self, obs: dict) -> Action:
         mask = legal_action_mask(obs, self.player_id)
         encoded = encode_observation(obs, self.player_id)
-        step = self.policy.act(
+        action = self.policy.act_action_only(
             encoded,
             mask,
             deterministic=self.deterministic,
             device=self.device,
         )
-        return decode_action(step.action, obs, self.player_id)
+        return decode_action(action, obs, self.player_id, assume_legal=True)
 
 
 def cached_policy_state(path: str | Path, player_id: str) -> tuple[dict, int]:

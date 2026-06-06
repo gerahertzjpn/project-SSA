@@ -3,8 +3,8 @@ sys.path.insert(0, "c:/project-SSA")
 
 from src.core.constants import ActionType, UnitType, PLAYER_IDS, TRAVEL_TIME
 from src.core.engine import Action, GameEngine
-from src.core.combat import ATTACKER_SIDE, CENTER_SIDE, DEFENDER_SIDE
-from src.core.state import MovingGroup, make_initial_state
+from src.core.combat import ATTACKER_SIDE, CENTER_SIDE, DEFENDER_SIDE, build_player_units
+from src.core.state import Battle, MovingGroup, make_initial_state
 from src.core.units import UNIT_STATS
 
 
@@ -33,6 +33,126 @@ def run_ticks(engine, count):
 
 DIRECT_MOVE_TICKS = TRAVEL_TIME * 2 + 1
 EDGE_COLLISION_TICKS = TRAVEL_TIME + 1
+
+
+def test_empty_enemy_control_point_captures_without_single_side_battle():
+    state = make_initial_state(seed=91)
+    state.nodes["CP1"].owner = "B1"
+    state.nodes["CP1"].neutral_hp = 0
+    state.nodes["CP1"].units = {}
+
+    engine = GameEngine(state, {}, record_trace=False, record_replay=False)
+    group = MovingGroup(
+        player_id="A1",
+        team="TEAM_A",
+        units={UnitType.VANGUARD.value: 2},
+        src="A1",
+        dst="CP1",
+        arrival_tick=state.tick,
+        intent="CAPTURE",
+        path=["A1", "CP1"],
+        final_dst="CP1",
+    )
+
+    event = engine._handle_control_point_arrival(group)
+
+    assert event["type"] == "CAPTURE"
+    assert event["empty_enemy"] is True
+    assert state.nodes["CP1"].owner == "A1"
+    assert state.nodes["CP1"].units == {UnitType.VANGUARD.value: 2}
+    assert state.active_battles == {}
+
+
+def test_empty_enemy_baron_captures_without_single_side_battle():
+    state = make_initial_state(seed=92)
+    state.baron.hp = 0
+    state.nodes["Baron"].owner = "A1"
+    state.nodes["Baron"].units = {}
+
+    engine = GameEngine(state, {}, record_trace=False, record_replay=False)
+    group = MovingGroup(
+        player_id="B2",
+        team="TEAM_B",
+        units={UnitType.SKIRMISHER.value: 2},
+        src="CP6",
+        dst="Baron",
+        arrival_tick=state.tick,
+        intent="CAPTURE",
+        path=["CP6", "Baron"],
+        final_dst="Baron",
+    )
+
+    event = engine._handle_baron_arrival(group)
+
+    assert event["type"] == "CAPTURE"
+    assert event["empty_enemy"] is True
+    assert state.nodes["Baron"].owner == "B2"
+    assert state.nodes["Baron"].units == {UnitType.SKIRMISHER.value: 2}
+    assert state.active_battles == {}
+
+
+def test_empty_enemy_transit_checkpoint_captures_and_stops_without_battle():
+    state = make_initial_state(seed=93)
+    state.baron.hp = 0
+    state.nodes["Baron"].owner = "A1"
+    state.nodes["Baron"].units = {}
+
+    engine = GameEngine(state, {}, record_trace=False, record_replay=False)
+    group = MovingGroup(
+        player_id="B2",
+        team="TEAM_B",
+        units={UnitType.VANGUARD.value: 1},
+        src="CP5",
+        dst="Baron",
+        arrival_tick=state.tick + 3,
+        started_tick=state.tick,
+        travel_ticks=1.0,
+        progress=1.0,
+        intent="CAPTURE",
+        path=["B2", "CP5", "Baron", "CP2", "A1"],
+        segment_index=3,
+        phase="edge",
+        final_dst="A1",
+    )
+
+    event = engine._handle_transit_checkpoint(group)
+
+    assert event["type"] == "CAPTURE"
+    assert event["transit_checkpoint"] is True
+    assert event["final_dst"] == "A1"
+    assert state.nodes["Baron"].owner == "B2"
+    assert state.nodes["Baron"].units == {UnitType.VANGUARD.value: 1}
+    assert state.active_battles == {}
+
+
+def test_non_hostile_battle_is_cleaned_after_player_units_removed():
+    state = make_initial_state(seed=94)
+    state.nodes["CP1"].owner = "B1"
+    state.nodes["CP1"].neutral_hp = 0
+    battle = Battle(
+        battle_id="node:CP1",
+        location_kind="node",
+        location_id="CP1",
+        units=[
+            *build_player_units({UnitType.VANGUARD.value: 2}, "A1", ATTACKER_SIDE),
+            *build_player_units({UnitType.VANGUARD.value: 2}, "B1", DEFENDER_SIDE),
+        ],
+        started_at_tick=state.tick,
+        last_tick=state.tick,
+        objective="pvp",
+    )
+    state.active_battles[battle.battle_id] = battle
+    engine = GameEngine(state, {}, record_trace=False, record_replay=False)
+
+    engine._remove_player_units("B1")
+    events = []
+    engine._cleanup_non_hostile_battles(events)
+
+    assert state.active_battles == {}
+    assert state.nodes["CP1"].owner == "A1"
+    assert state.nodes["CP1"].units == {UnitType.VANGUARD.value: 2}
+    assert events[-1]["type"] == "BATTLE_RESOLVED"
+    assert events[-1]["cleanup"] == "non_hostile"
 
 
 def test_battle_is_persistent_not_instant():
@@ -275,6 +395,40 @@ def test_neutrals_passive_until_attacked():
     assert state.nodes["CP1"].neutral_hp == 5
     assert "A1" in state.nodes["CP1"].visiting_units
     assert not state.active_battles
+
+
+def test_pvp_winner_on_guarded_neutral_reengages_remaining_guards():
+    state = make_initial_state(seed=40)
+    state.nodes["CP3"].owner = "NEUTRAL"
+    state.nodes["CP3"].neutral_hp = 1
+    engine = GameEngine(state, make_bots(), record_trace=False, record_replay=False)
+
+    battle = Battle(
+        battle_id="node:CP3",
+        location_kind="node",
+        location_id="CP3",
+        units=[],
+        started_at_tick=state.tick,
+        last_tick=state.tick,
+        objective="pvp",
+    )
+    battle.units.extend(build_player_units({UnitType.RANGER.value: 1}, "A1", "attacker"))
+    battle.participant_entry_sides["A1"] = "attacker"
+    state.active_battles[battle.battle_id] = battle
+
+    events = []
+    engine._tick_active_battles(events)
+
+    assert events[0]["type"] == "BATTLE_RESOLVED"
+    assert events[0]["result"] == "PVP_RESOLVED"
+    assert events[-1]["type"] == "BATTLE_STARTED"
+    assert events[-1]["battle_id"] == "node:CP3"
+    assert events[-1]["objective"] == "neutral"
+    neutral_battle = state.active_battles["node:CP3"]
+    assert neutral_battle.objective == "neutral"
+    assert any(unit.team == "A1" and unit.unit_type == UnitType.RANGER.value for unit in neutral_battle.units)
+    assert any(unit.team == "NEUTRAL" and unit.unit_type == "NEUTRAL" for unit in neutral_battle.units)
+    assert state.nodes["CP3"].visiting_units == {}
 
 
 def test_transit_group_joins_active_node_battle_instead_of_passing_through():
@@ -648,3 +802,57 @@ def test_replay_has_node_and_edge_battle_events():
         if event.get("type") in {"BATTLE_STARTED", "BATTLE_TICK", "BATTLE_REINFORCEMENT"}
     ]
     assert "node_battle" in event_types
+
+
+def test_lord_collides_with_enemy_transiting_same_lane():
+    state = make_initial_state(seed=78)
+    state.baron.allied_lord_owner = "A1"
+    state.baron.allied_lord_alive = True
+    state.baron.allied_lord_hp = 150.0
+
+    lord_group = MovingGroup(
+        player_id="A1",
+        team="TEAM_A",
+        units={UnitType.LORD.value: 1},
+        src="Baron",
+        dst="CP5",
+        arrival_tick=state.tick + 3,
+        started_tick=state.tick,
+        travel_ticks=2.0,
+        progress=0.6,
+        intent="LORD_PUSH",
+        path=["Baron", "CP5", "B3"],
+        segment_index=1,
+        phase="edge",
+        speed=1.0,
+        final_dst="B3",
+    )
+    blue_transit = MovingGroup(
+        player_id="B1",
+        team="TEAM_B",
+        units={UnitType.VANGUARD.value: 2},
+        src="CP5",
+        dst="Baron",
+        arrival_tick=state.tick + 2,
+        started_tick=state.tick,
+        travel_ticks=1.0,
+        progress=0.5,
+        intent="CAPTURE",
+        path=["B1", "CP5", "Baron"],
+        segment_index=2,
+        phase="node_transit",
+        segment_node="CP5",
+        speed=1.5,
+        final_dst="Baron",
+    )
+    engine = GameEngine(state, {}, record_trace=False, record_replay=False)
+    events = []
+
+    remaining = engine._create_edge_collisions([lord_group, blue_transit], events)
+
+    assert remaining == []
+    assert "edge:Baron|CP5" in state.active_battles
+    battle = state.active_battles["edge:Baron|CP5"]
+    assert {unit.team for unit in battle.units} == {"A1", "B1"}
+    assert battle.location_id == "Baron|CP5"
+    assert events[0]["battle_type"] == "edge_battle"

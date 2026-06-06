@@ -7,7 +7,7 @@ import numpy as np
 
 from src.bots.base import Bot
 from src.bots.random_bot import RandomBot
-from src.bots.scripted_bot import ScriptedBot
+from src.bots.scripted_bot import ScriptedBot, make_scripted_bot_variant
 from src.core.constants import PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS, TICK_LIMIT, ActionType
 from src.core.engine import Action, GameEngine
 from src.core.state import make_initial_state
@@ -38,6 +38,8 @@ class TrainingEnvConfig:
 
 
 class ExternalActionBot(Bot):
+    requires_observation = False
+
     def __init__(self, player_id: str, team: str):
         super().__init__(player_id, team)
         self.next_action = Action(ActionType.HOLD)
@@ -136,6 +138,7 @@ class TrainingEnv:
             "destination": action.destination,
             "intent": action.intent,
             "unit_type": action.unit_type.value if action.unit_type else None,
+            "building_type": action.building_type.value if action.building_type else None,
         }
         info["action_index"] = int(action_index)
         return encode_observation(obs_after, self.config.controlled_player), reward, terminal, truncated, info
@@ -172,8 +175,9 @@ class TrainingEnv:
     def _make_baseline_bot(self, player_id: str, team: str, bot_type: str, index: int) -> Bot:
         if bot_type == "random":
             return RandomBot(player_id, team, seed=self.config.seed * 10 + index)
-        if bot_type == "scripted":
-            return ScriptedBot(player_id, team)
+        scripted_variant = make_scripted_bot_variant(bot_type, player_id, team)
+        if scripted_variant is not None:
+            return scripted_variant
         raise ValueError(f"Unknown baseline bot type: {bot_type}")
 
     def _terminal_reward(self) -> float:

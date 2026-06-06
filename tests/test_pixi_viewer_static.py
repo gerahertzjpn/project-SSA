@@ -48,11 +48,24 @@ def test_pixi_viewer_uses_pixi_application_and_replay_positions():
     assert "HANDOFF_BACKFILL_DISTANCE" in script
     assert "applyVisualHandoffBackfill" in script
     assert "shouldBackfillHandoff" in script
+    assert "shouldBridgeTransientStationed" in script
+    assert "isBattleAtNode" in script
+    assert "deathUnitIds" in script
     assert "smoothstep" in script
     assert "replayInterpolated" in script
     assert "drawLordShape" in script
     assert "isDeadCoreNode" in script
     assert "drawCoreHpBar" in script
+    assert "drawNeutralCountLabel" in script
+    assert "drawNeutralLordHpBar" in script
+    assert "neutralMaxValue" in script
+    assert "neutralLordHpValue" in script
+    assert "hideSpriteHpBar" in script
+    assert "drawNodeBuildings" in script
+    assert "drawBuildingMarker" in script
+    assert "BUILDING_LABELS" in script
+    assert "RAIDER" in script
+    assert "BMP" in script
     assert "coreHpValue" in script
     assert "deadCoreBg" in script
     assert "deadUnit" in script
@@ -76,6 +89,7 @@ def test_pixi_viewer_layout_is_fullscreen_hud():
     assert ".top-hud" in styles
     assert ".generate-status" in styles
     assert ".mini-field" in styles
+    assert 'input[type="number"]::-webkit-inner-spin-button' in styles
     assert ".bottom-hud" in styles
     assert ".inspect-panel" in styles
     assert "position: absolute" in styles

@@ -19,10 +19,10 @@ clashes) where the agent only needs the outcome, not the per-tick position data.
 from typing import Optional
 
 from .constants import (
-    UnitType, CORE_HP, CORE_ATK, CORE_ATTACK_RATE, BARON_HP, BARON_ATK, BARON_ATTACK_RATE,
+    UnitType, BuildingType, BUILDING_STATS, CORE_HP, CORE_ATK, CORE_ATTACK_RATE, BARON_HP, BARON_ATK, BARON_ATTACK_RATE,
     BARON_SECONDARY_ATK, BARON_SECONDARY_ATTACK_RATE, MAX_COMBAT_TICKS,
     TEAM_A_PLAYERS, TEAM_B_PLAYERS, TRAVEL_TIME, LORD_ATTACK_RANGE, CORE_ATTACK_RANGE,
-    NEUTRAL_GUARD_HP,
+    NEUTRAL_GUARD_ATK, NEUTRAL_GUARD_HP,
 )
 from .units import UnitInstance, UNIT_STATS
 
@@ -53,10 +53,25 @@ RANGE_EPSILON = 1e-5
 _SLOT_ORDER = {
     UnitType.VANGUARD.value: 0,
     UnitType.LORD.value: 0,
+    UnitType.BRUTE.value: 0,
+    UnitType.BEHEMOTH.value: 0,
+    UnitType.WALKER.value: 0,
     UnitType.SKIRMISHER.value: 1,
+    UnitType.RAIDER.value: 1,
+    UnitType.SWARMLING.value: 1,
+    UnitType.RAVAGER.value: 1,
+    UnitType.DRONE.value: 1,
+    UnitType.GUARDIAN_MECH.value: 1,
     UnitType.RANGER.value: 2,
+    UnitType.BMP.value: 2,
+    UnitType.SPITTER.value: 2,
+    UnitType.LASER.value: 2,
+    UnitType.SIEGE_PLATFORM.value: 2,
     "ARCHER": 2,
 }
+
+BUILDING_UNIT_TYPES = {building_type.value for building_type in BuildingType}
+STATIC_OBJECT_UNIT_TYPES = {"NEUTRAL", "CORE", "BARON", *BUILDING_UNIT_TYPES}
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +155,7 @@ def _unit_type_enum(unit_type_val: str) -> UnitType:
 def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
     if neutral_hp <= 0:
         return []
-    total_atk = float(neutral_hp * 2)
+    total_atk = float(neutral_hp * NEUTRAL_GUARD_ATK)
     per_unit_atk = total_atk / neutral_hp
     return [
         UnitInstance(
@@ -196,6 +211,25 @@ def _build_baron(baron_hp: int) -> UnitInstance:
     )
 
 
+def _build_building(building_type: BuildingType | str, owner: str, hp: float | None = None) -> UnitInstance:
+    building_type = building_type if isinstance(building_type, BuildingType) else BuildingType(str(building_type))
+    stats = BUILDING_STATS[building_type]
+    current_hp = float(stats["hp"] if hp is None else hp)
+    return UnitInstance(
+        uid=_new_uid(),
+        unit_type=building_type.value,
+        team=owner,
+        hp=current_hp,
+        max_hp=float(stats["hp"]),
+        atk=float(stats.get("atk", 0.0) or 0.0),
+        range=float(stats.get("range", 0.0) or 0.0),
+        speed=0.0,
+        pos=CENTER_SIDE,
+        attack_rate=int(stats.get("attack_rate", 1) or 1),
+        move_direction=0.0,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Targeting and snapshot
 # ---------------------------------------------------------------------------
@@ -223,7 +257,9 @@ def _find_target(
 
 
 def _uses_melee_engagement(unit: UnitInstance) -> bool:
-    return unit.unit_type in (UnitType.VANGUARD.value, UnitType.SKIRMISHER.value)
+    if unit.unit_type in STATIC_OBJECT_UNIT_TYPES:
+        return False
+    return float(unit.range) <= 1.25
 
 
 def _target_range_limit(
@@ -501,7 +537,7 @@ def _attack_damage_sequence(unit: UnitInstance) -> list[float]:
 
 
 def _can_attack_after_moving(unit: UnitInstance) -> bool:
-    return unit.unit_type in (UnitType.VANGUARD.value, UnitType.SKIRMISHER.value, UnitType.RANGER.value)
+    return unit.unit_type not in STATIC_OBJECT_UNIT_TYPES and unit.unit_type != UnitType.LORD.value
 
 
 def _queue_attack(
@@ -565,6 +601,10 @@ def build_core_unit(player_id: str, hp: float | None = None) -> UnitInstance:
 
 def build_baron_unit(baron_hp: int) -> UnitInstance:
     return _build_baron(baron_hp)
+
+
+def build_building_unit(building_type: BuildingType | str, owner: str, hp: float | None = None) -> UnitInstance:
+    return _build_building(building_type, owner, hp=hp)
 
 
 def tick_battle_units(
@@ -695,7 +735,7 @@ def has_hostile_units(
 def count_survivors_by_player(units: list[UnitInstance]) -> dict[str, dict]:
     result: dict[str, dict[str, int]] = {}
     for unit in units:
-        if not unit.is_alive() or unit.unit_type in ("NEUTRAL", "CORE", "BARON"):
+        if not unit.is_alive() or unit.unit_type in STATIC_OBJECT_UNIT_TYPES:
             continue
         result.setdefault(unit.team, {})
         result[unit.team][unit.unit_type] = result[unit.team].get(unit.unit_type, 0) + 1
@@ -705,7 +745,7 @@ def count_survivors_by_player(units: list[UnitInstance]) -> dict[str, dict]:
 def alive_player_ids(units: list[UnitInstance]) -> list[str]:
     players = []
     for unit in units:
-        if unit.is_alive() and unit.unit_type not in ("NEUTRAL", "CORE", "BARON"):
+        if unit.is_alive() and unit.unit_type not in STATIC_OBJECT_UNIT_TYPES:
             if unit.team not in players:
                 players.append(unit.team)
     return players
@@ -848,7 +888,7 @@ def _run_combat(
 def _count_survivors(units: list[UnitInstance]) -> dict:
     result: dict[str, int] = {}
     for u in units:
-        if u.unit_type in ("NEUTRAL", "CORE", "BARON"):
+        if u.unit_type in STATIC_OBJECT_UNIT_TYPES:
             continue
         result[u.unit_type] = result.get(u.unit_type, 0) + 1
     return result

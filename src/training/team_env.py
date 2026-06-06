@@ -7,7 +7,7 @@ import numpy as np
 
 from src.bots.base import Bot
 from src.bots.random_bot import RandomBot
-from src.bots.scripted_bot import ScriptedBot
+from src.bots.scripted_bot import ScriptedBot, make_scripted_bot_variant
 from src.core.constants import PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS, TICK_LIMIT, ActionType
 from src.core.engine import Action, GameEngine
 from src.core.state import make_initial_state
@@ -31,6 +31,8 @@ class TeamTrainingEnvConfig:
     seed: int = 42
     opponent_bot: str = "scripted"
     ally_bot: str = "scripted"
+    opponent_policy_checkpoint: Optional[str] = None
+    opponent_policy_deterministic: bool = False
     max_ticks: int = TICK_LIMIT
     record_replay: bool = False
     record_trace: bool = False
@@ -78,6 +80,10 @@ class TeamTrainingEnv:
         self._previous_team_score = 0.0
         self._previous_player_scores: dict[str, float] = {}
         self._done = False
+        self._cache_tick: Optional[int] = None
+        self._raw_cache: Optional[dict[str, dict]] = None
+        self._mask_cache: Optional[dict[str, np.ndarray]] = None
+        self._obs_cache: Optional[dict[str, np.ndarray]] = None
 
     @property
     def controlled_players(self) -> tuple[str, ...]:
@@ -102,6 +108,7 @@ class TeamTrainingEnv:
             record_replay=self.config.record_replay,
         )
         self._done = False
+        self._invalidate_cache()
         observations = self.observations()
         raw = self.raw_observations()
         self._previous_team_score = self._team_score(next(iter(raw.values())))
@@ -109,7 +116,8 @@ class TeamTrainingEnv:
             player_id: self._player_score(obs)
             for player_id, obs in raw.items()
         }
-        return observations, self._info(raw, reward_components={}, invalid_actions={})
+        masks = self.action_masks()
+        return observations, self._info(raw, reward_components={}, invalid_actions={}, masks=masks)
 
     def step(self, actions: dict[str, int]) -> TeamStepResult:
         if self.engine is None:
@@ -125,30 +133,36 @@ class TeamTrainingEnv:
             )
 
         raw_before = self.raw_observations()
+        masks_before = self.action_masks()
         decoded_actions: dict[str, Action] = {}
         invalid_actions: dict[str, int] = {}
         for player_id in self.controlled_players:
             action_index = int(actions.get(player_id, 0))
-            mask = self.action_mask(player_id, raw_before.get(player_id))
-            invalid_actions[player_id] = int(
+            mask = masks_before[player_id]
+            is_invalid = (
                 action_index < 0 or action_index >= ACTION_DIM or not bool(mask[action_index])
             )
+            invalid_actions[player_id] = int(is_invalid)
             decoded = (
-                decode_action(action_index, raw_before[player_id], player_id)
-                if self._player_alive(player_id)
+                decode_action(action_index, raw_before[player_id], player_id, assume_legal=True)
+                if self._player_alive(player_id) and not is_invalid
                 else Action(ActionType.HOLD)
             )
             decoded_actions[player_id] = decoded
             self.control_bots[player_id].set_action(decoded)
 
         self.engine.tick()
+        self._invalidate_cache()
         if self.state.winner is None and self.state.tick >= TICK_LIMIT:
             self.engine.run()
+            self._invalidate_cache()
         elif self.state.tick >= self.config.max_ticks and self.state.winner is None:
             self.state.winner = "DRAW"
             self.state.winner_type = "truncated"
+            self._invalidate_cache()
 
         raw_after = self.raw_observations()
+        masks_after = self.action_masks()
         team_score = self._team_score(next(iter(raw_after.values())))
         team_shaping = (team_score - self._previous_team_score) * self.config.shaping_weight
         self._previous_team_score = team_score
@@ -177,7 +191,12 @@ class TeamTrainingEnv:
                 "team_score": float(team_score),
             }
 
-        info = self._info(raw_after, reward_components=reward_components, invalid_actions=invalid_actions)
+        info = self._info(
+            raw_after,
+            reward_components=reward_components,
+            invalid_actions=invalid_actions,
+            masks=masks_after,
+        )
         info["decoded_actions"] = {
             player_id: {
                 "type": action.action_type.value,
@@ -185,6 +204,7 @@ class TeamTrainingEnv:
                 "destination": action.destination,
                 "intent": action.intent,
                 "unit_type": action.unit_type.value if action.unit_type else None,
+                "building_type": action.building_type.value if action.building_type else None,
             }
             for player_id, action in decoded_actions.items()
         }
@@ -193,7 +213,7 @@ class TeamTrainingEnv:
             for player_id in self.controlled_players
         }
         return TeamStepResult(
-            observations=self.observations_from_raw(raw_after),
+            observations=self.observations(),
             rewards=rewards,
             terminal=terminal,
             truncated=truncated,
@@ -203,13 +223,24 @@ class TeamTrainingEnv:
     def raw_observations(self) -> dict[str, dict]:
         if self.engine is None:
             raise RuntimeError("TeamTrainingEnv.reset() must be called before observation")
-        return {
+        tick = int(self.state.tick)
+        if self._cache_tick == tick and self._raw_cache is not None:
+            return self._raw_cache
+        self._cache_tick = tick
+        self._raw_cache = {
             player_id: self.engine.observe(player_id)
             for player_id in self.controlled_players
         }
+        self._mask_cache = None
+        self._obs_cache = None
+        return self._raw_cache
 
     def observations(self) -> dict[str, np.ndarray]:
-        return self.observations_from_raw(self.raw_observations())
+        tick = int(self.state.tick)
+        if self._cache_tick == tick and self._obs_cache is not None:
+            return self._obs_cache
+        self._obs_cache = self.observations_from_raw(self.raw_observations())
+        return self._obs_cache
 
     def observations_from_raw(self, raw_observations: dict[str, dict]) -> dict[str, np.ndarray]:
         return {
@@ -218,11 +249,15 @@ class TeamTrainingEnv:
         }
 
     def action_masks(self) -> dict[str, np.ndarray]:
+        tick = int(self.state.tick)
+        if self._cache_tick == tick and self._mask_cache is not None:
+            return self._mask_cache
         raw = self.raw_observations()
-        return {
+        self._mask_cache = {
             player_id: self.action_mask(player_id, raw[player_id])
             for player_id in self.controlled_players
         }
+        return self._mask_cache
 
     def action_mask(self, player_id: str, raw_observation: Optional[dict] = None) -> np.ndarray:
         if not self._player_alive(player_id):
@@ -257,8 +292,21 @@ class TeamTrainingEnv:
     def _make_baseline_bot(self, player_id: str, team: str, bot_type: str, index: int) -> Bot:
         if bot_type == "random":
             return RandomBot(player_id, team, seed=self.config.seed * 10 + index)
-        if bot_type == "scripted":
-            return ScriptedBot(player_id, team)
+        scripted_variant = make_scripted_bot_variant(bot_type, player_id, team)
+        if scripted_variant is not None:
+            return scripted_variant
+        if bot_type == "policy":
+            if not self.config.opponent_policy_checkpoint:
+                raise ValueError("opponent_policy_checkpoint is required when opponent_bot='policy'")
+            from src.bots.policy_bot import PolicyBot
+
+            return PolicyBot(
+                player_id,
+                team,
+                checkpoint_path=self.config.opponent_policy_checkpoint,
+                deterministic=self.config.opponent_policy_deterministic,
+                device="cpu",
+            )
         raise ValueError(f"Unknown baseline bot type: {bot_type}")
 
     def _player_alive(self, player_id: str) -> bool:
@@ -313,9 +361,16 @@ class TeamTrainingEnv:
             )
         return resources + own_units
 
-    def _info(self, raw_observations: dict[str, dict], reward_components: dict, invalid_actions: dict[str, int]) -> dict:
+    def _info(
+        self,
+        raw_observations: dict[str, dict],
+        reward_components: dict,
+        invalid_actions: dict[str, int],
+        masks: Optional[dict[str, np.ndarray]] = None,
+    ) -> dict:
+        masks = masks or self.action_masks()
         legal_actions = {
-            player_id: int(self.action_mask(player_id, raw_observations[player_id]).sum())
+            player_id: int(masks[player_id].sum())
             for player_id in self.controlled_players
         }
         return {
@@ -329,3 +384,9 @@ class TeamTrainingEnv:
             "reward_components": reward_components,
             "observation_version": OBSERVATION_VERSION,
         }
+
+    def _invalidate_cache(self) -> None:
+        self._cache_tick = None
+        self._raw_cache = None
+        self._mask_cache = None
+        self._obs_cache = None

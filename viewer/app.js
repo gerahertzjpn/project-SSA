@@ -68,13 +68,16 @@ const CP_NODES = new Set(["CP1", "CP2", "CP3", "CP4", "CP5", "CP6"]);
 const NODE_IDS = Object.keys(NODE_POSITIONS);
 const PLAYER_IDS = ["A1", "A2", "A3", "B1", "B2", "B3"];
 const CORE_MAX_HP = 50;
-const LORD_MAX_HP = 120;
+const LORD_MAX_HP = 200;
 const DEFAULT_UI_RUNS = 20;
 const DEFAULT_GENERATION_SEED = 20260602;
 const API_PORTS = [8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009, 8010];
 const FALLBACK_MODELS = [
   { id: "random", label: "Random bot" },
   { id: "scripted", label: "Scripted bot" },
+  { id: "scripted_core", label: "Scripted core-focus" },
+  { id: "scripted_core_raider", label: "Scripted core Raider" },
+  { id: "scripted_core_bmp", label: "Scripted core BMP" },
 ];
 const SAMPLE_REPLAYS = Array.from({ length: DEFAULT_UI_RUNS }, (_, index) => ({
   label: `replay_${index}.json`,
@@ -2856,6 +2859,20 @@ function unitCode(type) {
   return {
     VANGUARD: "V",
     SKIRMISHER: "S",
+    RAIDER: "RD",
+    SPECIALIST_1: "RD",
+    BMP: "MP",
+    SPECIALIST_2: "MP",
+    SWARMLING: "SW",
+    SPITTER: "SP",
+    BRUTE: "BR",
+    RAVAGER: "RV",
+    BEHEMOTH: "BH",
+    WALKER: "WK",
+    LASER: "LS",
+    DRONE: "DR",
+    GUARDIAN_MECH: "GM",
+    SIEGE_PLATFORM: "SG",
     RANGER: "R",
     ARCHER: "R",
     CORE: "C",
@@ -2877,6 +2894,20 @@ function displayUnitCode(type) {
     L: "L",
     VANGUARD: "V",
     SKIRMISHER: "S",
+    RAIDER: "RD",
+    SPECIALIST_1: "RD",
+    BMP: "MP",
+    SPECIALIST_2: "MP",
+    SWARMLING: "SW",
+    SPITTER: "SP",
+    BRUTE: "BR",
+    RAVAGER: "RV",
+    BEHEMOTH: "BH",
+    WALKER: "WK",
+    LASER: "LS",
+    DRONE: "DR",
+    GUARDIAN_MECH: "GM",
+    SIEGE_PLATFORM: "SG",
     RANGER: "R",
     ARCHER: "R",
     CORE: "C",
@@ -2891,6 +2922,18 @@ function defaultUnitRange(type) {
     V: 1,
     S: 1.5,
     R: 3,
+    RD: 2.2,
+    MP: 3.5,
+    SW: 0.8,
+    SP: 2.5,
+    BR: 1,
+    RV: 2.1,
+    BH: 2.2,
+    WK: 1.2,
+    LS: 4,
+    DR: 1.1,
+    GM: 2.8,
+    SG: 4.6,
     A: 3,
     C: 12,
     N: 4,

@@ -364,8 +364,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--torch-threads", type=int, default=1)
     parser.add_argument("--controlled-player", default="A1")
-    parser.add_argument("--ally-bot", choices=["scripted", "random"], default="scripted")
-    parser.add_argument("--opponent-bot", choices=["scripted", "random"], default="scripted")
+    scripted_choices = ["scripted", "scripted_core", "scripted_core_raider", "scripted_core_bmp"]
+    parser.add_argument("--ally-bot", choices=scripted_choices + ["random"], default="scripted")
+    parser.add_argument("--opponent-bot", choices=scripted_choices + ["random"], default="scripted")
     parser.add_argument("--max-ticks", type=int, default=300)
     parser.add_argument("--include-random-legal", action="store_true")
     parser.add_argument("--skip-scripted-control", action="store_true")

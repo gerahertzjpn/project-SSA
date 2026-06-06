@@ -5,6 +5,11 @@ Date: 2026-06-04
 This is the current status after switching active battles to `combat_2d_map`
 and before the next large training run.
 
+2026-06-06 note: this document is now partially historical. The active training
+interface after the three-faction roster patch is `train_obs_v3.0` with
+`OBSERVATION_DIM=5188` and `ACTION_DIM=5515`. See
+`docs/CONSTRUCTION_AND_FACTION_SCHEMA.md` for the latest crash/balance snapshot.
+
 ## Current Balance Snapshot
 
 Latest balance snapshot after `LORD_ATTACK_RANGE=4.6`,
@@ -220,29 +225,34 @@ approximately 3.90M steps/hour
 
 The next engine-side realism change must keep the `>=3M steps/hour` gate.
 
-### 6. Factorized Produce + Move
+### 6. Produce + Move Action Model
 
-Current action model is a single categorical action:
+Current action model is still a single categorical policy output, but the
+categorical space now contains bounded composite actions:
 
 ```text
-either HOLD
-or PRODUCE one unit type
-or MOVE one source/destination/intent
+HOLD
+PRODUCE one unit type
+MOVE one source/destination/intent
+PRODUCE_MOVE one unit type + one source/destination/intent
 ```
 
 The source node is already part of the action space, so the older concern that
 the policy cannot choose the group/source has been addressed.
 
-If we factorize into separate heads:
+This removes the artificial "produce or move" serialization without giving the
+policy unlimited commands per tick. Movement resolves before production, so a
+newly produced unit remains at the core and cannot join the same-tick move.
+
+Potential future alternative: true factorized heads:
 
 ```text
 produce_head: none / Vanguard / Ranger / Skirmisher
 move_head: hold-move / source -> destination with intent
 ```
 
-the raw output size stays similar (`4 + 313` logits instead of `316` logits),
-but the environment applies two decisions per tick. Training complexity should
-not explode, but code complexity rises:
+This could reduce the number of logits compared with the current composite
+categorical space, but code complexity rises:
 
 - two masks instead of one;
 - two log-probs/entropies in PPO;
@@ -255,6 +265,10 @@ Expected effect:
 - implementation complexity: medium;
 - learning behavior: likely cleaner economy+movement coordination, but it must
   be tested.
+
+Decision for the next Sprint 3 run: keep the current `train_obs_v1.0` composite
+categorical interface. Do not move to true multi-head/factorized PPO unless
+there is a separate explicit design decision and a fresh throughput check.
 
 ### 7. Viewer State
 

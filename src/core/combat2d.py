@@ -11,7 +11,7 @@ from __future__ import annotations
 from math import hypot
 from typing import Optional
 
-from .constants import TEAM_A_PLAYERS, TEAM_B_PLAYERS, UnitType
+from .constants import TEAM_A_PLAYERS, TEAM_B_PLAYERS, BuildingType, UnitType
 from .map2d import (
     MOVEMENT_MAP_UNITS_PER_TICK,
     NODE_LAYOUT,
@@ -34,10 +34,23 @@ FOCUS_ASSIST_RANGE_MAP = 18.0
 _SLOT_ORDER = {
     UnitType.VANGUARD.value: 0,
     UnitType.LORD.value: 0,
+    UnitType.BRUTE.value: 0,
+    UnitType.BEHEMOTH.value: 0,
+    UnitType.WALKER.value: 0,
     UnitType.SKIRMISHER.value: 1,
+    UnitType.RAIDER.value: 1,
+    UnitType.SWARMLING.value: 1,
+    UnitType.RAVAGER.value: 1,
+    UnitType.DRONE.value: 1,
+    UnitType.GUARDIAN_MECH.value: 1,
     UnitType.RANGER.value: 2,
+    UnitType.BMP.value: 2,
+    UnitType.SPITTER.value: 2,
+    UnitType.LASER.value: 2,
+    UnitType.SIEGE_PLATFORM.value: 2,
     "ARCHER": 2,
 }
+_BUILDING_UNIT_TYPES = {building_type.value for building_type in BuildingType}
 
 
 def place_player_units_2d(
@@ -109,6 +122,7 @@ def tick_battle_units_2d(
             neutral_aggro_teams=neutral_aggro_teams,
             in_range_only=True,
             positions=start_positions,
+            battle=battle,
         )
         is not None
     }
@@ -134,6 +148,7 @@ def tick_battle_units_2d(
             neutral_aggro_teams=neutral_aggro_teams,
             in_range_only=False,
             positions=start_positions,
+            battle=battle,
         )
         if target is None:
             continue
@@ -400,6 +415,7 @@ def _next_lord_position(
         in_range_only=True,
         positions=positions,
         ahead_only=True,
+        battle=battle,
     )
     if attackable is None:
         attackable = _find_target(
@@ -409,6 +425,7 @@ def _next_lord_position(
             in_range_only=True,
             positions=positions,
             ahead_only=False,
+            battle=battle,
         )
     if attackable is not None:
         return ux, uy
@@ -419,6 +436,7 @@ def _next_lord_position(
         in_range_only=False,
         positions=positions,
         ahead_only=True,
+        battle=battle,
     )
     if contact is not None and _distance((ux, uy), _unit_point(contact, positions)) <= LORD_CONTACT_RANGE_MAP:
         return ux, uy
@@ -494,6 +512,7 @@ def _find_attack_target(
             in_range_only=True,
             pending=pending,
             positions=positions,
+            battle=battle,
         )
 
     target = _find_target(
@@ -504,6 +523,7 @@ def _find_attack_target(
         pending=pending,
         positions=positions,
         ahead_only=True,
+        battle=battle,
     )
     if target is not None:
         return target
@@ -515,6 +535,7 @@ def _find_attack_target(
         pending=pending,
         positions=positions,
         ahead_only=False,
+        battle=battle,
     )
 
 
@@ -526,6 +547,7 @@ def _find_target(
     pending: Optional[dict[int, float]] = None,
     positions: Optional[dict[int, Point2D]] = None,
     ahead_only: bool = False,
+    battle=None,
 ) -> Optional[UnitInstance]:
     focus = None
     focus_key = (float("inf"), float("inf"), 0)
@@ -535,9 +557,12 @@ def _find_target(
     for other in units:
         if not _is_hostile(unit, other, neutral_aggro_teams):
             continue
+        structure_role = _core_structure_target_role(unit, other, units, battle)
+        if structure_role == "blocked":
+            continue
         if ahead_only and not _is_ahead(unit, other, positions):
             continue
-        if other.hp - pending.get(other.uid, 0.0) <= 0:
+        if structure_role != "active_building" and other.hp - pending.get(other.uid, 0.0) <= 0:
             continue
         pending_damage = pending.get(other.uid, 0.0)
         distance = _distance(_unit_point(unit, positions), _unit_point(other, positions))
@@ -557,6 +582,72 @@ def _find_target(
             best_key = key
             best = other
     return focus or best
+
+
+def _core_structure_target_role(
+    unit: UnitInstance,
+    other: UnitInstance,
+    units: list[UnitInstance],
+    battle,
+) -> str:
+    """Gate core assaults through base building slots.
+
+    Higher slot index is the exposed layer: slot 2, then slot 1, then core. The
+    current layer stays targetable even after pending lethal damage, so one
+    combat tick cannot spill over into the next building or the core.
+    """
+
+    core_owner = _battle_core_owner(battle)
+    if not core_owner:
+        return "normal"
+    if unit.team == core_owner or _combat_side(unit.team) == _combat_side(core_owner):
+        return "normal"
+    if other.team != core_owner:
+        return "normal"
+
+    live_buildings = [
+        candidate
+        for candidate in units
+        if (
+            candidate.team == core_owner
+            and _is_building_unit(candidate)
+            and candidate.hp > 0
+        )
+    ]
+    active_building = max(live_buildings, key=_building_slot_index) if live_buildings else None
+
+    if _is_building_unit(other):
+        if active_building is not None and other.uid == active_building.uid:
+            return "active_building"
+        return "blocked"
+    if other.unit_type == "CORE" and active_building is not None:
+        return "blocked"
+    return "normal"
+
+
+def _battle_core_owner(battle) -> Optional[str]:
+    if battle is None:
+        return None
+    objective = battle.get("objective") if isinstance(battle, dict) else getattr(battle, "objective", None)
+    if objective != "core":
+        return None
+    core_owner = battle.get("core_owner") if isinstance(battle, dict) else getattr(battle, "core_owner", None)
+    return str(core_owner) if core_owner else None
+
+
+def _is_building_unit(unit: UnitInstance) -> bool:
+    return unit.unit_type in _BUILDING_UNIT_TYPES
+
+
+def _building_slot_index(unit: UnitInstance) -> int:
+    visual_id = str(getattr(unit, "visual_id", "") or "")
+    parts = visual_id.split(":")
+    if len(parts) >= 4 and parts[0] == "building":
+        try:
+            return int(parts[2])
+        except ValueError:
+            return 0
+    return 0
 
 
 def _queue_attack(

@@ -100,8 +100,9 @@ def main() -> None:
     parser.add_argument("--checkpoint", default="training_runs/sprint2_scripted_clean_v1/checkpoints/checkpoint_update_100.pt")
     parser.add_argument("--controlled-player", default="A1")
     parser.add_argument("--mode", choices=["argmax", "stochastic"], default="argmax")
-    parser.add_argument("--ally-bot", choices=["scripted", "random"], default="scripted")
-    parser.add_argument("--opponent-bot", choices=["scripted", "random"], default="scripted")
+    scripted_choices = ["scripted", "scripted_core", "scripted_core_raider", "scripted_core_bmp"]
+    parser.add_argument("--ally-bot", choices=scripted_choices + ["random"], default="scripted")
+    parser.add_argument("--opponent-bot", choices=scripted_choices + ["random"], default="scripted")
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 

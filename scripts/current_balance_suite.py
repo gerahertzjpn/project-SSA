@@ -28,6 +28,9 @@ from src.core.constants import (
     BARON_HP,
     BARON_SECONDARY_ATTACK_RATE,
     BARON_SECONDARY_ATK,
+    BUILDING_BUILD_TICKS,
+    BUILDING_COST,
+    BUILDING_STATS,
     CORE_ATK,
     CORE_ATTACK_RATE,
     CORE_ATTACK_RANGE,
@@ -37,6 +40,7 @@ from src.core.constants import (
     RESOURCE_PER_TICK,
     TICK_LIMIT,
     UNIT_COST,
+    BuildingType,
     UnitType,
     death_time_core_damage_for_tick,
 )
@@ -51,12 +55,8 @@ from src.core.runner import current_code_commit, rules_meta, run_match
 from src.core.units import NEUTRAL_UNIT_BASE, UNIT_STATS
 
 
-UNIT_TYPES = (UnitType.VANGUARD, UnitType.RANGER, UnitType.SKIRMISHER)
-UNIT_LABELS = {
-    UnitType.VANGUARD: "VANGUARD",
-    UnitType.RANGER: "RANGER",
-    UnitType.SKIRMISHER: "SKIRMISHER",
-}
+UNIT_TYPES = tuple(UNIT_COST.keys())
+UNIT_LABELS = {unit: unit.value for unit in UNIT_TYPES}
 
 
 def main() -> None:
@@ -108,6 +108,14 @@ def constants_snapshot() -> dict[str, Any]:
         "economy": {
             "resource_per_tick": RESOURCE_PER_TICK,
             "unit_cost": {UNIT_LABELS[unit]: int(UNIT_COST[unit]) for unit in UNIT_TYPES},
+        },
+        "buildings": {
+            building.value: {
+                **dict(BUILDING_STATS[building]),
+                "cost": int(BUILDING_COST[building]),
+                "build_ticks": int(BUILDING_BUILD_TICKS[building]),
+            }
+            for building in BuildingType
         },
         "units": {
             UNIT_LABELS[unit]: {
@@ -171,6 +179,22 @@ def budget_curve(budgets: list[int]) -> list[dict[str, Any]]:
             (UnitType.SKIRMISHER, UnitType.RANGER),
             (UnitType.VANGUARD, UnitType.SKIRMISHER),
             (UnitType.RANGER, UnitType.VANGUARD),
+            (UnitType.RAIDER, UnitType.VANGUARD),
+            (UnitType.RAIDER, UnitType.RANGER),
+            (UnitType.RAIDER, UnitType.SKIRMISHER),
+            (UnitType.BMP, UnitType.RAIDER),
+            (UnitType.BMP, UnitType.RANGER),
+            (UnitType.BMP, UnitType.SKIRMISHER),
+            (UnitType.BMP, UnitType.VANGUARD),
+            (UnitType.RAVAGER, UnitType.VANGUARD),
+            (UnitType.RAVAGER, UnitType.RANGER),
+            (UnitType.RAVAGER, UnitType.SKIRMISHER),
+            (UnitType.BEHEMOTH, UnitType.RAIDER),
+            (UnitType.BEHEMOTH, UnitType.BMP),
+            (UnitType.GUARDIAN_MECH, UnitType.BRUTE),
+            (UnitType.GUARDIAN_MECH, UnitType.RAVAGER),
+            (UnitType.SIEGE_PLATFORM, UnitType.BEHEMOTH),
+            (UnitType.SIEGE_PLATFORM, UnitType.BMP),
         ):
             rows.append(run_unit_duel(left, right, budget))
     return rows
@@ -279,13 +303,25 @@ def assign_formation(units, base_x: float, base_y: float, forward_x: float) -> N
     front_offsets = {
         UnitType.VANGUARD.value: 20.0,
         UnitType.SKIRMISHER.value: 11.0,
+        UnitType.RAIDER.value: 13.0,
         UnitType.RANGER.value: 2.0,
+        UnitType.BMP.value: 0.0,
         "NEUTRAL": 0.0,
         "BARON": 0.0,
         "CORE": 0.0,
         UnitType.LORD.value: 22.0,
     }
-    for unit_type in (UnitType.VANGUARD.value, UnitType.SKIRMISHER.value, UnitType.RANGER.value, UnitType.LORD.value, "BARON", "CORE", "NEUTRAL"):
+    for unit_type in (
+        UnitType.VANGUARD.value,
+        UnitType.SKIRMISHER.value,
+        UnitType.RAIDER.value,
+        UnitType.RANGER.value,
+        UnitType.BMP.value,
+        UnitType.LORD.value,
+        "BARON",
+        "CORE",
+        "NEUTRAL",
+    ):
         bucket = by_type.get(unit_type, [])
         visible_rows = min(9, max(1, len(bucket)))
         for local_index, unit in enumerate(bucket):
@@ -409,6 +445,12 @@ def print_human_report(report: dict[str, Any]) -> None:
     )
     print(f"core: hp={constants['core']['hp']} atk={constants['core']['atk']} range_map={constants['core']['range_map_units']}")
     print(f"economy: +{constants['economy']['resource_per_tick']} resources/tick")
+    print("buildings:")
+    for building, data in constants["buildings"].items():
+        print(
+            f"  {building}: hp={data['hp']} atk={data['atk']} range={data['range']} "
+            f"income={data['income']} cost={data['cost']} build={data['build_ticks']}t"
+        )
 
     print("\nunit duel budget 50:")
     for row in report["micro"]["equal_budget_50"]:

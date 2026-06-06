@@ -220,8 +220,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260603)
     parser.add_argument("--mode", choices=["argmax", "stochastic"], default="argmax")
     parser.add_argument("--controlled-players", type=parse_players, default=("A1", "A2", "A3"))
-    parser.add_argument("--opponent-bot", choices=["scripted", "random"], default="scripted")
-    parser.add_argument("--ally-bot", choices=["scripted", "random"], default="scripted")
+    scripted_choices = ["scripted", "scripted_core", "scripted_core_raider", "scripted_core_bmp"]
+    parser.add_argument("--opponent-bot", choices=scripted_choices + ["random"], default="scripted")
+    parser.add_argument("--ally-bot", choices=scripted_choices + ["random"], default="scripted")
     parser.add_argument("--max-ticks", type=int, default=300)
     parser.add_argument("--out", default=None)
     return parser.parse_args()

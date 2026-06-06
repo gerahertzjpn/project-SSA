@@ -67,6 +67,7 @@ def test_save_replay_writes_versioned_schema(tmp_path):
     assert replay["meta"]["total_ticks"] == state.tick
     assert "unit_ready_tick" in replay["ticks"][-1]["nodes"]["CP1"]
     assert "unit_entry_side" in replay["ticks"][-1]["nodes"]["CP1"]
+    assert "neutral_max_hp" in replay["ticks"][-1]["nodes"]["CP1"]
     assert "visual_units" in replay["ticks"][-1]
     assert replay["ticks"][-1]["visual_units"]
 

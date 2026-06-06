@@ -71,12 +71,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-interval", type=int, default=1)
     parser.add_argument("--seed", type=int, default=20260603)
     parser.add_argument("--controlled-players", type=parse_players, default=("A1", "A2", "A3"))
-    parser.add_argument("--opponent-bot", choices=["scripted", "random"], default="scripted")
-    parser.add_argument("--ally-bot", choices=["scripted", "random"], default="scripted")
+    scripted_choices = ["scripted", "scripted_core", "scripted_core_raider", "scripted_core_bmp"]
+    parser.add_argument("--opponent-bot", choices=scripted_choices + ["random", "policy"], default="scripted")
+    parser.add_argument("--ally-bot", choices=scripted_choices + ["random"], default="scripted")
+    parser.add_argument("--opponent-policy-checkpoint", default=None, help="Frozen team checkpoint for opponent_bot=policy")
+    parser.add_argument(
+        "--opponent-policy-mode",
+        choices=["stochastic", "argmax"],
+        default="stochastic",
+        help="How the frozen policy opponent chooses actions",
+    )
     parser.add_argument("--max-ticks", type=int, default=300)
     parser.add_argument("--torch-threads", type=int, default=1)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--random-baseline-episodes", type=int, default=50)
+    parser.add_argument(
+        "--role-assignment-mode",
+        choices=["fixed", "shuffle"],
+        default="fixed",
+        help="Use shuffle to train each policy on randomly assigned A1/A2/A3 slots per episode.",
+    )
     return parser.parse_args()
 
 
@@ -86,6 +100,8 @@ def config_from_args(args: argparse.Namespace) -> TeamPPOConfig:
         controlled_players=tuple(args.controlled_players),
         opponent_bot=args.opponent_bot,
         ally_bot=args.ally_bot,
+        opponent_policy_checkpoint=args.opponent_policy_checkpoint,
+        opponent_policy_deterministic=args.opponent_policy_mode == "argmax",
         max_ticks=args.max_ticks,
         workers=max(1, args.workers),
         rollout_steps=args.rollout_steps,
@@ -105,7 +121,15 @@ def config_from_args(args: argparse.Namespace) -> TeamPPOConfig:
         checkpoint_interval=max(1, args.checkpoint_interval),
         torch_threads=max(1, args.torch_threads),
         device=args.device,
+        role_assignment_mode=args.role_assignment_mode,
     )
+
+
+def validate_policy_opponent_args(args: argparse.Namespace) -> None:
+    if args.opponent_bot == "policy" and not args.opponent_policy_checkpoint:
+        raise ValueError("--opponent-policy-checkpoint is required with --opponent-bot policy")
+    if args.opponent_bot != "policy" and args.opponent_policy_checkpoint:
+        raise ValueError("--opponent-policy-checkpoint requires --opponent-bot policy")
 
 
 def prepare_run_dir(path: Path, overwrite: bool, resume: str | None) -> None:
@@ -146,6 +170,7 @@ def git_version_info() -> dict:
 
 def main() -> None:
     args = parse_args()
+    validate_policy_opponent_args(args)
     run_dir = Path(args.run_dir or _run_dir_default())
     prepare_run_dir(run_dir, args.overwrite, args.resume)
 

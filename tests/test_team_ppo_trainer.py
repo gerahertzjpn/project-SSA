@@ -5,6 +5,7 @@ import torch
 
 from src.training.team_ppo_trainer import (
     TeamPPOConfig,
+    _role_assignment,
     collect_team_rollouts,
     evaluate_random_legal_team,
     evaluate_team_policies,
@@ -32,6 +33,40 @@ def test_collect_team_rollouts_has_one_buffer_per_controlled_player():
     rollout = collect_team_rollouts(policies, config, update=1)
 
     assert set(rollout["agents"]) == {"A1", "A2", "A3"}
+    for agent in rollout["agents"].values():
+        assert agent["observations"].shape[0] == 6
+        assert agent["masks"].shape[0] == 6
+        assert agent["actions"].shape == (6,)
+        assert agent["advantages"].shape == (6,)
+        assert np.isfinite(agent["returns"]).all()
+
+
+def test_role_assignment_shuffle_can_train_each_policy_on_other_slots():
+    config = TeamPPOConfig(seed=101, role_assignment_mode="shuffle")
+    rng = np.random.default_rng(123)
+
+    assignments = [_role_assignment(config, rng) for _ in range(20)]
+
+    assert any(assignment["A1"] != "A1" for assignment in assignments)
+    assert all(set(assignment) == {"A1", "A2", "A3"} for assignment in assignments)
+    assert all(set(assignment.values()) == {"A1", "A2", "A3"} for assignment in assignments)
+
+
+def test_collect_team_rollouts_role_shuffle_keeps_policy_buffers_aligned():
+    config = TeamPPOConfig(
+        seed=101,
+        workers=1,
+        rollout_steps=6,
+        hidden_size=32,
+        max_ticks=30,
+        role_assignment_mode="shuffle",
+    )
+    policies = make_team_policies(config)
+
+    rollout = collect_team_rollouts(policies, config, update=1)
+
+    assert set(rollout["agents"]) == {"A1", "A2", "A3"}
+    assert rollout["role_assignment_counts"]
     for agent in rollout["agents"].values():
         assert agent["observations"].shape[0] == 6
         assert agent["masks"].shape[0] == 6

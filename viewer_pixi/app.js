@@ -48,6 +48,18 @@ const COLORS = {
   muted: 0x9facba,
   danger: 0xff8f8f,
   attack: 0xf0d18a,
+  buildingBg: 0x101419,
+  buildingProgress: 0xf0d18a,
+};
+
+const BUILDING_LABELS = {
+  TURRET: "T",
+  BOOSTER: "BO",
+  POWER: "PW",
+  LIFE: "LF",
+  ECONOMY_COLLECTOR: "$",
+  TECH_1: "T1",
+  TECH_2: "T2",
 };
 
 const NODE_POSITIONS = {
@@ -179,7 +191,7 @@ async function loadReplayList() {
     appState.samples = payload.replays?.length ? payload.replays : [...FALLBACK_REPLAYS];
     appState.maxUiRuns = Number(payload.max_ui_runs || 100);
     els.generateCountInput.max = String(appState.maxUiRuns);
-    setGenerateStatus(`Ready | max ${appState.maxUiRuns}`);
+    setGenerateStatus("");
   } catch {
     appState.samples = [...FALLBACK_REPLAYS];
     setGenerateStatus("Generation API offline", "error");
@@ -203,7 +215,7 @@ async function generateReplays() {
   const seed = Number(els.generateSeedInput.value || 20260602);
   appState.generating = true;
   validateGeneratorControls();
-  setGenerateStatus(`Generating ${runs} matches...`, "loading");
+  setGenerateStatus("Generating", "loading", `Generating ${runs} matches`);
 
   try {
     const payload = await fetchJson("/api/generate-replays", {
@@ -214,10 +226,10 @@ async function generateReplays() {
     appState.samples = payload.replays?.length ? payload.replays : [...FALLBACK_REPLAYS];
     populateReplaySelect();
     els.replaySelect.value = "0";
-    setGenerateStatus(generationSummary(payload), "ok");
+    setGenerateStatus(`${payload.runs || 0} generated`, "ok", generationSummary(payload));
     await loadSelectedReplay();
   } catch (error) {
-    setGenerateStatus(error.message || "Generation failed", "error");
+    setGenerateStatus(statusLabelForError(error), "error", error.message || "Generation failed");
   } finally {
     appState.generating = false;
     validateGeneratorControls();
@@ -242,9 +254,21 @@ function validateGeneratorControls() {
   return !disabled;
 }
 
-function setGenerateStatus(message, tone = "") {
+function setGenerateStatus(message, tone = "", title = "") {
   els.generateStatus.textContent = message || "";
+  els.generateStatus.title = title || message || "";
   els.generateStatus.dataset.tone = tone;
+}
+
+function statusLabelForError(error) {
+  const message = String(error?.message || "");
+  if (/old code|stale|restart viewer/i.test(message)) {
+    return "API stale";
+  }
+  if (/offline|failed to fetch|networkerror|load failed/i.test(message)) {
+    return "API offline";
+  }
+  return "Error";
 }
 
 function generationSummary(payload = {}) {
@@ -345,9 +369,33 @@ function visualTrackDesired(ticks, tickIndex, tick, nextTick, alpha) {
   const current = normalizeVisualUnits(tick.visual_units || []);
   const previousById = new Map(normalizeVisualUnits(ticks?.[tickIndex - 1]?.visual_units || []).map((unit) => [unit.id, unit]));
   const nextById = new Map(normalizeVisualUnits(nextTick?.visual_units || []).map((unit) => [unit.id, unit]));
+  const deathIds = deathUnitIds(tick);
   return current.map((unit) => {
+    if (deathIds.has(unit.id)) {
+      return {
+        ...unit,
+        hpRatio: 0,
+        dead: true,
+        layer: "fallen",
+        state: "fallen",
+      };
+    }
     const previous = previousById.get(unit.id);
     const next = nextById.get(unit.id);
+    if (shouldBridgeTransientStationed(unit, previous, next)) {
+      const eased = smoothstep(alpha);
+      return {
+        ...unit,
+        x: lerp(previous.x, next.x, eased),
+        y: lerp(previous.y, next.y, eased),
+        hpRatio: lerp(previous.hpRatio, next.hpRatio, eased),
+        layer: "battle",
+        state: "fighting",
+        battleId: previous.battleId || next.battleId,
+        locationId: unit.nodeId,
+        locationKind: "node",
+      };
+    }
     const layer = unit.layer || unit.state || "unit";
     const interpolated = {
       ...unit,
@@ -360,6 +408,38 @@ function visualTrackDesired(ticks, tickIndex, tick, nextTick, alpha) {
     };
     return interpolated;
   });
+}
+
+function deathUnitIds(tick) {
+  const ids = new Set();
+  for (const event of tick?.events || []) {
+    for (const unit of event?.death_units || []) {
+      if (unit?.id) {
+        ids.add(String(unit.id));
+      }
+    }
+  }
+  return ids;
+}
+
+function shouldBridgeTransientStationed(unit, previous, next) {
+  const nodeId = unit.nodeId;
+  if (!nodeId || !previous || !next) {
+    return false;
+  }
+  const layer = unit.layer || unit.state || "unit";
+  if (!["stationed", "visiting"].includes(layer)) {
+    return false;
+  }
+  return isBattleAtNode(previous, nodeId) && isBattleAtNode(next, nodeId);
+}
+
+function isBattleAtNode(unit, nodeId) {
+  const layer = unit?.layer || unit?.state || "unit";
+  if (!isBattleLayer(layer)) {
+    return false;
+  }
+  return unit.locationId === nodeId || unit.battleId === `node:${nodeId}`;
 }
 
 function applyVisualHandoffBackfill(item, previous, alpha) {
@@ -413,6 +493,8 @@ function normalizeVisualUnits(units = []) {
       path: Array.isArray(unit.path) ? unit.path : [],
       intent: unit.intent,
       battleId: unit.battle_id || unit.battleId,
+      locationId: unit.location_id || unit.locationId,
+      locationKind: unit.location_kind || unit.locationKind,
       uid: unit.uid,
       phase: unit.phase,
       progress: unit.progress,
@@ -651,7 +733,7 @@ function updateUnitSprite(sprite, item) {
   drawUnitShape(sprite.body, item.type, color, size);
   sprite.hp.clear();
   const hpRatio = Math.max(0, Math.min(1, Number(item.hpRatio ?? 1)));
-  if (dead || hpRatio < 0.999) {
+  if (!hideSpriteHpBar(item) && (dead || hpRatio < 0.999)) {
     sprite.hp.roundRect(-size, -size - 8, size * 2, 3, 1).fill(COLORS.hpTrack);
     const hpWidth = size * 2 * hpRatio;
     if (hpWidth > 0.5) {
@@ -660,7 +742,35 @@ function updateUnitSprite(sprite, item) {
   }
 }
 
+function hideSpriteHpBar(item) {
+  return item?.type === "L" && item?.team === "BARON";
+}
+
 function drawUnitShape(g, type, color, size) {
+  if (type === "RD") {
+    const points = 6;
+    for (let index = 0; index < points; index += 1) {
+      const angle = -Math.PI / 2 + index * (Math.PI * 2 / points);
+      const x = Math.cos(angle) * size * 1.08;
+      const y = Math.sin(angle) * size * 1.08;
+      if (index === 0) {
+        g.moveTo(x, y);
+      } else {
+        g.lineTo(x, y);
+      }
+    }
+    g.closePath().fill(color).stroke({ color: 0x101419, width: 1.2 });
+    return;
+  }
+  if (type === "MP") {
+    g.roundRect(-size * 1.25, -size * 0.82, size * 2.5, size * 1.64, 2)
+      .fill(color)
+      .stroke({ color: 0x101419, width: 1.3 });
+    g.moveTo(size * 0.55, 0).lineTo(size * 1.7, 0).stroke({ color: 0x101419, width: 2 });
+    g.circle(-size * 0.55, size * 0.9, size * 0.23).fill(0x101419);
+    g.circle(size * 0.55, size * 0.9, size * 0.23).fill(0x101419);
+    return;
+  }
   if (type === "R") {
     g.moveTo(0, -size).lineTo(size, 0).lineTo(0, size).lineTo(-size, 0).closePath().fill(color).stroke({ color: 0x101419, width: 1.2 });
     return;
@@ -795,6 +905,13 @@ function drawStaticMap() {
     if (isCoreNode(nodeId)) {
       drawCoreHpBar(nodeId, node, tick, x, y, radius, deadCore, ringColor);
     }
+    if (nodeId.startsWith("CP") && Number(node.neutral_hp || 0) > 0) {
+      drawNeutralCountLabel(nodeId, node, x, y, radius);
+    }
+    if (nodeId === "Baron" && node.owner === "NEUTRAL" && Number(tick.baron?.hp || 0) > 0) {
+      drawNeutralLordHpBar(tick, x, y, radius);
+    }
+    drawNodeBuildings(nodeId, node, tick, x, y, radius);
 
     const label = new Text({
       text: nodeId === "Baron" ? "L" : nodeId,
@@ -807,6 +924,120 @@ function drawStaticMap() {
   }
 
   fitCamera(false);
+}
+
+function drawNodeBuildings(nodeId, node, tick, x, y, radius) {
+  const buildings = (node?.buildings || [])
+    .filter((building) => Number(building?.max_hp ?? building?.hp ?? 0) > 0)
+    .slice(0, 3);
+  if (!buildings.length) {
+    return;
+  }
+  for (let index = 0; index < buildings.length; index += 1) {
+    const building = buildings[index];
+    const [ox, oy] = buildingSlotOffset(index, buildings.length, radius, nodeId);
+    drawBuildingMarker(building, x + ox, y + oy, index);
+  }
+}
+
+function buildingSlotOffset(index, count, radius, nodeId) {
+  if (count === 1) {
+    return [radius * 0.62, -radius * 0.62];
+  }
+  if (count === 2) {
+    return [
+      (index === 0 ? -1 : 1) * radius * 0.58,
+      -radius * 0.58,
+    ];
+  }
+  const angle = -Math.PI / 2 + index * (Math.PI * 2 / Math.max(3, count));
+  const scale = nodeId === "Baron" ? 0.78 : 0.72;
+  return [Math.cos(angle) * radius * scale, Math.sin(angle) * radius * scale];
+}
+
+function drawBuildingMarker(building, x, y) {
+  const type = String(building.building_type || "");
+  const label = BUILDING_LABELS[type] || type.slice(0, 2) || "?";
+  const complete = Boolean(building.complete);
+  const ownerColor = teamColor(building.owner);
+  const size = type === "TURRET" ? 10 : 9;
+  const hpRatio = Math.max(0, Math.min(1, Number(building.hp || 0) / Math.max(1, Number(building.max_hp || 1))));
+  const alpha = !complete ? 0.62 : (hpRatio <= 0 ? 0.38 : 1);
+  const progress = Math.max(0, Math.min(1, Number(building.progress ?? (complete ? 1 : 0))));
+  const marker = new Graphics();
+  marker.alpha = alpha;
+  drawBuildingShape(marker, type, x, y, size, ownerColor);
+  layers.map.addChild(marker);
+
+  const progressWidth = size * 2.2;
+  const barY = y + size + 3;
+  const bars = new Graphics();
+  bars.roundRect(x - progressWidth / 2, barY, progressWidth, 2.5, 1).fill(COLORS.hpTrack);
+  if (complete) {
+    bars.roundRect(x - progressWidth / 2, barY, progressWidth * hpRatio, 2.5, 1).fill(ownerColor);
+  } else {
+    bars.roundRect(x - progressWidth / 2, barY, progressWidth * progress, 2.5, 1).fill(COLORS.buildingProgress);
+  }
+  layers.map.addChild(bars);
+
+  const text = new Text({
+    text: label,
+    style: { fill: "#eef4fa", fontSize: label.length > 1 ? 6 : 8, fontWeight: "800" },
+  });
+  text.anchor.set(0.5);
+  text.x = x;
+  text.y = y;
+  layers.labels.addChild(text);
+}
+
+function drawBuildingShape(g, type, x, y, size, color) {
+  if (type === "TURRET") {
+    const turretSize = size;
+    g.roundRect(x - turretSize, y - turretSize, turretSize * 2, turretSize * 2, 3)
+      .fill(COLORS.buildingBg)
+      .stroke({ color, width: 2.0 });
+    g.moveTo(x, y - turretSize * 0.15).lineTo(x + turretSize * 1.45, y - turretSize * 0.15)
+      .stroke({ color, width: 2.4 });
+    return;
+  }
+  if (type === "BOOSTER") {
+    g.roundRect(x - size, y - size * 0.75, size * 2, size * 1.5, 5)
+      .fill(COLORS.buildingBg)
+      .stroke({ color, width: 1.8 });
+    g.moveTo(x - size * 0.55, y + size * 0.45)
+      .lineTo(x, y - size * 0.55)
+      .lineTo(x + size * 0.55, y + size * 0.45)
+      .stroke({ color, width: 2.0 });
+    return;
+  }
+  if (type === "POWER") {
+    g.circle(x, y, size * 1.05).fill(COLORS.buildingBg).stroke({ color, width: 1.8 });
+    g.moveTo(x, y - size * 0.8).lineTo(x - size * 0.25, y).lineTo(x + size * 0.25, y).lineTo(x, y + size * 0.8)
+      .stroke({ color, width: 2.0 });
+    return;
+  }
+  if (type === "LIFE") {
+    g.circle(x, y, size * 1.05).fill(COLORS.buildingBg).stroke({ color, width: 1.8 });
+    g.circle(x - size * 0.28, y - size * 0.12, size * 0.28).fill(color);
+    g.circle(x + size * 0.22, y + size * 0.18, size * 0.36).fill(color);
+    return;
+  }
+  if (type === "ECONOMY_COLLECTOR") {
+    g.circle(x, y, size * 1.12).fill(COLORS.buildingBg).stroke({ color, width: 1.8 });
+    g.circle(x, y, size * 0.42).fill(color);
+    return;
+  }
+  if (type === "TECH_1" || type === "TECH_2") {
+    g.moveTo(x, y - size * 1.18)
+      .lineTo(x + size * 1.18, y)
+      .lineTo(x, y + size * 1.18)
+      .lineTo(x - size * 1.18, y)
+      .closePath()
+      .fill(COLORS.buildingBg)
+      .stroke({ color, width: type === "TECH_2" ? 2.3 : 1.8 });
+    return;
+  }
+  g.circle(x, y, size).fill(COLORS.buildingBg).stroke({ color, width: 1.6 });
 }
 
 function drawCoreHpBar(nodeId, node, tick, x, y, radius, deadCore, color) {
@@ -825,6 +1056,51 @@ function drawCoreHpBar(nodeId, node, tick, x, y, radius, deadCore, color) {
   const hpText = new Text({
     text: `${Math.max(0, Math.ceil(hp))}/${CORE_HP}`,
     style: { fill: deadCore ? "#151b22" : "#eef4fa", fontSize: 8, fontWeight: "700" },
+  });
+  hpText.anchor.set(0.5, 0);
+  hpText.x = x;
+  hpText.y = barY + 5;
+  layers.labels.addChild(hpText);
+}
+
+function drawNeutralCountLabel(nodeId, node, x, y, radius) {
+  const current = Math.max(0, Math.ceil(Number(node.neutral_hp || 0)));
+  const maxHp = Math.max(current, Math.ceil(neutralMaxValue(nodeId, node)));
+  if (maxHp <= 0) {
+    return;
+  }
+  const text = new Text({
+    text: `${current}/${maxHp}`,
+    style: {
+      fill: "#f0d18a",
+      fontSize: 8,
+      fontWeight: "800",
+      stroke: { color: "#101419", width: 3 },
+    },
+  });
+  text.anchor.set(0.5, 0);
+  text.x = x;
+  text.y = y + radius + 4;
+  layers.labels.addChild(text);
+}
+
+function drawNeutralLordHpBar(tick, x, y, radius) {
+  const hp = neutralLordHpValue(tick);
+  const maxHp = neutralLordMaxHp(tick);
+  const ratio = Math.max(0, Math.min(1, hp / Math.max(1, maxHp)));
+  const width = Math.max(42, Math.min(60, radius * 1.35));
+  const height = 4;
+  const barY = y + radius + 6;
+  const bar = new Graphics();
+  bar.roundRect(x - width / 2, barY, width, height, 2).fill(COLORS.hpTrack);
+  if (ratio > 0.001) {
+    bar.roundRect(x - width / 2, barY, width * ratio, height, 2).fill(COLORS.neutral);
+  }
+  layers.map.addChild(bar);
+
+  const hpText = new Text({
+    text: `${Math.max(0, Math.ceil(hp))}/${Math.ceil(maxHp)}`,
+    style: { fill: "#f0d18a", fontSize: 8, fontWeight: "800", stroke: { color: "#101419", width: 3 } },
   });
   hpText.anchor.set(0.5, 0);
   hpText.x = x;
@@ -873,12 +1149,14 @@ function updateInspector() {
     return;
   }
   const node = selected.data || {};
+  const buildings = buildingSummary(node.buildings || {});
   els.inspectBody.innerHTML = `
     <div class="row"><span>Node</span><strong>${escapeHtml(selected.id)}</strong></div>
     <div class="row"><span>Owner</span><strong>${escapeHtml(node.owner || "?")}</strong></div>
     <div class="row"><span>Units</span><strong>${unitSummary(node.units || {}) || "-"}</strong></div>
     <div class="row"><span>Visitors</span><strong>${Object.keys(node.visiting_units || {}).length}</strong></div>
     <div class="row"><span>Neutral HP</span><strong>${Number(node.neutral_hp || 0)}</strong></div>
+    <div class="row"><span>Buildings</span><strong>${buildings || "-"}</strong></div>
   `;
 }
 
@@ -934,8 +1212,19 @@ function currentTick() {
 function mapStateSignature(tick) {
   return Object.entries(tick?.nodes || {})
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([nodeId, node]) => `${nodeId}:${node.owner || ""}:${node.neutral_hp || 0}:${node.core_hp ?? ""}:${tick?.players?.[nodeId]?.alive ?? ""}`)
-    .join("|");
+    .map(([nodeId, node]) => {
+      const buildings = (node.buildings || [])
+        .map((building) => [
+          building.owner || "",
+          building.building_type || "",
+          Math.round(Number(building.hp || 0) * 10) / 10,
+          Number(building.progress || 0).toFixed(2),
+          building.complete ? 1 : 0,
+        ].join(","))
+        .join(";");
+      return `${nodeId}:${node.owner || ""}:${node.neutral_hp || 0}:${node.neutral_max_hp || 0}:${node.core_hp ?? ""}:${tick?.players?.[nodeId]?.alive ?? ""}:${buildings}`;
+    })
+    .join("|") + `|baron:${neutralLordHpValue(tick)}:${neutralLordMaxHp(tick)}`;
 }
 
 function battlePosition(battle) {
@@ -1118,6 +1407,18 @@ function displayUnitCode(type) {
   if (value === "VANGUARD" || value === "V") return "V";
   if (value === "RANGER" || value === "ARCHER" || value === "A" || value === "R") return "R";
   if (value === "SKIRMISHER" || value === "S") return "S";
+  if (value === "RAIDER" || value === "SPECIALIST_1" || value === "RD" || value === "D") return "RD";
+  if (value === "BMP" || value === "SPECIALIST_2" || value === "MP") return "MP";
+  if (value === "SWARMLING" || value === "SW") return "SW";
+  if (value === "SPITTER" || value === "SP") return "SP";
+  if (value === "BRUTE" || value === "BR") return "BR";
+  if (value === "RAVAGER" || value === "RV") return "RV";
+  if (value === "BEHEMOTH" || value === "BH") return "BH";
+  if (value === "WALKER" || value === "WK") return "WK";
+  if (value === "LASER" || value === "LS") return "LS";
+  if (value === "DRONE" || value === "DR") return "DR";
+  if (value === "GUARDIAN_MECH" || value === "GM") return "GM";
+  if (value === "SIEGE_PLATFORM" || value === "SG") return "SG";
   if (value === "NEUTRAL" || value === "N") return "N";
   if (value === "CORE" || value === "C") return "C";
   if (value === "BARON" || value === "LORD" || value === "B" || value === "L") return "L";
@@ -1150,6 +1451,42 @@ function coreHpValue(nodeId, node = {}, tick = {}) {
   return Math.max(0, Math.min(CORE_HP, value));
 }
 
+function neutralMaxValue(nodeId, node = {}) {
+  const direct = Number(node.neutral_max_hp || 0);
+  if (Number.isFinite(direct) && direct > 0) {
+    return direct;
+  }
+  let maxHp = Number(node.neutral_hp || 0);
+  for (const tick of appState.replay?.ticks || []) {
+    const tickNode = tick?.nodes?.[nodeId];
+    maxHp = Math.max(maxHp, Number(tickNode?.neutral_max_hp || 0), Number(tickNode?.neutral_hp || 0));
+  }
+  return Number.isFinite(maxHp) ? maxHp : 0;
+}
+
+function neutralLordHpValue(tick = {}) {
+  for (const battle of tick.active_battles || []) {
+    if (battle.location_id !== "Baron" && battle.battle_id !== "node:Baron") {
+      continue;
+    }
+    for (const row of battle.formation || []) {
+      if (String(row?.[1] || "") === "BARON" && displayUnitCode(row?.[2]) === "L") {
+        const hp = Number(row?.[3]);
+        if (Number.isFinite(hp)) {
+          return hp;
+        }
+      }
+    }
+  }
+  const hp = Number(tick.baron?.hp || 0);
+  return Number.isFinite(hp) ? hp : 0;
+}
+
+function neutralLordMaxHp(tick = {}) {
+  const direct = Number(tick.baron?.max_hp || appState.replay?.meta?.rules?.baron_hp || 300);
+  return Number.isFinite(direct) && direct > 0 ? direct : 300;
+}
+
 function isDeadCoreNode(nodeId, node = {}, tick = {}) {
   if (!isCoreNode(nodeId)) {
     return false;
@@ -1174,6 +1511,15 @@ function unitSize(item) {
   if (item.type === "L") {
     return 12;
   }
+  if (item.type === "MP") {
+    return item.layer === "battle" ? 6.6 : 6.0;
+  }
+  if (["BH", "GM", "SG"].includes(item.type)) {
+    return item.layer === "battle" ? 7.0 : 6.2;
+  }
+  if (["SW", "DR"].includes(item.type)) {
+    return item.layer === "battle" ? 5.0 : 4.2;
+  }
   if (item.type === "C") {
     return 9;
   }
@@ -1184,7 +1530,26 @@ function unitSize(item) {
 }
 
 function typeLane(type) {
-  return { R: -7, S: 0, V: 7, C: 2, L: 0, N: 0 }[displayUnitCode(type)] || 0;
+  return {
+    R: -7,
+    MP: -10,
+    SP: -6,
+    LS: -9,
+    SG: -11,
+    S: 0,
+    RD: 2,
+    SW: 1,
+    RV: 2,
+    DR: 2,
+    GM: 1,
+    V: 7,
+    BR: 8,
+    BH: 9,
+    WK: 8,
+    C: 2,
+    L: 0,
+    N: 0,
+  }[displayUnitCode(type)] || 0;
 }
 
 function unitSummary(units) {
@@ -1192,6 +1557,18 @@ function unitSummary(units) {
     .filter(([, count]) => Number(count || 0) > 0)
     .map(([type, count]) => `${displayUnitCode(type)}${count}`)
     .join(" ");
+}
+
+function buildingSummary(buildings = []) {
+  return (buildings || [])
+    .filter((building) => Number(building?.max_hp ?? building?.hp ?? 0) > 0)
+    .map((building) => {
+      const label = BUILDING_LABELS[building.building_type] || String(building.building_type || "?");
+      const hp = `${Math.ceil(Number(building.hp || 0))}/${Math.ceil(Number(building.max_hp || 0))}`;
+      const status = building.complete ? hp : `${Math.round(Number(building.progress || 0) * 100)}%`;
+      return `${label}:${building.owner || "?"} ${status}`;
+    })
+    .join(" | ");
 }
 
 function lerp(left, right, alpha) {

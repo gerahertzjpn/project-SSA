@@ -11,13 +11,29 @@ from .units import UnitInstance
 
 
 @dataclass
+class BuildingState:
+    building_type: str
+    owner: str
+    hp: float
+    max_hp: float
+    started_tick: int
+    complete_tick: int
+    last_damage_tick: int = -1
+
+    def is_complete(self, tick: int) -> bool:
+        return int(tick) >= int(self.complete_tick)
+
+
+@dataclass
 class NodeState:
     node_id: str
     owner: str              # 'NEUTRAL' | player_id
     units: dict             # {UnitType.value: count}
     neutral_hp: int         # remaining neutral guards (0 = cleared)
     neutral_income: int     # income per tick when captured (scaled from original neutral strength)
+    neutral_max_hp: int = 0  # initial neutral guard count for replay/UI state labels
     neutral_aggro_teams: set[str] = field(default_factory=set)
+    buildings: list[BuildingState] = field(default_factory=list)
     visiting_units: dict = field(default_factory=dict)  # player_id -> {UnitType.value: count}
     visual_units: dict = field(default_factory=dict)  # owner -> unit_type -> [stable replay visual ids]
     visiting_visual_units: dict = field(default_factory=dict)  # player_id -> unit_type -> [stable replay visual ids]
@@ -65,6 +81,7 @@ class PlayerState:
     alive: bool
     core_hp: float
     core_type: str = "standard"
+    faction: str = "humans"
 
 
 @dataclass
@@ -129,27 +146,38 @@ class GameState:
     active_battles: dict = field(default_factory=dict)
 
 
-def make_initial_state(seed: int = 42) -> GameState:
+def _starting_units_for_faction(faction: str) -> dict:
+    if faction == "infected":
+        return {UnitType.SWARMLING.value: 6}
+    if faction == "robots":
+        return {UnitType.WALKER.value: 1, UnitType.DRONE.value: 1}
+    return {UnitType.VANGUARD.value: 2}
+
+
+def make_initial_state(seed: int = 42, player_factions: Optional[dict[str, str]] = None) -> GameState:
     rng = np.random.default_rng(seed)
+    player_factions = dict(player_factions or {})
 
     neutral_strengths = _roll_neutrals(rng)
 
     nodes = {}
 
     for pid in TEAM_A_PLAYERS:
+        faction = player_factions.get(pid, "humans")
         nodes[pid] = NodeState(
             node_id=pid,
             owner=pid,
-            units={UnitType.VANGUARD.value: 2},
+            units=_starting_units_for_faction(faction),
             neutral_hp=0,
             neutral_income=0,
             unit_entry_side={pid: "attacker"},
         )
     for pid in TEAM_B_PLAYERS:
+        faction = player_factions.get(pid, "humans")
         nodes[pid] = NodeState(
             node_id=pid,
             owner=pid,
-            units={UnitType.VANGUARD.value: 2},
+            units=_starting_units_for_faction(faction),
             neutral_hp=0,
             neutral_income=0,
             unit_entry_side={pid: "defender"},
@@ -163,6 +191,7 @@ def make_initial_state(seed: int = 42) -> GameState:
             units={},
             neutral_hp=strength,
             neutral_income=_neutral_income(strength),
+            neutral_max_hp=strength,
         )
 
     nodes["Baron"] = NodeState(
@@ -186,6 +215,7 @@ def make_initial_state(seed: int = 42) -> GameState:
             alive=True,
             core_hp=float(CORE_HP),
             core_type="standard",
+            faction=player_factions.get(pid, "humans"),
         )
 
     baron = BaronState(

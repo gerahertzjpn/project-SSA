@@ -49,6 +49,12 @@ class MaskedActorCritic(nn.Module):
         masked_logits = logits.masked_fill(~action_mask.bool(), MASK_VALUE)
         return torch.distributions.Categorical(logits=masked_logits), values
 
+    def action_distribution(self, obs: torch.Tensor, action_mask: torch.Tensor) -> torch.distributions.Categorical:
+        features = self.body(obs)
+        logits = self.actor(features)
+        masked_logits = logits.masked_fill(~action_mask.bool(), MASK_VALUE)
+        return torch.distributions.Categorical(logits=masked_logits)
+
     @torch.no_grad()
     def act(
         self,
@@ -73,6 +79,24 @@ class MaskedActorCritic(nn.Module):
             entropy=float(entropy.item()),
             value=float(values.item()),
         )
+
+    @torch.no_grad()
+    def act_action_only(
+        self,
+        obs: np.ndarray,
+        action_mask: np.ndarray,
+        deterministic: bool = False,
+        device: torch.device | str = "cpu",
+    ) -> int:
+        self.eval()
+        obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+        mask_tensor = torch.as_tensor(action_mask, dtype=torch.bool, device=device).unsqueeze(0)
+        dist = self.action_distribution(obs_tensor, mask_tensor)
+        if deterministic:
+            action_tensor = torch.argmax(dist.logits, dim=-1)
+        else:
+            action_tensor = dist.sample()
+        return int(action_tensor.item())
 
 
 def to_cpu_state_dict(model: nn.Module) -> dict:

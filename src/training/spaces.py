@@ -9,8 +9,16 @@ import numpy as np
 
 from src.core.constants import (
     BARON_HP,
+    BUILDING_COST,
+    BUILDING_STATS,
+    CORE_BUILDINGS,
     CORE_HP,
+    CONTROL_POINT_BUILDINGS,
     DEATH_TIME_START_TICK,
+    FACTION_TYPES,
+    FACTION_UNIQUE_BUILDINGS,
+    MAX_CONTROL_POINT_BUILDINGS,
+    MAX_CORE_BUILDINGS,
     PLAYER_IDS,
     SPECIAL_DEST_ALLY_LORD,
     SPECIAL_DEST_ENEMY_LORD,
@@ -19,6 +27,9 @@ from src.core.constants import (
     TEAM_B_PLAYERS,
     TICK_LIMIT,
     UNIT_COST,
+    UNIT_FACTION,
+    unit_tech_requirements,
+    BuildingType,
     UnitType,
     ActionType,
 )
@@ -35,15 +46,41 @@ from src.core.map2d import (
 from src.core.units import UNIT_STATS
 
 
-OBSERVATION_VERSION = "train_obs_v1.0"
+OBSERVATION_VERSION = "train_obs_v3.0"
 
-UNIT_ORDER = (UnitType.VANGUARD, UnitType.RANGER, UnitType.SKIRMISHER)
+UNIT_ORDER = (
+    UnitType.VANGUARD,
+    UnitType.RANGER,
+    UnitType.SKIRMISHER,
+    UnitType.RAIDER,
+    UnitType.BMP,
+    UnitType.SWARMLING,
+    UnitType.SPITTER,
+    UnitType.BRUTE,
+    UnitType.RAVAGER,
+    UnitType.BEHEMOTH,
+    UnitType.WALKER,
+    UnitType.LASER,
+    UnitType.DRONE,
+    UnitType.GUARDIAN_MECH,
+    UnitType.SIEGE_PLATFORM,
+)
+BUILDING_ORDER = (
+    BuildingType.TURRET,
+    BuildingType.BOOSTER,
+    BuildingType.POWER,
+    BuildingType.LIFE,
+    BuildingType.ECONOMY_COLLECTOR,
+    BuildingType.TECH_1,
+    BuildingType.TECH_2,
+)
+FACTIONS = tuple(FACTION_TYPES)
 CORE_TYPES = ("standard",)
 RELATIONS = ("self", "ally", "enemy", "neutral")
 COMBAT_RELATIONS = ("self", "ally", "enemy")
 MOVEMENT_BUCKETS = ("inside", "outgoing", "incoming")
 MOVE_INTENTS = ("CAPTURE", "TRANSIT")
-GLOBAL_FEATURES = 25
+GLOBAL_FEATURES = 22 + len(UNIT_ORDER) + len(FACTIONS)
 NODE_TYPE_FEATURES = 3
 CORE_TYPE_FEATURES = len(CORE_TYPES)
 OWNER_RELATION_FEATURES = len(RELATIONS)
@@ -51,12 +88,14 @@ STATIONED_UNIT_FEATURES = len(RELATIONS) * len(UNIT_ORDER)
 NODE_SCALAR_FEATURES = 11
 MOVEMENT_FEATURES = len(MOVEMENT_BUCKETS) * len(COMBAT_RELATIONS) * len(UNIT_ORDER)
 BATTLE_FEATURES = 4 + len(COMBAT_RELATIONS) * len(UNIT_ORDER)
+BUILDING_FEATURES = len(RELATIONS) * len(BUILDING_ORDER) * 3
 NODE_FEATURES = (
     NODE_TYPE_FEATURES
     + CORE_TYPE_FEATURES
     + OWNER_RELATION_FEATURES
     + STATIONED_UNIT_FEATURES
     + NODE_SCALAR_FEATURES
+    + BUILDING_FEATURES
     + MOVEMENT_FEATURES
     + BATTLE_FEATURES
     + BATTLE_FEATURES
@@ -70,6 +109,7 @@ ROUTE_TICK_NORM = float(TICK_LIMIT)
 class ActionSpec:
     kind: str
     unit_type: Optional[UnitType] = None
+    building_type: Optional[BuildingType] = None
     source: Optional[str] = None
     destination: Optional[str] = None
     intent: str = "CAPTURE"
@@ -93,10 +133,17 @@ MOVE_ACTION_SPECS: tuple[ActionSpec, ...] = (
     )
 )
 
+BUILD_ACTION_SPECS: tuple[ActionSpec, ...] = tuple(
+    ActionSpec("BUILD", building_type=building_type, destination=node_id)
+    for node_id in ALL_NODES
+    for building_type in BUILDING_ORDER
+)
+
 ACTION_SPECS: tuple[ActionSpec, ...] = (
     (ActionSpec("HOLD"),)
     + tuple(ActionSpec("PRODUCE", unit_type=unit_type) for unit_type in UNIT_ORDER)
     + MOVE_ACTION_SPECS
+    + BUILD_ACTION_SPECS
     + tuple(
         ActionSpec(
             "PRODUCE_MOVE",
@@ -110,6 +157,11 @@ ACTION_SPECS: tuple[ActionSpec, ...] = (
     )
 )
 ACTION_DIM = len(ACTION_SPECS)
+_OBS_CACHE_KEY = "__training_spaces_cache"
+PRODUCE_ACTION_START = 1
+MOVE_ACTION_START = PRODUCE_ACTION_START + len(UNIT_ORDER)
+BUILD_ACTION_START = MOVE_ACTION_START + len(MOVE_ACTION_SPECS)
+PRODUCE_MOVE_ACTION_START = BUILD_ACTION_START + len(BUILD_ACTION_SPECS)
 
 MIRROR_NODES = {
     "A1": "B1",
@@ -145,7 +197,7 @@ MIRROR_ENTRY_SIDES = {
 COMBAT_LINE_MAX = 20.0
 
 _ACTION_INDEX_BY_SPEC = {
-    (spec.kind, spec.unit_type, spec.source, spec.destination, spec.intent): index
+    (spec.kind, spec.unit_type, spec.building_type, spec.source, spec.destination, spec.intent): index
     for index, spec in enumerate(ACTION_SPECS)
 }
 
@@ -205,18 +257,20 @@ def mirror_action_index(action_index: int) -> int:
     mirrored = ActionSpec(
         kind=spec.kind,
         unit_type=spec.unit_type,
+        building_type=spec.building_type,
         source=mirrored_node_id(spec.source),
         destination=mirrored_node_id(spec.destination),
         intent=spec.intent,
     )
     return _ACTION_INDEX_BY_SPEC.get(
-        (mirrored.kind, mirrored.unit_type, mirrored.source, mirrored.destination, mirrored.intent),
+        (mirrored.kind, mirrored.unit_type, mirrored.building_type, mirrored.source, mirrored.destination, mirrored.intent),
         0,
     )
 
 
 def mirror_observation(obs: dict) -> dict:
     mirrored = dict(obs)
+    mirrored.pop(_OBS_CACHE_KEY, None)
     mirrored["player_id"] = mirrored_player_id(obs.get("player_id"))
     mirrored["team"] = mirrored_team_id(obs.get("team"))
     mirrored["core_node"] = mirrored_node_id(obs.get("core_node"))
@@ -258,9 +312,18 @@ def mirror_observation(obs: dict) -> dict:
     return mirrored
 
 
+def _observation_cache(obs: dict, player_id: str) -> dict:
+    root = obs.setdefault(_OBS_CACHE_KEY, {})
+    return root.setdefault(player_id, {})
+
+
 def _mirror_node(node: dict) -> dict:
     mirrored = dict(node)
     mirrored["owner"] = mirrored_player_id(node.get("owner"))
+    mirrored["buildings"] = [
+        _mirror_building(building)
+        for building in node.get("buildings", []) or []
+    ]
     mirrored["visiting_units"] = {
         mirrored_player_id(player_id): dict(units)
         for player_id, units in (node.get("visiting_units", {}) or {}).items()
@@ -277,6 +340,12 @@ def _mirror_node(node: dict) -> dict:
         mirrored_team_id(team)
         for team in node.get("neutral_aggro_teams", []) or []
     ]
+    return mirrored
+
+
+def _mirror_building(building: dict) -> dict:
+    mirrored = dict(building)
+    mirrored["owner"] = mirrored_player_id(building.get("owner"))
     return mirrored
 
 
@@ -436,6 +505,11 @@ def find_route_obs(player_id: str, src: str, dst: str, obs: dict) -> Optional[li
     baron = obs.get("baron", {})
     if src == dst or src not in nodes or dst not in nodes:
         return None
+    routes = _observation_cache(obs, player_id).setdefault("routes", {})
+    route_key = (src, dst)
+    if route_key in routes:
+        cached = routes[route_key]
+        return list(cached) if cached else None
 
     visited = {src}
     queue = deque([[src]])
@@ -448,10 +522,12 @@ def find_route_obs(player_id: str, src: str, dst: str, obs: dict) -> Optional[li
             next_path = path + [neighbor]
             if _is_accessible_destination(player_id, neighbor, node_id, nodes, baron):
                 if neighbor == dst:
+                    routes[route_key] = list(next_path)
                     return next_path
             if _is_transit_node(player_id, neighbor, nodes, baron):
                 visited.add(neighbor)
                 queue.append(next_path)
+    routes[route_key] = None
     return None
 
 
@@ -510,6 +586,9 @@ def _discrete_segment_ticks(ticks: float) -> int:
 
 
 def movable_sources(obs: dict, player_id: str) -> list[str]:
+    cache = _observation_cache(obs, player_id)
+    if "movable_sources" in cache:
+        return list(cache["movable_sources"])
     tick = int(obs.get("tick", 0) or 0)
     sources = []
     for node_id in ALL_NODES:
@@ -518,6 +597,7 @@ def movable_sources(obs: dict, player_id: str) -> list[str]:
             continue
         if unit_total(_source_units_for_player(node, player_id)) > 0:
             sources.append(node_id)
+    cache["movable_sources"] = list(sources)
     return sources
 
 
@@ -536,6 +616,9 @@ def select_source_for_destination(obs: dict, player_id: str, destination: str) -
 
 
 def route_metrics_for_node(obs: dict, player_id: str, destination: str) -> tuple[float, float, float]:
+    metrics = _observation_cache(obs, player_id).setdefault("route_metrics", {})
+    if destination in metrics:
+        return tuple(metrics[destination])
     candidates = []
     for source in movable_sources(obs, player_id):
         units = _source_units_for_player(obs["nodes"][source], player_id)
@@ -551,15 +634,17 @@ def route_metrics_for_node(obs: dict, player_id: str, destination: str) -> tuple
         candidates.append((ticks, edges, -unit_total(units), ALL_NODES.index(source)))
 
     if not candidates:
-        return 0.0, 1.0, 1.0
+        metrics[destination] = (0.0, 1.0, 1.0)
+        return metrics[destination]
 
     candidates.sort()
     ticks, edges, _, _ = candidates[0]
-    return (
+    metrics[destination] = (
         1.0,
         min(1.0, edges / float(ROUTE_EDGE_NORM)),
         min(1.0, ticks / ROUTE_TICK_NORM),
     )
+    return metrics[destination]
 
 
 def special_lord_destination_node(
@@ -570,38 +655,52 @@ def special_lord_destination_node(
 ) -> Optional[str]:
     if destination not in SPECIAL_LORD_DESTINATIONS:
         return destination if destination in ALL_NODES else None
+    special_destinations = _observation_cache(obs, player_id).setdefault("special_lord_destinations", {})
+    special_key = (destination, source)
+    if special_key in special_destinations:
+        return special_destinations[special_key]
 
     baron = obs.get("baron", {}) or {}
     if not baron.get("allied_lord_alive") or baron.get("allied_lord_expended"):
+        special_destinations[special_key] = None
         return None
     owner = baron.get("allied_lord_owner")
     if not owner:
+        special_destinations[special_key] = None
         return None
     same_team = team_of(owner) == team_of(player_id)
     if destination == SPECIAL_DEST_ALLY_LORD and not same_team:
+        special_destinations[special_key] = None
         return None
     if destination == SPECIAL_DEST_ENEMY_LORD and same_team:
+        special_destinations[special_key] = None
         return None
 
     battle_node = _special_lord_battle_node(obs, player_id, owner, source)
     if battle_node:
+        special_destinations[special_key] = battle_node
         return battle_node
 
     group_node = _special_lord_group_node(obs, player_id, owner, source)
     if group_node:
+        special_destinations[special_key] = group_node
         return group_node
 
     tick = int(obs.get("tick", 0) or 0)
     if int(baron.get("allied_lord_ready_tick", 0) or 0) > tick:
+        special_destinations[special_key] = "Baron"
         return "Baron"
 
     for node_id, node in (obs.get("nodes", {}) or {}).items():
         if node_id not in ALL_NODES:
             continue
         if node.get("owner") == owner and int((node.get("units", {}) or {}).get(UnitType.LORD.value, 0) or 0) > 0:
+            special_destinations[special_key] = node_id
             return node_id
         if int(((node.get("visiting_units", {}) or {}).get(owner, {}) or {}).get(UnitType.LORD.value, 0) or 0) > 0:
+            special_destinations[special_key] = node_id
             return node_id
+    special_destinations[special_key] = None
     return None
 
 
@@ -698,17 +797,101 @@ def _has_move(spec: ActionSpec) -> bool:
     return spec.kind in ("MOVE", "PRODUCE_MOVE") and bool(spec.source and spec.destination)
 
 
-def _move_allowed(spec: ActionSpec, obs: dict, player_id: str) -> bool:
+def _move_allowed(
+    spec: ActionSpec,
+    obs: dict,
+    player_id: str,
+    movable_source_set: set[str] | None = None,
+) -> bool:
     if not _has_move(spec):
         return True
     if not _intent_allowed(spec, obs, player_id):
         return False
-    if spec.source not in movable_sources(obs, player_id):
+    sources = movable_source_set if movable_source_set is not None else set(movable_sources(obs, player_id))
+    if spec.source not in sources:
         return False
     destination = special_lord_destination_node(obs, player_id, spec.destination, spec.source)
     if destination is None:
         return False
     return find_route_obs(player_id, spec.source, destination, obs) is not None
+
+
+def _completed_building_types_obs(obs: dict, player_id: str) -> set[str]:
+    completed: set[str] = set()
+    tick = int(obs.get("tick", 0) or 0)
+    for node in (obs.get("nodes", {}) or {}).values():
+        for building in node.get("buildings", []) or []:
+            if building.get("owner") != player_id:
+                continue
+            complete = bool(building.get("complete"))
+            complete_tick = building.get("complete_tick")
+            if complete_tick is not None:
+                complete = complete or tick >= int(complete_tick)
+            if complete and float(building.get("hp", 0.0) or 0.0) > 0:
+                completed.add(str(building.get("building_type")))
+    return completed
+
+
+def _produce_allowed_obs(obs: dict, player_id: str, unit_type: UnitType, resources: float) -> bool:
+    if resources < float(UNIT_COST.get(unit_type, 10**9)):
+        return False
+    if UNIT_FACTION.get(unit_type) != obs.get("faction", "humans"):
+        return False
+    completed = _completed_building_types_obs(obs, player_id)
+    return all(required.value in completed for required in unit_tech_requirements(unit_type))
+
+
+def _build_allowed_obs(
+    obs: dict,
+    player_id: str,
+    node_id: str,
+    building_type: BuildingType,
+    resources: float,
+) -> bool:
+    if resources < float(BUILDING_COST.get(building_type, 10**9)):
+        return False
+    unique_owner_faction = {
+        building.value: faction
+        for faction, building in FACTION_UNIQUE_BUILDINGS.items()
+    }.get(building_type.value)
+    if unique_owner_faction is not None and obs.get("faction", "humans") != unique_owner_faction:
+        return False
+    nodes = obs.get("nodes", {}) or {}
+    node = nodes.get(node_id)
+    if not node or node.get("owner") != player_id or int(node.get("neutral_hp", 0) or 0) > 0:
+        return False
+    if any(
+        battle.get("location_kind") == "node" and battle.get("location_id") == node_id
+        for battle in obs.get("active_battles", []) or []
+    ):
+        return False
+
+    existing = [
+        building
+        for building in node.get("buildings", []) or []
+        if building.get("owner") == player_id
+    ]
+    existing_types = {str(building.get("building_type")) for building in existing}
+    node_type = NODE_TYPES[node_id]
+
+    if node_type == NodeType.CONTROL_POINT:
+        if building_type not in CONTROL_POINT_BUILDINGS:
+            return False
+        return len(existing) < MAX_CONTROL_POINT_BUILDINGS and building_type.value not in existing_types
+
+    if node_type == NodeType.CORE and node_id == obs.get("core_node"):
+        if building_type not in CORE_BUILDINGS:
+            return False
+        if len(existing) >= MAX_CORE_BUILDINGS or building_type.value in existing_types:
+            return False
+        if (
+            building_type == BuildingType.TECH_2
+            and BuildingType.TECH_1.value not in _completed_building_types_obs(obs, player_id)
+        ):
+            return False
+        return True
+
+    return False
 
 
 def legal_action_mask(obs: dict, player_id: str) -> np.ndarray:
@@ -721,25 +904,54 @@ def _legal_action_mask_absolute(obs: dict, player_id: str) -> np.ndarray:
     resources = float(obs.get("resources", 0.0) or 0.0)
     mask[0] = True
 
-    for index, spec in enumerate(ACTION_SPECS):
-        if spec.kind == "HOLD":
-            mask[index] = True
+    produce_allowed = [
+        _produce_allowed_obs(obs, player_id, unit_type, resources)
+        for unit_type in UNIT_ORDER
+    ]
+    for unit_index, allowed in enumerate(produce_allowed):
+        if allowed:
+            mask[PRODUCE_ACTION_START + unit_index] = True
+
+    movable_source_set = set(movable_sources(obs, player_id))
+    move_allowed = [
+        _move_allowed(spec, obs, player_id, movable_source_set)
+        for spec in MOVE_ACTION_SPECS
+    ]
+    for move_index, allowed in enumerate(move_allowed):
+        if not allowed:
             continue
-        if _has_produce(spec) and resources < UNIT_COST[spec.unit_type]:
-            continue
-        if _has_move(spec) and not _move_allowed(spec, obs, player_id):
-            continue
-        if _has_produce(spec) or _has_move(spec):
-            mask[index] = True
+        mask[MOVE_ACTION_START + move_index] = True
+        for unit_index, can_produce in enumerate(produce_allowed):
+            if can_produce:
+                mask[
+                    PRODUCE_MOVE_ACTION_START
+                    + unit_index * len(MOVE_ACTION_SPECS)
+                    + move_index
+                ] = True
+    for build_index, spec in enumerate(BUILD_ACTION_SPECS):
+        if spec.building_type and spec.destination and _build_allowed_obs(
+            obs,
+            player_id,
+            spec.destination,
+            spec.building_type,
+            resources,
+        ):
+            mask[BUILD_ACTION_START + build_index] = True
     return mask
 
 
-def decode_action(action_index: int, obs: dict, player_id: str) -> Action:
+def decode_action(action_index: int, obs: dict, player_id: str, assume_legal: bool = False) -> Action:
     policy_obs, policy_player = policy_observation(obs, player_id)
-    return _decode_policy_action(action_index, policy_obs, policy_player, player_id)
+    return _decode_policy_action(action_index, policy_obs, policy_player, player_id, assume_legal=assume_legal)
 
 
-def _decode_policy_action(action_index: int, policy_obs: dict, policy_player: str, actual_player: str) -> Action:
+def _decode_policy_action(
+    action_index: int,
+    policy_obs: dict,
+    policy_player: str,
+    actual_player: str,
+    assume_legal: bool = False,
+) -> Action:
     if action_index < 0 or action_index >= ACTION_DIM:
         return Action(ActionType.HOLD)
 
@@ -747,11 +959,11 @@ def _decode_policy_action(action_index: int, policy_obs: dict, policy_player: st
     if spec.kind == "HOLD":
         return Action(ActionType.HOLD)
     if spec.kind == "PRODUCE" and spec.unit_type is not None:
-        if _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
+        if assume_legal or _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
             return Action(ActionType.PRODUCE, unit_type=spec.unit_type)
         return Action(ActionType.HOLD)
     if spec.kind == "MOVE" and spec.source and spec.destination:
-        if not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
+        if not assume_legal and not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
             return Action(ActionType.HOLD)
         source = spec.source
         destination = spec.destination
@@ -764,8 +976,19 @@ def _decode_policy_action(action_index: int, policy_obs: dict, policy_player: st
             destination=destination,
             intent=spec.intent,
         )
+    if spec.kind == "BUILD" and spec.building_type and spec.destination:
+        if not assume_legal and not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
+            return Action(ActionType.HOLD)
+        destination = spec.destination
+        if uses_mirrored_policy_perspective(actual_player):
+            destination = mirrored_node_id(destination)
+        return Action(
+            ActionType.BUILD,
+            building_type=spec.building_type,
+            destination=destination,
+        )
     if spec.kind == "PRODUCE_MOVE" and spec.unit_type and spec.source and spec.destination:
-        if not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
+        if not assume_legal and not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
             return Action(ActionType.HOLD)
         source = spec.source
         destination = spec.destination
@@ -935,6 +1158,28 @@ def _add_battle_features(features: list[float], battle: dict, player_id: str, we
     )
 
 
+def _building_features(node: dict, player_id: str) -> list[float]:
+    features = [0.0] * BUILDING_FEATURES
+    for building in node.get("buildings", []) or []:
+        try:
+            building_type = BuildingType(str(building.get("building_type")))
+        except ValueError:
+            continue
+        relation = owner_relation(building.get("owner", "NEUTRAL"), player_id)
+        if relation not in RELATIONS:
+            continue
+        relation_index_ = RELATIONS.index(relation)
+        building_index = BUILDING_ORDER.index(building_type)
+        offset = (relation_index_ * len(BUILDING_ORDER) + building_index) * 3
+        max_hp = max(1.0, float(building.get("max_hp", BUILDING_STATS[building_type]["hp"]) or 1.0))
+        hp = max(0.0, float(building.get("hp", 0.0) or 0.0))
+        progress = float(building.get("progress", 1.0 if building.get("complete") else 0.0) or 0.0)
+        features[offset] += 1.0 / 2.0
+        features[offset + 1] += min(1.0, hp / max_hp)
+        features[offset + 2] += max(0.0, min(1.0, progress))
+    return features
+
+
 def encode_observation(obs: dict, player_id: str) -> np.ndarray:
     policy_obs, policy_player = policy_observation(obs, player_id)
     return _encode_observation_absolute(policy_obs, policy_player)
@@ -972,6 +1217,7 @@ def _encode_observation_absolute(obs: dict, player_id: str) -> np.ndarray:
         min(1.0, allied_lord_eta / float(TICK_LIMIT)),
         *_lord_relation_features(obs, player_id),
         *_normal_unit_counts(allied_lord_support_units),
+        *(1.0 if obs.get("faction", "humans") == faction else 0.0 for faction in FACTIONS),
     ]
 
     moving_totals = _moving_node_totals(obs, player_id)
@@ -1025,6 +1271,7 @@ def _encode_observation_absolute(obs: dict, player_id: str) -> np.ndarray:
             1.0 if node_id in lord_path_nodes else 0.0,
             1.0 if node_id in lord_target_nodes else 0.0,
         ])
+        features.extend(_building_features(node, player_id))
         features.extend(moving_totals[node_id])
         features.extend(battle_totals[node_id])
         features.extend(edge_battle_totals[node_id])

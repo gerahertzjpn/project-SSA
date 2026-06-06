@@ -2,8 +2,18 @@ import random
 from collections import deque
 
 from ..core.engine import Action
-from ..core.constants import ActionType, UnitType, UNIT_COST
-from ..core.map import ADJACENCY
+from ..core.constants import (
+    ActionType,
+    BuildingType,
+    UnitType,
+    BUILDING_COST,
+    CORE_BUILDINGS,
+    FACTION_UNIQUE_BUILDINGS,
+    UNIT_COST,
+    UNIT_FACTION,
+    unit_tech_requirements,
+)
+from ..core.map import ADJACENCY, NODE_TYPES, NodeType
 from .base import Bot
 
 UNIT_TYPES = list(UNIT_COST)
@@ -20,7 +30,7 @@ class RandomBot(Bot):
         nodes = obs["nodes"]
         baron = obs.get("baron", {})
 
-        affordable = [ut for ut in UNIT_TYPES if UNIT_COST[ut] <= resources]
+        affordable = [ut for ut in UNIT_TYPES if UNIT_COST[ut] <= resources and self._unit_unlocked(obs, ut)]
 
         choices = [ActionType.HOLD]
         if affordable:
@@ -37,6 +47,10 @@ class RandomBot(Bot):
         if movable_nodes:
             choices.append(ActionType.MOVE)
 
+        build_options = self._build_options(obs)
+        if build_options:
+            choices.append(ActionType.BUILD)
+
         action_type = self.rng.choice(choices)
 
         if action_type == ActionType.PRODUCE and affordable:
@@ -47,7 +61,70 @@ class RandomBot(Bot):
             dst = self.rng.choice(neighbors)
             return Action(action_type=ActionType.MOVE, source=src, destination=dst)
 
+        if action_type == ActionType.BUILD and build_options:
+            node_id, building_type = self.rng.choice(build_options)
+            return Action(action_type=ActionType.BUILD, destination=node_id, building_type=building_type)
+
         return Action(action_type=ActionType.HOLD)
+
+    def _build_options(self, obs: dict) -> list[tuple[str, BuildingType]]:
+        resources = float(obs.get("resources", 0.0) or 0.0)
+        core_node = obs.get("core_node")
+        options: list[tuple[str, BuildingType]] = []
+        completed = {
+            building.get("building_type")
+            for node in (obs.get("nodes", {}) or {}).values()
+            for building in node.get("buildings", []) or []
+            if (
+                building.get("owner") == self.player_id
+                and building.get("complete")
+                and float(building.get("hp", 0.0) or 0.0) > 0
+            )
+        }
+        for node_id, node in (obs.get("nodes", {}) or {}).items():
+            if node.get("owner") != self.player_id or int(node.get("neutral_hp", 0) or 0) > 0:
+                continue
+            existing = [
+                building for building in node.get("buildings", []) or []
+                if building.get("owner") == self.player_id
+            ]
+            existing_types = {building.get("building_type") for building in existing}
+            node_type = NODE_TYPES[node_id]
+            if node_type == NodeType.CONTROL_POINT and not existing:
+                if resources >= BUILDING_COST[BuildingType.TURRET]:
+                    options.append((node_id, BuildingType.TURRET))
+            elif node_type == NodeType.CORE and node_id == core_node and len(existing) < 2:
+                faction = obs.get("faction", "humans")
+                unique_by_value = {
+                    building.value: owner_faction
+                    for owner_faction, building in FACTION_UNIQUE_BUILDINGS.items()
+                }
+                for building_type in CORE_BUILDINGS:
+                    required_faction = unique_by_value.get(building_type.value)
+                    if required_faction is not None and required_faction != faction:
+                        continue
+                    if building_type.value in existing_types:
+                        continue
+                    if building_type == BuildingType.TECH_2 and BuildingType.TECH_1.value not in completed:
+                        continue
+                    if resources >= BUILDING_COST[building_type]:
+                        options.append((node_id, building_type))
+        return options
+
+    def _unit_unlocked(self, obs: dict, unit_type: UnitType) -> bool:
+        if UNIT_FACTION.get(unit_type) != obs.get("faction", "humans"):
+            return False
+        completed = {
+            building.get("building_type")
+            for node in (obs.get("nodes", {}) or {}).values()
+            for building in node.get("buildings", []) or []
+            if (
+                building.get("owner") == self.player_id
+                and building.get("complete")
+                and float(building.get("hp", 0.0) or 0.0) > 0
+            )
+        }
+        return all(required.value in completed for required in unit_tech_requirements(unit_type))
 
     def _accessible_targets(self, src: str, nodes: dict, baron: dict | None = None) -> list[str]:
         baron = baron or {}

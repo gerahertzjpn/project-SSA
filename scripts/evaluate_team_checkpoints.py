@@ -361,8 +361,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--workers", type=int, default=16)
     parser.add_argument("--torch-threads", type=int, default=1)
     parser.add_argument("--controlled-players", type=parse_players, default=("A1", "A2", "A3"))
-    parser.add_argument("--opponent-bot", choices=["scripted", "random"], default="scripted")
-    parser.add_argument("--ally-bot", choices=["scripted", "random"], default="scripted")
+    scripted_choices = ["scripted", "scripted_core", "scripted_core_raider", "scripted_core_bmp"]
+    parser.add_argument("--opponent-bot", choices=scripted_choices + ["random", "policy"], default="scripted")
+    parser.add_argument("--ally-bot", choices=scripted_choices + ["random"], default="scripted")
+    parser.add_argument("--opponent-policy-checkpoint", default=None, help="Frozen team checkpoint for opponent_bot=policy")
+    parser.add_argument(
+        "--opponent-policy-mode",
+        choices=["stochastic", "argmax"],
+        default="stochastic",
+        help="How the frozen policy opponent chooses actions",
+    )
     parser.add_argument("--max-ticks", type=int, default=300)
     parser.add_argument("--hidden-size", type=int, default=128)
     parser.add_argument("--include-random-legal", action="store_true")
@@ -373,6 +381,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.opponent_bot == "policy" and not args.opponent_policy_checkpoint:
+        raise ValueError("--opponent-policy-checkpoint is required with --opponent-bot policy")
+    if args.opponent_bot != "policy" and args.opponent_policy_checkpoint:
+        raise ValueError("--opponent-policy-checkpoint requires --opponent-bot policy")
     started = time.strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.out_dir or f"training_runs/evals/team_eval_{started}")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -390,6 +402,8 @@ def main() -> None:
         controlled_players=controlled_players,
         opponent_bot=args.opponent_bot,
         ally_bot=args.ally_bot,
+        opponent_policy_checkpoint=args.opponent_policy_checkpoint,
+        opponent_policy_deterministic=args.opponent_policy_mode == "argmax",
         max_ticks=int(args.max_ticks),
         hidden_size=int(args.hidden_size),
         workers=int(args.workers),
@@ -409,6 +423,8 @@ def main() -> None:
         "controlled_players": list(controlled_players),
         "ally_bot": args.ally_bot,
         "opponent_bot": args.opponent_bot,
+        "opponent_policy_checkpoint": args.opponent_policy_checkpoint,
+        "opponent_policy_mode": args.opponent_policy_mode,
         "max_ticks": int(args.max_ticks),
     }
     print_record(config_record)
