@@ -15,7 +15,8 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 from src.training.ppo_trainer import summarize_action_distribution
-from src.training.spaces import ACTION_SPECS, movable_sources, team_of
+from src.core.constants import ActionType
+from src.training.spaces import decode_action, movable_sources, team_of
 from src.training.team_env import TeamTrainingEnv
 from src.training.team_ppo_trainer import TeamPPOConfig, _env_config, make_team_policies
 
@@ -61,7 +62,7 @@ def choose_policy_actions(policies: dict, env: TeamTrainingEnv, observations: di
     entropies = {}
     for player_id, policy in policies.items():
         step = policy.act(observations[player_id], masks[player_id], deterministic=deterministic)
-        actions[player_id] = int(step.action)
+        actions[player_id] = step.action
         entropies[player_id] = float(step.entropy)
     return actions, masks, entropies
 
@@ -93,16 +94,21 @@ def analyze_episode(policies: dict, config: TeamPPOConfig, seed: int, determinis
         destinations = []
         moved_to_battle = False
         for player_id, action_index in actions.items():
-            spec = ACTION_SPECS[int(action_index)]
-            action_counts[player_id].append(int(action_index))
+            decoded = decode_action(action_index, raw[player_id], player_id, assume_legal=True)
+            steps = decoded.sub_actions or [decoded]
+            move_steps = [
+                step for step in steps
+                if step.action_type == ActionType.MOVE and step.destination
+            ]
+            action_counts[player_id].append(action_index)
             masks_by_player[player_id].append(masks[player_id])
             entropies[player_id].append(step_entropies[player_id])
-            if spec.kind == "HOLD" and movable_sources(raw[player_id], player_id):
+            if decoded.action_type == ActionType.HOLD and movable_sources(raw[player_id], player_id):
                 idle_with_units[player_id] += 1
-            if spec.kind == "MOVE" and spec.destination:
-                destinations.append(spec.destination)
-                move_destinations[spec.destination] += 1
-                if spec.destination in battle_nodes:
+            for move in move_steps:
+                destinations.append(move.destination)
+                move_destinations[move.destination] += 1
+                if move.destination in battle_nodes:
                     moved_to_battle = True
 
         if destinations:

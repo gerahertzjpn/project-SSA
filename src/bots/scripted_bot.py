@@ -9,7 +9,10 @@ from collections import deque
 from ..core.engine import Action
 from ..core.constants import (
     ActionType,
+    BASIC_UNITS_BY_FACTION,
     BuildingType,
+    TECH1_UNITS_BY_FACTION,
+    TECH2_UNITS_BY_FACTION,
     UnitType,
     BUILDING_COST,
     UNIT_COST,
@@ -40,7 +43,7 @@ class ScriptedBot(Bot):
         super().__init__(player_id, team)
         self.core_focus = core_focus
         self.build_plan = (
-            (BuildingType.ECONOMY_COLLECTOR, BuildingType.TECH_1)
+            (BuildingType.TECH_1, BuildingType.TECH_2)
             if build_plan is None else tuple(build_plan)
         )
         self.production_priority = tuple(production_priority or ())
@@ -49,41 +52,89 @@ class ScriptedBot(Bot):
         self.produce_threshold = int(produce_threshold)
 
     def act(self, obs: dict) -> Action:
-        resources = obs["resources"]
         core_node = obs["core_node"]
         nodes = obs["nodes"]
         baron = obs.get("baron", {})
         player_id = self.player_id
 
-        core_units = sum(nodes[core_node]["units"].values())
-        build_action = self._build_action(obs)
+        steps: list[Action] = []
+
+        move_action = self._move_action(obs, player_id, core_node, nodes, baron)
+        if move_action is not None:
+            steps.append(move_action)
+
+        defer_opening_build = self._defer_opening_build(obs)
+        build_action = None if defer_opening_build else self._build_action(obs)
+        build_reserve = self._action_cost(build_action)
         if build_action is not None:
-            return build_action
-        if self._saving_for_first_building(obs):
-            return Action(action_type=ActionType.HOLD)
+            steps.append(build_action)
 
-        # Step 1: accumulate units
-        if core_units < self.produce_threshold:
-            produce_action = self._production_action(obs)
+        if defer_opening_build or not self._saving_for_first_building(obs):
+            produce_action = self._production_action(obs, reserve=build_reserve)
             if produce_action is not None:
-                return produce_action
-            return Action(action_type=ActionType.HOLD)
+                steps.append(produce_action)
 
-        # Step 2: find a target node to march toward
+        if not steps:
+            return Action(action_type=ActionType.HOLD)
+        if len(steps) == 1:
+            return steps[0]
+        return Action(action_type=ActionType.MULTI, sub_actions=steps[:3])
+
+    def _move_action(
+        self,
+        obs: dict,
+        player_id: str,
+        core_node: str,
+        nodes: dict,
+        baron: dict | None = None,
+    ) -> Action | None:
         target = self._find_target(player_id, core_node, nodes, baron)
         if target is None:
-            # Keep producing while waiting
-            produce_action = self._production_action(obs)
-            if produce_action is not None:
-                return produce_action
-            return Action(action_type=ActionType.HOLD)
+            return None
 
-        # Step 3: find best node to send from (own nodes with most units)
         best_src = self._find_best_src(player_id, core_node, target, nodes, baron)
         if best_src is None:
-            return Action(action_type=ActionType.HOLD)
+            return None
+
+        source_units = sum(int(value or 0) for value in nodes[best_src].get("units", {}).values())
+        if source_units < self._move_threshold(obs):
+            return None
 
         return Action(action_type=ActionType.MOVE, source=best_src, destination=target)
+
+    def _move_threshold(self, obs: dict) -> int:
+        faction = obs.get("faction", "humans")
+        if faction == "robots":
+            return max(2, min(self.produce_threshold, 3))
+        return self.produce_threshold
+
+    def _defer_opening_build(self, obs: dict) -> bool:
+        if obs.get("faction", "humans") != "robots" or not self.build_plan:
+            return False
+        return self._owned_unit_count(obs) < self._move_threshold(obs)
+
+    def _owned_unit_count(self, obs: dict) -> int:
+        total = 0
+        for node in (obs.get("nodes", {}) or {}).values():
+            if node.get("owner") == self.player_id:
+                total += sum(int(value or 0) for value in (node.get("units", {}) or {}).values())
+            total += sum(
+                int(value or 0)
+                for value in ((node.get("visiting_units", {}) or {}).get(self.player_id, {}) or {}).values()
+            )
+        for group in obs.get("moving_groups", []) or []:
+            if group.get("player_id") == self.player_id:
+                total += sum(int(value or 0) for value in (group.get("units", {}) or {}).values())
+        return total
+
+    def _action_cost(self, action: Action | None) -> float:
+        if action is None:
+            return 0.0
+        if action.action_type == ActionType.BUILD and action.building_type is not None:
+            return float(BUILDING_COST[action.building_type])
+        if action.action_type == ActionType.PRODUCE and action.unit_type is not None:
+            return float(UNIT_COST[action.unit_type])
+        return 0.0
 
     def _find_target(self, player_id: str, core_node: str, nodes: dict, baron: dict | None = None) -> str | None:
         """Find nearest neutral CP or enemy node. BFS from core."""
@@ -161,6 +212,8 @@ class ScriptedBot(Bot):
         owner = nodes[node_id]["owner"]
         if node_id == "Baron":
             return True
+        if NODE_TYPES[node_id] == NodeType.CORE and owner == "NEUTRAL":
+            return False
         if owner == "NEUTRAL" or self._is_friendly_owner(player_id, owner):
             return True
         return self._is_transit_node(player_id, via_node, nodes, baron)
@@ -171,6 +224,8 @@ class ScriptedBot(Bot):
             and nodes[node_id]["owner"] == "NEUTRAL"
             and int(baron.get("hp", 0) or 0) > 0
         ):
+            return False
+        if NODE_TYPES[node_id] == NodeType.CORE and nodes[node_id]["owner"] == "NEUTRAL":
             return False
         owner = nodes[node_id]["owner"]
         if owner == "NEUTRAL":
@@ -208,8 +263,8 @@ class ScriptedBot(Bot):
             return set(TEAM_A_PLAYERS) - {player_id}
         return set(TEAM_B_PLAYERS) - {player_id}
 
-    def _build_action(self, obs: dict) -> Action | None:
-        resources = float(obs.get("resources", 0.0) or 0.0)
+    def _build_action(self, obs: dict, reserve: float = 0.0) -> Action | None:
+        resources = float(obs.get("resources", 0.0) or 0.0) - float(reserve or 0.0)
         core_node = obs.get("core_node")
         nodes = obs.get("nodes", {}) or {}
 
@@ -276,8 +331,10 @@ class ScriptedBot(Bot):
         resources = float(obs.get("resources", 0.0) or 0.0)
         return resources < BUILDING_COST[self.build_plan[0]]
 
-    def _production_action(self, obs: dict) -> Action | None:
-        resources = float(obs.get("resources", 0.0) or 0.0)
+    def _production_action(self, obs: dict, reserve: float = 0.0) -> Action | None:
+        resources = float(obs.get("resources", 0.0) or 0.0) - float(reserve or 0.0)
+        if resources < min(UNIT_COST.values()):
+            return None
         faction = obs.get("faction", "humans")
         completed = {
             building.get("building_type")
@@ -289,7 +346,8 @@ class ScriptedBot(Bot):
                 and float(building.get("hp", 0.0) or 0.0) > 0
             )
         }
-        for unit_type in self._production_priority_for_faction(faction):
+        priority = self.production_priority or self._dynamic_production_priority(obs, faction, completed)
+        for unit_type in priority:
             if UNIT_FACTION.get(unit_type) != faction:
                 continue
             if any(required.value not in completed for required in unit_tech_requirements(unit_type)):
@@ -297,6 +355,28 @@ class ScriptedBot(Bot):
             if resources >= UNIT_COST[unit_type]:
                 return Action(action_type=ActionType.PRODUCE, unit_type=unit_type)
         return None
+
+    def _dynamic_production_priority(self, obs: dict, faction: str, completed: set[str]) -> tuple[UnitType, ...]:
+        priority: list[UnitType] = []
+        for unit_type in TECH2_UNITS_BY_FACTION.get(faction, ()):
+            if all(required.value in completed for required in unit_tech_requirements(unit_type)):
+                priority.append(unit_type)
+        for unit_type in TECH1_UNITS_BY_FACTION.get(faction, ()):
+            if all(required.value in completed for required in unit_tech_requirements(unit_type)):
+                priority.append(unit_type)
+
+        core_node = obs.get("core_node")
+        core_units = (obs.get("nodes", {}) or {}).get(core_node, {}).get("units", {}) or {}
+        basics = tuple(BASIC_UNITS_BY_FACTION.get(faction, ()))
+        priority.extend(sorted(
+            basics,
+            key=lambda unit: (
+                int(core_units.get(unit.value, 0) or 0),
+                int(UNIT_COST[unit]),
+                unit.value,
+            ),
+        ))
+        return tuple(priority)
 
     def _production_priority_for_faction(self, faction: str) -> tuple[UnitType, ...]:
         if self.production_priority:
@@ -322,14 +402,20 @@ class ScriptedBot(Bot):
 
 def make_scripted_bot_variant(model_id: str, player_id: str, team: str) -> ScriptedBot | None:
     if model_id == "scripted":
-        return ScriptedBot(player_id, team)
+        return ScriptedBot(
+            player_id,
+            team,
+            core_focus=True,
+            cp_turrets=False,
+            save_for_first_building=False,
+            produce_threshold=6,
+        )
     if model_id == "scripted_core":
         return ScriptedBot(
             player_id,
             team,
             core_focus=True,
             build_plan=(),
-            production_priority=(UnitType.SKIRMISHER, UnitType.VANGUARD, UnitType.RANGER),
             cp_turrets=False,
             save_for_first_building=False,
             produce_threshold=7,
@@ -340,8 +426,8 @@ def make_scripted_bot_variant(model_id: str, player_id: str, team: str) -> Scrip
             team,
             core_focus=True,
             build_plan=(BuildingType.TECH_1,),
-            production_priority=(UnitType.RAIDER, UnitType.SKIRMISHER, UnitType.VANGUARD),
             cp_turrets=False,
+            save_for_first_building=False,
             produce_threshold=7,
         )
     if model_id == "scripted_core_bmp":
@@ -350,8 +436,8 @@ def make_scripted_bot_variant(model_id: str, player_id: str, team: str) -> Scrip
             team,
             core_focus=True,
             build_plan=(BuildingType.TECH_1, BuildingType.TECH_2),
-            production_priority=(UnitType.BMP, UnitType.RAIDER, UnitType.VANGUARD),
             cp_turrets=False,
+            save_for_first_building=False,
             produce_threshold=5,
         )
     return None

@@ -5,9 +5,11 @@ import numpy as np
 from src.core.constants import (
     ActionType,
     BARON_HP,
+    BUILDING_COST,
     CORE_HP,
     SPECIAL_DEST_ALLY_LORD,
     SPECIAL_DEST_ENEMY_LORD,
+    BuildingType,
     UnitType,
 )
 from src.core.combat import build_player_units
@@ -17,11 +19,13 @@ from src.training.spaces import (
     ACTION_DIM,
     ACTION_SPECS,
     BATTLE_FEATURES,
+    BUILD_ACTION_START,
     BUILDING_FEATURES,
     COMBAT_RELATIONS,
     CORE_TYPE_FEATURES,
     GLOBAL_FEATURES,
     MIRROR_NODES,
+    MOVE_ACTION_START,
     MOVEMENT_BUCKETS,
     MOVEMENT_FEATURES,
     NODE_FEATURES,
@@ -32,6 +36,7 @@ from src.training.spaces import (
     OBSERVATION_VERSION,
     STATIONED_UNIT_FEATURES,
     UNIT_ORDER,
+    action_is_legal,
     decode_action,
     encode_observation,
     estimate_route_ticks,
@@ -41,6 +46,7 @@ from src.training.spaces import (
     mirror_observation,
     mirrored_node_id,
     mirrored_player_id,
+    normalize_action,
     policy_observation,
     route_metrics_for_node,
     special_lord_destination_node,
@@ -53,7 +59,7 @@ def observe_state(state, player_id="A1"):
     return engine.observe(player_id)
 
 
-def action_index(kind, source=None, destination=None, intent="CAPTURE", unit_type=None):
+def action_index(kind, source=None, destination=None, intent="CAPTURE", unit_type=None, building_type=None):
     for index, spec in enumerate(ACTION_SPECS):
         if (
             spec.kind == kind
@@ -61,6 +67,7 @@ def action_index(kind, source=None, destination=None, intent="CAPTURE", unit_typ
             and spec.destination == destination
             and spec.intent == intent
             and spec.unit_type == unit_type
+            and spec.building_type == building_type
         ):
             return index
     raise AssertionError(f"Action spec not found: {kind} {destination} {intent} {unit_type}")
@@ -85,8 +92,8 @@ def test_training_observation_vector_is_fixed_and_finite():
     obs = observe_state(make_initial_state(seed=1))
     vector = encode_observation(obs, "A1")
 
-    assert OBSERVATION_VERSION == "train_obs_v3.0"
-    assert ACTION_DIM == 5515
+    assert OBSERVATION_VERSION == "train_obs_v3.1"
+    assert ACTION_DIM == 447
     assert vector.shape == (OBSERVATION_DIM,)
     assert vector.dtype == np.float32
     assert np.isfinite(vector).all()
@@ -164,14 +171,8 @@ def test_mirror_action_index_is_lossless_for_full_action_space():
     for index, spec in enumerate(ACTION_SPECS):
         mirrored_index = mirror_action_index(index)
         roundtrip_index = mirror_action_index(mirrored_index)
-        mirrored_spec = ACTION_SPECS[mirrored_index]
 
-        assert roundtrip_index == index
-        assert mirrored_spec.kind == spec.kind
-        assert mirrored_spec.unit_type == spec.unit_type
-        assert mirrored_spec.source == mirrored_node_id(spec.source)
-        assert mirrored_spec.destination == mirrored_node_id(spec.destination)
-        assert mirrored_spec.intent == spec.intent
+        np.testing.assert_array_equal(roundtrip_index, normalize_action(index))
 
 
 def test_b_side_legal_actions_decode_as_exact_mirror_of_a_side_actions():
@@ -279,14 +280,15 @@ def test_training_action_mask_and_decode_initial_actions():
     assert action.destination == "CP3"
     assert action.intent == "CAPTURE"
 
-    bundled_index = action_index(
-        "PRODUCE_MOVE",
-        source="A1",
-        destination="CP3",
-        intent="CAPTURE",
-        unit_type=UnitType.SKIRMISHER,
+    bundled_index = np.array(
+        [
+            action_index("PRODUCE", unit_type=UnitType.SKIRMISHER),
+            action_index("MOVE", source="A1", destination="CP3", intent="CAPTURE") - MOVE_ACTION_START,
+            0,
+        ],
+        dtype=np.int64,
     )
-    assert mask[bundled_index]
+    assert action_is_legal(bundled_index, mask)
 
     bundled = decode_action(bundled_index, obs, "A1")
     assert bundled.action_type == ActionType.MULTI
@@ -300,12 +302,13 @@ def test_multi_action_moves_existing_units_before_production():
     class BundleBot:
         def act(self, obs):
             return decode_action(
-                action_index(
-                    "PRODUCE_MOVE",
-                    source="A1",
-                    destination="CP1",
-                    intent="CAPTURE",
-                    unit_type=UnitType.SKIRMISHER,
+                np.array(
+                    [
+                        action_index("PRODUCE", unit_type=UnitType.SKIRMISHER),
+                        action_index("MOVE", source="A1", destination="CP1", intent="CAPTURE") - MOVE_ACTION_START,
+                        0,
+                    ],
+                    dtype=np.int64,
                 ),
                 obs,
                 "A1",
@@ -321,6 +324,26 @@ def test_multi_action_moves_existing_units_before_production():
     assert state.moving_groups[0].units == {UnitType.VANGUARD.value: 2}
 
 
+def test_factorized_mask_reserves_resources_for_legal_builds_before_production():
+    state = make_initial_state(seed=24)
+    state.players["A1"].resources = float(BUILDING_COST[BuildingType.ECONOMY_COLLECTOR])
+    obs = observe_state(state, "A1")
+    mask = legal_action_mask(obs, "A1")
+
+    collector_index = action_index("BUILD", destination="A1", building_type=BuildingType.ECONOMY_COLLECTOR)
+    skirmisher_index = action_index("PRODUCE", unit_type=UnitType.SKIRMISHER)
+
+    assert mask[collector_index]
+    assert not mask[skirmisher_index]
+
+    state.players["A1"].resources = float(BUILDING_COST[BuildingType.ECONOMY_COLLECTOR] + 2)
+    obs = observe_state(state, "A1")
+    mask = legal_action_mask(obs, "A1")
+
+    assert mask[collector_index]
+    assert mask[skirmisher_index]
+
+
 def test_b_side_action_space_uses_policy_perspective_and_decodes_to_absolute_nodes():
     obs = observe_state(make_initial_state(seed=2), "B1")
     canonical = action_index("MOVE", source="A1", destination="CP1", intent="CAPTURE")
@@ -329,7 +352,7 @@ def test_b_side_action_space_uses_policy_perspective_and_decodes_to_absolute_nod
 
     assert mask[canonical]
     assert not mask[absolute]
-    assert mirror_action_index(canonical) == absolute
+    np.testing.assert_array_equal(mirror_action_index(canonical), normalize_action(absolute))
 
     action = decode_action(canonical, obs, "B1")
 
@@ -337,6 +360,26 @@ def test_b_side_action_space_uses_policy_perspective_and_decodes_to_absolute_nod
     assert action.source == "B1"
     assert action.destination == "CP5"
     assert action.intent == "CAPTURE"
+
+
+def test_dead_player_and_dead_core_are_not_legal_action_targets():
+    state = make_initial_state(seed=23)
+    state.players["A1"].alive = False
+    state.players["A1"].core_hp = 0.0
+    state.nodes["A1"].owner = "NEUTRAL"
+    state.nodes["A1"].units = {}
+
+    dead_obs = observe_state(state, "A1")
+    dead_mask = legal_action_mask(dead_obs, "A1")
+    assert dead_mask[0]
+    assert dead_mask[MOVE_ACTION_START]
+    assert dead_mask[BUILD_ACTION_START]
+    assert int(dead_mask.sum()) == 3
+
+    a2_obs = observe_state(state, "A2")
+    move_to_dead_core = action_index("MOVE", source="A2", destination="A1", intent="CAPTURE")
+    assert find_route_obs("A2", "A2", "A1", a2_obs) is None
+    assert not legal_action_mask(a2_obs, "A2")[move_to_dead_core]
 
 
 def test_training_routes_through_guarded_neutral_but_not_enemy_frontline():

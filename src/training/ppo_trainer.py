@@ -4,6 +4,7 @@ import json
 import math
 import multiprocessing as mp
 import os
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -14,7 +15,20 @@ from torch import nn
 
 from src.training.env import TrainingEnv, TrainingEnvConfig
 from src.training.policy import MaskedActorCritic, to_cpu_state_dict
-from src.training.spaces import ACTION_DIM, ACTION_SPECS, OBSERVATION_DIM, OBSERVATION_VERSION, team_of
+from src.training.spaces import (
+    ACTION_DIM,
+    ACTION_HEAD_DIMS,
+    BUILD_ACTION_SPECS,
+    MOVE_ACTION_SPECS,
+    OBSERVATION_DIM,
+    OBSERVATION_VERSION,
+    UNIT_ORDER,
+    action_is_legal,
+    flatten_factorized_action,
+    normalize_action,
+    sample_legal_action as sample_legal_factorized_action,
+    team_of,
+)
 
 
 @dataclass
@@ -304,57 +318,67 @@ def _mean(items: list[dict], key: str) -> float:
     return float(sum(float(item.get(key, 0.0) or 0.0) for item in items) / len(items))
 
 
-def action_label(action_index: int) -> str:
-    if action_index < 0 or action_index >= ACTION_DIM:
-        return f"{action_index}:INVALID"
-    spec = ACTION_SPECS[int(action_index)]
-    if spec.kind == "HOLD":
-        return f"{action_index}:HOLD"
-    if spec.kind == "PRODUCE" and spec.unit_type is not None:
-        return f"{action_index}:PRODUCE:{spec.unit_type.value}"
-    if spec.kind == "MOVE" and spec.source and spec.destination:
-        return f"{action_index}:MOVE:{spec.intent}:{spec.source}->{spec.destination}"
-    if spec.kind == "PRODUCE_MOVE" and spec.unit_type is not None and spec.source and spec.destination:
-        return (
-            f"{action_index}:PRODUCE_MOVE:{spec.unit_type.value}"
-            f"+{spec.intent}:{spec.source}->{spec.destination}"
-        )
-    return f"{action_index}:{spec.kind}"
+def action_label(action_index) -> str:
+    produce_local, move_local, build_local = flatten_factorized_action(action_index)
+    parts: list[str] = []
+    if produce_local > 0 and produce_local <= len(UNIT_ORDER):
+        parts.append(f"P:{UNIT_ORDER[produce_local - 1].value}")
+    if move_local > 0 and move_local <= len(MOVE_ACTION_SPECS):
+        spec = MOVE_ACTION_SPECS[move_local - 1]
+        parts.append(f"M:{spec.intent}:{spec.source}->{spec.destination}")
+    if build_local > 0 and build_local <= len(BUILD_ACTION_SPECS):
+        spec = BUILD_ACTION_SPECS[build_local - 1]
+        parts.append(f"B:{spec.building_type.value}@{spec.destination}")
+    if not parts:
+        parts.append("HOLD")
+    return f"{(produce_local, move_local, build_local)}:" + "+".join(parts)
 
 
-def action_kind_label(action_index: int) -> str:
-    if action_index < 0 or action_index >= ACTION_DIM:
-        return "INVALID"
-    spec = ACTION_SPECS[int(action_index)]
-    if spec.kind == "MOVE":
-        return f"MOVE_{spec.intent}"
-    if spec.kind == "PRODUCE_MOVE":
-        return f"PRODUCE_MOVE_{spec.intent}"
-    return spec.kind
+def action_kind_label(action_index) -> str:
+    produce_local, move_local, build_local = flatten_factorized_action(action_index)
+    parts: list[str] = []
+    if produce_local > 0:
+        parts.append("PRODUCE")
+    if move_local > 0 and move_local <= len(MOVE_ACTION_SPECS):
+        parts.append(f"MOVE_{MOVE_ACTION_SPECS[move_local - 1].intent}")
+    if build_local > 0:
+        parts.append("BUILD")
+    return "+".join(parts) if parts else "HOLD"
 
 
 def _invalid_action_count(actions: np.ndarray, masks: Optional[list[np.ndarray] | np.ndarray]) -> int:
     if masks is None:
         return 0
     mask_array = np.asarray(masks, dtype=np.bool_)
-    if mask_array.shape[0] != actions.shape[0]:
+    action_array = _normalize_action_array(actions)
+    if mask_array.shape[0] != action_array.shape[0]:
         raise ValueError("Action/mask count mismatch while summarizing actions")
 
     invalid = 0
-    for index, action in enumerate(actions):
-        action_index = int(action)
-        if action_index < 0 or action_index >= ACTION_DIM or not bool(mask_array[index, action_index]):
+    for index, action in enumerate(action_array):
+        if not action_is_legal(action, mask_array[index]):
             invalid += 1
     return invalid
 
 
+def _normalize_action_array(actions: list | np.ndarray) -> np.ndarray:
+    action_array = np.asarray(actions, dtype=np.int64)
+    if action_array.size == 0:
+        return action_array.reshape((0, len(ACTION_HEAD_DIMS)))
+    if action_array.ndim == 1:
+        return np.asarray([normalize_action(int(action)) for action in action_array], dtype=np.int64)
+    if action_array.shape[-1] == len(ACTION_HEAD_DIMS):
+        return action_array.reshape((-1, len(ACTION_HEAD_DIMS)))
+    return np.asarray([normalize_action(action) for action in action_array.reshape(-1)], dtype=np.int64)
+
+
 def summarize_action_distribution(
-    actions: list[int] | np.ndarray,
+    actions: list | np.ndarray,
     masks: Optional[list[np.ndarray] | np.ndarray] = None,
     top_n: int = 8,
 ) -> dict:
-    action_array = np.asarray(actions, dtype=np.int64)
-    total = int(action_array.size)
+    action_array = _normalize_action_array(actions)
+    total = int(action_array.shape[0])
     if total <= 0:
         return {
             "total_actions": 0,
@@ -367,19 +391,18 @@ def summarize_action_distribution(
             "top_actions": [],
         }
 
-    counts = np.bincount(action_array, minlength=ACTION_DIM)
-    nonzero = np.flatnonzero(counts)
+    counter = Counter(tuple(int(value) for value in action) for action in action_array)
     kind_counts: dict[str, int] = {}
     for action_index in action_array:
-        key = action_kind_label(int(action_index))
+        key = action_kind_label(action_index)
         kind_counts[key] = kind_counts.get(key, 0) + 1
 
-    top_indexes = sorted(nonzero, key=lambda idx: (-int(counts[idx]), int(idx)))[:top_n]
+    top_indexes = sorted(counter, key=lambda action: (-counter[action], action))[:top_n]
     top_actions = [
         {
-            "action": action_label(int(index)),
-            "count": int(counts[index]),
-            "rate": round(float(counts[index]) / total, 6),
+            "action": action_label(index),
+            "count": int(counter[index]),
+            "rate": round(float(counter[index]) / total, 6),
         }
         for index in top_indexes
     ]
@@ -388,7 +411,7 @@ def summarize_action_distribution(
 
     return {
         "total_actions": total,
-        "unique_actions": int(nonzero.size),
+        "unique_actions": int(len(counter)),
         "invalid_actions": invalid_actions,
         "invalid_action_rate": round(float(invalid_actions) / total, 6),
         "dominant_action": dominant["action"] if dominant else None,
@@ -406,7 +429,7 @@ def summarize_action_distribution(
 
 def summarize_training_episodes(
     episodes: list[dict],
-    actions: Optional[list[int] | np.ndarray] = None,
+    actions: Optional[list | np.ndarray] = None,
     masks: Optional[list[np.ndarray] | np.ndarray] = None,
 ) -> dict:
     summary = {
@@ -480,8 +503,7 @@ def evaluate_random_legal_policy(config: PPOConfig, episodes: int, seed: int) ->
         done = False
         while not done:
             mask = env.action_mask()
-            legal = np.flatnonzero(mask)
-            action = int(rng.choice(legal)) if len(legal) else 0
+            action = sample_legal_factorized_action(mask, rng)
             masks.append(mask)
             actions.append(action)
             obs, reward, terminal, truncated, info = env.step(action)

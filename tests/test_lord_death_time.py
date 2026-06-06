@@ -267,15 +267,28 @@ def test_killing_neutral_lord_spawns_allied_lord_push():
 
 
 def test_allied_lord_core_approach_does_not_become_normal_move():
-    seed = 2026060503
-    state = make_initial_state(seed=seed)
-    engine = GameEngine(state, random_bots(seed), record_trace=True, record_replay=True)
+    state = make_initial_state(seed=2026060503)
+    state.tick = 10
+    state.nodes["Baron"].owner = "A1"
+    state.nodes["CP5"].owner = "A1"
+    state.nodes["CP5"].neutral_units = {}
+    state.baron.allied_lord_owner = "A1"
+    state.baron.allied_lord_hp = float(BARON_HP)
+    state.baron.allied_lord_target = "B1"
+    state.baron.allied_lord_path = ["Baron", "CP5", "B1"]
+    state.baron.allied_lord_ready_tick = state.tick
+    state.baron.allied_lord_arrival_tick = state.tick + 10
+    state.baron.allied_lord_alive = True
+    engine = GameEngine(state, {}, record_trace=True, record_replay=True)
 
-    engine.run()
-
+    saw_lord_push = False
     saw_core_approach = False
-    for tick in engine.replay_ticks:
+    for _ in range(80):
+        engine.tick()
+        tick = engine.replay_ticks[-1]
         for event in tick.get("events", []) or []:
+            if event.get("type") == "LORD_PUSH_STARTED":
+                saw_lord_push = True
             if (
                 event.get("type") == "BATTLE_STARTED"
                 and event.get("location_id") == "B1"
@@ -286,7 +299,10 @@ def test_allied_lord_core_approach_does_not_become_normal_move():
         for group in tick.get("moving_groups", []) or []:
             if int((group.get("units") or {}).get(UnitType.LORD.value, 0) or 0) > 0:
                 assert group.get("intent") == "LORD_PUSH"
+        if saw_core_approach:
+            break
 
+    assert saw_lord_push
     assert saw_core_approach
 
 

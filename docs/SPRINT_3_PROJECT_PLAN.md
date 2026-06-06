@@ -2,16 +2,17 @@
 
 Date: 2026-06-03
 
-## 2026-06-06 Three-Faction Roster Override
+## 2026-06-06 Three-Faction And Factorized-Action Override
 
 The active interface changed again after construction v0, faction schema,
 faction-unique base buildings, and active human/infected/robot unit rosters were
-added:
+added. It changed once more when the huge single categorical action space was
+replaced by factorized `produce`, `move`, and `build` heads:
 
 ```text
-OBSERVATION_VERSION = train_obs_v3.0
+OBSERVATION_VERSION = train_obs_v3.1
 OBSERVATION_DIM = 5188
-ACTION_DIM = 5515
+ACTION_DIM = 447
 ```
 
 All earlier Sprint 3 checkpoints are stale unless they are explicitly rebuilt
@@ -29,7 +30,7 @@ auto-regenerates after the configured no-damage delay. This keeps construction
 strategic without giving RL a repair/replace micro loop.
 
 Training warning: old Sprint 3 checkpoints are stale. The next serious run
-should train against `train_obs_v3.0` from a fresh compatible initialization.
+should train against `train_obs_v3.1` from a fresh compatible initialization.
 
 ## 2026-06-04 Pre-Training Update
 

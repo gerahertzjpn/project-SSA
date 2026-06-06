@@ -36,7 +36,7 @@ def test_collect_team_rollouts_has_one_buffer_per_controlled_player():
     for agent in rollout["agents"].values():
         assert agent["observations"].shape[0] == 6
         assert agent["masks"].shape[0] == 6
-        assert agent["actions"].shape == (6,)
+        assert agent["actions"].shape == (6, 3)
         assert agent["advantages"].shape == (6,)
         assert np.isfinite(agent["returns"]).all()
 
@@ -70,7 +70,7 @@ def test_collect_team_rollouts_role_shuffle_keeps_policy_buffers_aligned():
     for agent in rollout["agents"].values():
         assert agent["observations"].shape[0] == 6
         assert agent["masks"].shape[0] == 6
-        assert agent["actions"].shape == (6,)
+        assert agent["actions"].shape == (6, 3)
         assert agent["advantages"].shape == (6,)
         assert np.isfinite(agent["returns"]).all()
 

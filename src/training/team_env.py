@@ -14,10 +14,15 @@ from src.core.state import make_initial_state
 from src.training.env import ExternalActionBot
 from src.training.spaces import (
     ACTION_DIM,
+    BUILD_ACTION_START,
+    MOVE_ACTION_START,
     OBSERVATION_VERSION,
+    action_is_legal,
     decode_action,
     encode_observation,
+    flatten_factorized_action,
     legal_action_mask,
+    sample_legal_action as sample_legal_factorized_action,
     team_of,
 )
 
@@ -119,7 +124,7 @@ class TeamTrainingEnv:
         masks = self.action_masks()
         return observations, self._info(raw, reward_components={}, invalid_actions={}, masks=masks)
 
-    def step(self, actions: dict[str, int]) -> TeamStepResult:
+    def step(self, actions: dict[str, object]) -> TeamStepResult:
         if self.engine is None:
             self.reset()
         if self._done:
@@ -137,11 +142,9 @@ class TeamTrainingEnv:
         decoded_actions: dict[str, Action] = {}
         invalid_actions: dict[str, int] = {}
         for player_id in self.controlled_players:
-            action_index = int(actions.get(player_id, 0))
+            action_index = actions.get(player_id, 0)
             mask = masks_before[player_id]
-            is_invalid = (
-                action_index < 0 or action_index >= ACTION_DIM or not bool(mask[action_index])
-            )
+            is_invalid = not action_is_legal(action_index, mask)
             invalid_actions[player_id] = int(is_invalid)
             decoded = (
                 decode_action(action_index, raw_before[player_id], player_id, assume_legal=True)
@@ -205,11 +208,22 @@ class TeamTrainingEnv:
                 "intent": action.intent,
                 "unit_type": action.unit_type.value if action.unit_type else None,
                 "building_type": action.building_type.value if action.building_type else None,
+                "sub_actions": [
+                    {
+                        "type": step.action_type.value,
+                        "source": step.source,
+                        "destination": step.destination,
+                        "intent": step.intent,
+                        "unit_type": step.unit_type.value if step.unit_type else None,
+                        "building_type": step.building_type.value if step.building_type else None,
+                    }
+                    for step in (action.sub_actions or [])
+                ],
             }
             for player_id, action in decoded_actions.items()
         }
         info["action_indices"] = {
-            player_id: int(actions.get(player_id, 0))
+            player_id: list(flatten_factorized_action(actions.get(player_id, 0)))
             for player_id in self.controlled_players
         }
         return TeamStepResult(
@@ -263,15 +277,16 @@ class TeamTrainingEnv:
         if not self._player_alive(player_id):
             mask = np.zeros(ACTION_DIM, dtype=np.bool_)
             mask[0] = True
+            mask[MOVE_ACTION_START] = True
+            mask[BUILD_ACTION_START] = True
             return mask
         obs = raw_observation or self.engine.observe(player_id)
         return legal_action_mask(obs, player_id)
 
-    def sample_legal_actions(self) -> dict[str, int]:
+    def sample_legal_actions(self) -> dict[str, np.ndarray]:
         actions = {}
         for player_id, mask in self.action_masks().items():
-            legal = np.flatnonzero(mask)
-            actions[player_id] = int(self.rng.choice(legal)) if len(legal) else 0
+            actions[player_id] = sample_legal_factorized_action(mask, self.rng)
         return actions
 
     def _make_bots(self) -> dict[str, Bot]:

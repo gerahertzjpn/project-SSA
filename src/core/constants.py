@@ -77,18 +77,18 @@ UNIT_COST = {
     UnitType.VANGUARD: 3,
     UnitType.RANGER: 5,
     UnitType.SKIRMISHER: 2,
-    UnitType.RAIDER: 8,
-    UnitType.BMP: 20,
+    UnitType.RAIDER: 9,
+    UnitType.BMP: 26,
     UnitType.SWARMLING: 1,
     UnitType.SPITTER: 3,
     UnitType.BRUTE: 4,
-    UnitType.RAVAGER: 8,
-    UnitType.BEHEMOTH: 20,
-    UnitType.WALKER: 5,
-    UnitType.LASER: 7,
-    UnitType.DRONE: 3,
-    UnitType.GUARDIAN_MECH: 10,
-    UnitType.SIEGE_PLATFORM: 24,
+    UnitType.RAVAGER: 14,
+    UnitType.BEHEMOTH: 30,
+    UnitType.WALKER: 9,
+    UnitType.LASER: 11,
+    UnitType.DRONE: 6,
+    UnitType.GUARDIAN_MECH: 16,
+    UnitType.SIEGE_PLATFORM: 36,
 }
 
 UNIT_TECH_REQUIREMENTS = {
@@ -169,7 +169,7 @@ MAX_CONTROL_POINT_BUILDINGS = 1
 MAX_CORE_BUILDINGS = 2
 
 BUILDING_COST = {
-    BuildingType.TURRET: 24,
+    BuildingType.TURRET: 28,
     BuildingType.BOOSTER: 18,
     BuildingType.POWER: 22,
     BuildingType.LIFE: 22,
@@ -190,10 +190,10 @@ BUILDING_BUILD_TICKS = {
 
 BUILDING_STATS = {
     BuildingType.TURRET: {
-        "hp": 125,
-        "atk": 5,
+        "hp": 150,
+        "atk": 3,
         "range": 4.0,
-        "attack_rate": 3,
+        "attack_rate": 5,
         "income": 0,
     },
     BuildingType.BOOSTER: {
@@ -283,7 +283,8 @@ ALLIED_LORD_PUSH_DELAY_TICKS = 2
 LORD_ATTACK_RANGE = 4.6
 CORE_ATTACK_RANGE = 5.0
 NEUTRAL_GUARD_HP = 4
-NEUTRAL_GUARD_ATK = 3
+NEUTRAL_GUARD_ATK = 2
+NEUTRAL_GUARD_ATTACK_RATE = 2
 
 PLAYER_IDS = ["A1", "A2", "A3", "B1", "B2", "B3"]
 TEAM_A_PLAYERS = ["A1", "A2", "A3"]

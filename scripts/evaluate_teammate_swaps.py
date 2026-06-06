@@ -181,8 +181,16 @@ def load_policies_for_team(team_spec: dict[str, Any]) -> dict[str, MaskedActorCr
     return policies
 
 
-def sequence_hash(actions: list[int]) -> str:
-    payload = ",".join(str(int(action)) for action in actions).encode("ascii")
+def _action_payload(action) -> list[int]:
+    action_array = np.asarray(action, dtype=np.int64).reshape(-1)
+    return [int(value) for value in action_array]
+
+
+def sequence_hash(actions: list) -> str:
+    payload = json.dumps(
+        [_action_payload(action) for action in actions],
+        separators=(",", ":"),
+    ).encode("ascii")
     return hashlib.sha1(payload).hexdigest()[:12]
 
 
@@ -237,7 +245,7 @@ def team_swap_eval_worker(request: dict[str, Any]) -> dict[str, Any]:
         return_sums = {player_id: 0.0 for player_id in controlled_players}
         shaping_sums = {player_id: 0.0 for player_id in controlled_players}
         terminal_sums = {player_id: 0.0 for player_id in controlled_players}
-        episode_actions: list[int] = []
+        episode_actions: list = []
         steps = 0
         done = False
 
@@ -251,11 +259,11 @@ def team_swap_eval_worker(request: dict[str, Any]) -> dict[str, Any]:
                     deterministic=bool(request["deterministic"]),
                     device="cpu",
                 )
-                selected_actions[player_id] = int(step.action)
-                actions_by_player[player_id].append(int(step.action))
+                selected_actions[player_id] = step.action
+                actions_by_player[player_id].append(step.action)
                 masks_by_player[player_id].append(masks[player_id])
                 entropies_by_player[player_id].append(float(step.entropy))
-                episode_actions.append(int(step.action))
+                episode_actions.append(step.action)
 
             result = env.step(selected_actions)
             for player_id in controlled_players:

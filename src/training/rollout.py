@@ -6,6 +6,7 @@ import numpy as np
 
 from src.core.constants import TICK_LIMIT
 from src.training.env import TrainingEnv, TrainingEnvConfig
+from src.training.spaces import sample_legal_action as sample_legal_factorized_action
 
 
 def run_random_rollouts(
@@ -38,8 +39,7 @@ def run_random_rollouts(
 
         while not (terminal or truncated):
             mask = env.action_mask()
-            legal = np.flatnonzero(mask)
-            action_index = int(rng.choice(legal)) if len(legal) else 0
+            action_index = sample_legal_factorized_action(mask, rng)
             obs, reward, terminal, truncated, info = env.step(action_index)
             total_reward += reward
             steps += 1

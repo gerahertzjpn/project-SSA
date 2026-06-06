@@ -1,20 +1,28 @@
 # Current 2D Status
 
-Date: 2026-06-04
+Date: 2026-06-07
 
 This is the current status after switching active battles to `combat_2d_map`
 and before the next large training run.
 
+2026-06-07 lock: active training interface remains `train_obs_v3.1` with
+`OBSERVATION_DIM=5188` and `ACTION_DIM=447`. Current no-training gates are
+green: `276 passed`, training preflight `ok: true`, 100-match crash gate
+`issue_summary {}`, and 16-worker throughput is about `5.665M` world
+steps/hour. The active Lord is now `300 HP`, range `4.6`, with `13 x 3`
+primary and `3 x 5` secondary attacks per tick; cores are `80 HP`, `7 x 2`,
+range `5.0`; neutral guards are `4 HP`, `2 x 2`, range `3.5`.
+
 2026-06-06 note: this document is now partially historical. The active training
-interface after the three-faction roster patch is `train_obs_v3.0` with
-`OBSERVATION_DIM=5188` and `ACTION_DIM=5515`. See
+interface after the three-faction roster and factorized-action patch is
+`train_obs_v3.1` with `OBSERVATION_DIM=5188` and `ACTION_DIM=447`. See
 `docs/CONSTRUCTION_AND_FACTION_SCHEMA.md` for the latest crash/balance snapshot.
 
 ## Current Balance Snapshot
 
-Latest balance snapshot after `LORD_ATTACK_RANGE=4.6`,
-`CORE_ATTACK_RANGE=5.0`, explicit `JOIN_LORD` / `HUNT_LORD` actions, and
-`train_obs_v1.0`:
+Latest historical 2D human-only balance snapshot after `LORD_ATTACK_RANGE=4.6`,
+`CORE_ATTACK_RANGE=5.0`, explicit `JOIN_LORD` / `HUNT_LORD` actions, and the
+pre-faction interface:
 
 300 random-vs-random matches with seed `20260611`:
 
@@ -86,25 +94,23 @@ analysis/current_2d_random_lord_300.json
 Current interface:
 
 ```text
-OBSERVATION_VERSION = train_obs_v1.0
-OBSERVATION_DIM = 1117
-ACTION_DIM = 1356
+OBSERVATION_VERSION = train_obs_v3.1
+OBSERVATION_DIM = 5188
+ACTION_DIM = 447
 ```
 
 Action breakdown:
 
 ```text
-HOLD: 1
-PRODUCE: 3
-MOVE source -> destination with intent: 312
-MOVE source -> ALLY_LORD with JOIN_LORD intent: 13
-MOVE source -> ENEMY_LORD with HUNT_LORD intent: 13
-PRODUCE_MOVE bounded composite actions: 1014
+produce head: NONE + 15 unit types = 16
+move head: NONE + 338 source/destination/intent/lord actions = 339
+build head: NONE + 91 building/node actions = 92
+flat mask/logit total = 447
 ```
 
-The interface version was bumped because the policy now sees resurrected Lord
-state explicitly and can combine one production command with one movement
-command in a single tick:
+The interface version was bumped because the policy now sees construction and
+faction state, and can combine production, movement, and construction in a
+single tick through factorized heads:
 
 - allied Lord alive flag;
 - owner relation from the acting player's perspective;
@@ -112,9 +118,9 @@ command in a single tick:
 - ready ETA and arrival ETA;
 - waiting support-unit counts for explicit JOIN_LORD escorts;
 - per-node flags for Lord route and Lord target.
-- bounded `PRODUCE_MOVE` actions: one produced unit type plus one move action;
-- movement resolves before production, so new units do not immediately join the
-  same-tick move.
+- factorized `produce`, `move`, and `build` actions;
+- movement resolves before build and production, so new units do not immediately
+  join the same-tick move.
 
 Old checkpoints should now fail compatibility checks instead of silently
 running as current models.
@@ -225,50 +231,23 @@ approximately 3.90M steps/hour
 
 The next engine-side realism change must keep the `>=3M steps/hour` gate.
 
-### 6. Produce + Move Action Model
+### 6. Factorized Action Model
 
-Current action model is still a single categorical policy output, but the
-categorical space now contains bounded composite actions:
+Current action model uses three categorical heads with one shared value head:
 
 ```text
-HOLD
-PRODUCE one unit type
-MOVE one source/destination/intent
-PRODUCE_MOVE one unit type + one source/destination/intent
+produce_head: NONE / one unit type
+move_head: NONE / one source/destination/intent/lord action
+build_head: NONE / one legal building/node action
 ```
 
 The source node is already part of the action space, so the older concern that
 the policy cannot choose the group/source has been addressed.
 
-This removes the artificial "produce or move" serialization without giving the
-policy unlimited commands per tick. Movement resolves before production, so a
+This removes both the old "produce or move" serialization and the later
+single-categorical `PRODUCE_MOVE` explosion. PPO sums log-prob and entropy over
+the three heads. Movement still resolves before build and production, so a
 newly produced unit remains at the core and cannot join the same-tick move.
-
-Potential future alternative: true factorized heads:
-
-```text
-produce_head: none / Vanguard / Ranger / Skirmisher
-move_head: hold-move / source -> destination with intent
-```
-
-This could reduce the number of logits compared with the current composite
-categorical space, but code complexity rises:
-
-- two masks instead of one;
-- two log-probs/entropies in PPO;
-- more invalid-action handling;
-- reward attribution changes because production and movement happen together.
-
-Expected effect:
-
-- compute cost: small increase;
-- implementation complexity: medium;
-- learning behavior: likely cleaner economy+movement coordination, but it must
-  be tested.
-
-Decision for the next Sprint 3 run: keep the current `train_obs_v1.0` composite
-categorical interface. Do not move to true multi-head/factorized PPO unless
-there is a separate explicit design decision and a fresh throughput check.
 
 ### 7. Viewer State
 
@@ -311,5 +290,5 @@ large replay-position teleports.
 2. Diagnose scripted-vs-scripted runtime and death-time tendency.
 3. Add persistent replay visual ids if the PixiJS viewer still has identity
    jumps.
-4. Only after rules are stable, start fresh training on `train_obs_v1.0`.
+4. Only after rules are stable, start fresh training on `train_obs_v3.1`.
 5. Commit the current 2D engine and PixiJS viewer once accepted.

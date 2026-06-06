@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, OBSERVATION_VERSION
+from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, OBSERVATION_VERSION, action_is_legal
 from src.training.team_env import TeamTrainingEnv, TeamTrainingEnvConfig
 from src.training.team_ppo_trainer import (
     TeamPPOConfig,
@@ -61,7 +61,7 @@ def _env_preflight(
     mask_shapes_ok = all(mask.shape == (ACTION_DIM,) for mask in masks.values())
     mask_hold_ok = all(bool(mask[0]) for mask in masks.values())
     sampled_legal_ok = all(
-        0 <= action < ACTION_DIM and bool(masks[player_id][action])
+        action_is_legal(action, masks[player_id])
         for player_id, action in sampled_actions.items()
     )
 
@@ -100,7 +100,7 @@ def _policy_preflight(seed: int, hidden_size: int) -> dict:
     entropies = {}
     for player_id, policy in policies.items():
         step = policy.act(observations[player_id], masks[player_id], deterministic=True, device="cpu")
-        actions[player_id] = int(step.action)
+        actions[player_id] = [int(value) for value in step.action]
         values[player_id] = float(step.value)
         entropies[player_id] = float(step.entropy)
 
@@ -120,7 +120,7 @@ def _policy_preflight(seed: int, hidden_size: int) -> dict:
 
     return {
         "controlled_players": list(config.controlled_players),
-        "policy_forward_ok": all(0 <= action < ACTION_DIM for action in actions.values()),
+        "policy_forward_ok": all(action_is_legal(actions[player_id], masks[player_id]) for player_id in actions),
         "policy_values_finite": all(np.isfinite(value) for value in values.values()),
         "policy_entropies_finite": all(np.isfinite(value) for value in entropies.values()),
         "argmax_actions": actions,

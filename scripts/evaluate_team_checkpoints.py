@@ -24,7 +24,7 @@ from src.training.team_ppo_trainer import (
     make_team_policies,
 )
 from src.training.ppo_trainer import summarize_action_distribution, summarize_training_episodes
-from src.training.spaces import team_of
+from src.training.spaces import sample_legal_action as sample_legal_factorized_action, team_of
 
 
 def parse_csv_ints(value: str) -> list[int]:
@@ -85,8 +85,16 @@ def chunks(items: list[dict], chunk_count: int) -> list[list[dict]]:
     return [items[index::chunk_count] for index in range(chunk_count)]
 
 
-def sequence_hash(actions: list[int]) -> str:
-    payload = ",".join(str(int(action)) for action in actions).encode("ascii")
+def _action_payload(action) -> list[int]:
+    action_array = np.asarray(action, dtype=np.int64).reshape(-1)
+    return [int(value) for value in action_array]
+
+
+def sequence_hash(actions: list) -> str:
+    payload = json.dumps(
+        [_action_payload(action) for action in actions],
+        separators=(",", ":"),
+    ).encode("ascii")
     return hashlib.sha1(payload).hexdigest()[:12]
 
 
@@ -144,11 +152,11 @@ def team_policy_eval_worker(request: dict) -> dict:
                     deterministic=bool(request["deterministic"]),
                     device="cpu",
                 )
-                selected_actions[player_id] = int(step.action)
-                actions_by_player[player_id].append(int(step.action))
+                selected_actions[player_id] = step.action
+                actions_by_player[player_id].append(step.action)
                 masks_by_player[player_id].append(masks[player_id])
                 entropies_by_player[player_id].append(float(step.entropy))
-                episode_actions.append(int(step.action))
+                episode_actions.append(step.action)
 
             result = env.step(selected_actions)
             for player_id in config.controlled_players:
@@ -212,8 +220,7 @@ def random_legal_worker(request: dict) -> dict:
             masks = env.action_masks()
             selected_actions = {}
             for player_id, mask in masks.items():
-                legal = np.flatnonzero(mask)
-                action = int(rng.choice(legal)) if len(legal) else 0
+                action = sample_legal_factorized_action(mask, rng)
                 selected_actions[player_id] = action
                 actions_by_player[player_id].append(action)
                 masks_by_player[player_id].append(mask)

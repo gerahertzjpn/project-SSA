@@ -14,9 +14,11 @@ from src.core.state import make_initial_state
 from src.training.spaces import (
     ACTION_DIM,
     OBSERVATION_VERSION,
+    flatten_factorized_action,
     decode_action,
     encode_observation,
     legal_action_mask,
+    sample_legal_action as sample_legal_factorized_action,
     team_of,
 )
 
@@ -92,7 +94,7 @@ class TrainingEnv:
         self._previous_score = self._score(obs)
         return encode_observation(obs, self.config.controlled_player), self._info(obs, reward_components={})
 
-    def step(self, action_index: int) -> tuple[np.ndarray, float, bool, bool, dict]:
+    def step(self, action_index) -> tuple[np.ndarray, float, bool, bool, dict]:
         if self.engine is None:
             self.reset()
         if self._done:
@@ -139,8 +141,19 @@ class TrainingEnv:
             "intent": action.intent,
             "unit_type": action.unit_type.value if action.unit_type else None,
             "building_type": action.building_type.value if action.building_type else None,
+            "sub_actions": [
+                {
+                    "type": step.action_type.value,
+                    "source": step.source,
+                    "destination": step.destination,
+                    "intent": step.intent,
+                    "unit_type": step.unit_type.value if step.unit_type else None,
+                    "building_type": step.building_type.value if step.building_type else None,
+                }
+                for step in (action.sub_actions or [])
+            ],
         }
-        info["action_index"] = int(action_index)
+        info["action_index"] = list(flatten_factorized_action(action_index))
         return encode_observation(obs_after, self.config.controlled_player), reward, terminal, truncated, info
 
     def raw_observation(self) -> dict:
@@ -151,12 +164,8 @@ class TrainingEnv:
     def action_mask(self) -> np.ndarray:
         return legal_action_mask(self.raw_observation(), self.config.controlled_player)
 
-    def sample_legal_action(self) -> int:
-        mask = self.action_mask()
-        legal = np.flatnonzero(mask)
-        if len(legal) == 0:
-            return 0
-        return int(self.rng.choice(legal))
+    def sample_legal_action(self) -> np.ndarray:
+        return sample_legal_factorized_action(self.action_mask(), self.rng)
 
     def _make_bots(self) -> dict:
         bots = {}

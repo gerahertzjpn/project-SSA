@@ -12,7 +12,7 @@ from src.bots.policy_bot import PolicyBot, _POLICY_STATE_CACHE
 from src.core.constants import PLAYER_IDS, TICK_LIMIT
 from src.training import ACTION_DIM, OBSERVATION_DIM, TeamTrainingEnv, TeamTrainingEnvConfig
 from src.training.policy import MaskedActorCritic
-from src.training.spaces import OBSERVATION_VERSION
+from src.training.spaces import BUILD_ACTION_START, MOVE_ACTION_START, OBSERVATION_VERSION
 
 
 def test_team_training_env_reset_step_and_masks_are_valid():
@@ -52,7 +52,7 @@ def test_team_training_env_step_is_synchronized_once_for_all_players():
 
     assert env.state.tick == 1
     assert result.info["tick"] == 1
-    assert result.info["action_indices"] == {"A1": 0, "A2": 0, "A3": 0}
+    assert result.info["action_indices"] == {"A1": [0, 0, 0], "A2": [0, 0, 0], "A3": [0, 0, 0]}
     assert all(action["type"] == "HOLD" for action in result.info["decoded_actions"].values())
 
 
@@ -75,7 +75,9 @@ def test_team_training_env_dead_player_mask_is_hold_only():
     mask = env.action_mask("A2")
 
     assert mask[0]
-    assert int(mask.sum()) == 1
+    assert mask[MOVE_ACTION_START]
+    assert mask[BUILD_ACTION_START]
+    assert int(mask.sum()) == 3
 
 
 def test_team_training_env_finalizes_death_time_at_real_tick_limit():

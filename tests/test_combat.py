@@ -26,6 +26,7 @@ from src.core.constants import (
     CORE_ATTACK_RANGE,
     LORD_ATTACK_RANGE,
     NEUTRAL_GUARD_ATK,
+    NEUTRAL_GUARD_ATTACK_RATE,
     NEUTRAL_GUARD_HP,
     TRAVEL_TIME,
     UnitType,
@@ -215,6 +216,7 @@ def test_neutrals_are_centered_stationary_group_with_ranger_range():
     assert {unit.pos for unit in neutrals} == {CENTER_SIDE}
     assert {unit.speed for unit in neutrals} == {0.0}
     assert {unit.range for unit in neutrals} == {UNIT_STATS[UnitType.RANGER]["range"]}
+    assert {unit.attack_rate for unit in neutrals} == {NEUTRAL_GUARD_ATTACK_RATE}
     assert sum(unit.atk for unit in neutrals) == float(5 * NEUTRAL_GUARD_ATK)
 
 

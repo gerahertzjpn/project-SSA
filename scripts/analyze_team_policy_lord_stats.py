@@ -91,7 +91,7 @@ def run_one(request: dict[str, Any]) -> dict[str, Any]:
                 deterministic=bool(request["deterministic"]),
                 device="cpu",
             )
-            actions[player_id] = int(step.action)
+            actions[player_id] = step.action
         result = env.step(actions)
         observations = result.observations
         done = bool(result.terminal or result.truncated)

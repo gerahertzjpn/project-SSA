@@ -19,7 +19,13 @@ from src.training.ppo_trainer import (
     summarize_training_episodes,
     update_policy,
 )
-from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, OBSERVATION_VERSION, team_of
+from src.training.spaces import (
+    ACTION_DIM,
+    OBSERVATION_DIM,
+    OBSERVATION_VERSION,
+    sample_legal_action as sample_legal_factorized_action,
+    team_of,
+)
 from src.training.team_env import DEFAULT_CONTROLLED_PLAYERS, TeamTrainingEnv, TeamTrainingEnvConfig
 
 
@@ -673,8 +679,7 @@ def evaluate_random_legal_team(config: TeamPPOConfig, episodes: int, seed: int) 
             masks = env.action_masks()
             selected_actions = {}
             for player_id, mask in masks.items():
-                legal = np.flatnonzero(mask)
-                action = int(rng.choice(legal)) if len(legal) else 0
+                action = sample_legal_factorized_action(mask, rng)
                 selected_actions[player_id] = action
                 actions_by_player[player_id].append(action)
                 masks_by_player[player_id].append(mask)
@@ -730,8 +735,7 @@ def _random_legal_team_worker(request: dict) -> dict:
             masks = env.action_masks()
             selected_actions = {}
             for player_id, mask in masks.items():
-                legal = np.flatnonzero(mask)
-                action = int(rng.choice(legal)) if len(legal) else 0
+                action = sample_legal_factorized_action(mask, rng)
                 selected_actions[player_id] = action
                 actions_by_player[player_id].append(action)
                 masks_by_player[player_id].append(mask)

@@ -6,6 +6,7 @@ from .constants import (
     BARON_SECONDARY_ATTACK_RATE,
     BARON_SECONDARY_ATK,
     LORD_ATTACK_RANGE,
+    NEUTRAL_GUARD_ATTACK_RATE,
     NEUTRAL_GUARD_ATK,
     NEUTRAL_GUARD_HP,
     UnitType,
@@ -101,7 +102,8 @@ UNIT_STATS: dict[UnitType, dict] = {
     },
     UnitType.WALKER: {
         "hp": 34,
-        "atk": 5,
+        "atk": 4,
+        "attack_rate": 2,
         "range": 1.2,
         "speed": 1.0,
         "slot": "front",
@@ -109,7 +111,8 @@ UNIT_STATS: dict[UnitType, dict] = {
     },
     UnitType.LASER: {
         "hp": 9,
-        "atk": 16,
+        "atk": 9,
+        "attack_rate": 2,
         "range": 4.0,
         "speed": 1.0,
         "slot": "back",
@@ -117,7 +120,8 @@ UNIT_STATS: dict[UnitType, dict] = {
     },
     UnitType.DRONE: {
         "hp": 6,
-        "atk": 5,
+        "atk": 3,
+        "attack_rate": 2,
         "range": 1.1,
         "speed": 3.2,
         "slot": "mid",
@@ -125,8 +129,8 @@ UNIT_STATS: dict[UnitType, dict] = {
     },
     UnitType.GUARDIAN_MECH: {
         "hp": 104,
-        "atk": 10,
-        "attack_rate": 2,
+        "atk": 8,
+        "attack_rate": 3,
         "range": 3.6,
         "speed": 1.3,
         "slot": "mid",
@@ -158,6 +162,7 @@ UNIT_STATS: dict[UnitType, dict] = {
 NEUTRAL_UNIT_BASE = {
     "hp": NEUTRAL_GUARD_HP,
     "atk": NEUTRAL_GUARD_ATK,
+    "attack_rate": NEUTRAL_GUARD_ATTACK_RATE,
     "range": 3.5,
     "speed": 0.0,    # neutrals don't advance
     "slot": "front",

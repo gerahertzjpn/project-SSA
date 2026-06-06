@@ -6,14 +6,50 @@ Status: construction v0 plus active three-faction roster implemented as a new
 training interface:
 
 ```text
-OBSERVATION_VERSION = train_obs_v3.0
-ACTION_DIM = 5515
+OBSERVATION_VERSION = train_obs_v3.1
+ACTION_DIM = 447
 OBSERVATION_DIM = 5188
 ```
 
 Old `train_obs_v1.0`, `train_obs_v2.0`, and `train_obs_v2.2` checkpoints are
 intentionally incompatible with this ruleset. This is a schema-lock step before
 the next serious league training.
+
+## 2026-06-07 Current Lock
+
+Active pre-training lock:
+
+```text
+OBSERVATION_VERSION = train_obs_v3.1
+OBSERVATION_DIM = 5188
+ACTION_DIM = 447
+controlled players = A1,A2,A3
+action heads = produce + move + build
+```
+
+Current global combat constants:
+
+```text
+CORE: hp 80, atk 7 x 2 attacks/tick, range 5.0
+LORD/BARON: hp 300, atk 13 x 3 primary + 3 x 5 secondary attacks/tick, range 4.6
+NEUTRAL_GUARD: hp 4, atk 2 x 2 attacks/tick, range 3.5
+movement map units per tick = 30.0 * unit speed
+combat range to map units = 24.0 * attack range
+```
+
+Neutral control points still use map-defined garrison counts in the normal
+`1..7` range. Labels like `neutral_10` belong to laboratory balance probes, not
+to normal map generation.
+
+Latest no-training safety snapshot:
+
+```text
+pytest: 276 passed
+training preflight: ok true
+100-match crash gate: seeds_with_issues 0, issue_summary {}
+throughput: 5.665M world steps/hour, 16.994M controlled-agent decisions/hour
+random-legal dry-run baseline: total_steps 0, invalid action rate 0
+```
 
 ## Fog Of War
 
@@ -150,20 +186,20 @@ Current provisional stats:
 VANGUARD: hp 14, atk 3, range 1.0, speed 1.5, cost 3
 RANGER: hp 4, atk 10, range 3.5, speed 1.5, cost 5
 SKIRMISHER: hp 3, atk 4, range 1.0, speed 3.0, cost 2
-RAIDER: hp 56, atk 11 x 2 attacks/tick, range 2.8, speed 3.2, cost 8
-BMP: hp 230, atk 11 x 5 attacks/tick, range 4.0, speed 1.0, cost 20
+RAIDER: hp 56, atk 11 x 2 attacks/tick, range 2.8, speed 3.2, cost 9
+BMP: hp 230, atk 11 x 5 attacks/tick, range 4.0, speed 1.0, cost 26
 
 SWARMLING: hp 2, atk 2, range 0.8, speed 3.6, cost 1
 SPITTER: hp 3, atk 5, range 2.5, speed 2.2, cost 3
 BRUTE: hp 24, atk 4, range 1.0, speed 1.1, cost 4
-RAVAGER: hp 72, atk 11 x 2 attacks/tick, range 3.5, speed 3.4, cost 8
-BEHEMOTH: hp 360, atk 12 x 6 attacks/tick, range 3.0, speed 0.8, cost 20
+RAVAGER: hp 72, atk 11 x 2 attacks/tick, range 3.5, speed 3.4, cost 14
+BEHEMOTH: hp 360, atk 12 x 6 attacks/tick, range 3.0, speed 0.8, cost 30
 
-WALKER: hp 34, atk 5, range 1.2, speed 1.0, cost 5
-LASER: hp 9, atk 16, range 4.0, speed 1.0, cost 7
-DRONE: hp 6, atk 5, range 1.1, speed 3.2, cost 3
-GUARDIAN_MECH: hp 104, atk 10 x 2 attacks/tick, range 3.6, speed 1.3, cost 10
-SIEGE_PLATFORM: hp 260, atk 12 x 6 attacks/tick, range 4.8, speed 0.6, cost 24
+WALKER: hp 34, atk 4 x 2 attacks/tick, range 1.2, speed 1.0, cost 9
+LASER: hp 9, atk 9 x 2 attacks/tick, range 4.0, speed 1.0, cost 11
+DRONE: hp 6, atk 3 x 2 attacks/tick, range 1.1, speed 3.2, cost 6
+GUARDIAN_MECH: hp 104, atk 8 x 3 attacks/tick, range 3.6, speed 1.3, cost 16
+SIEGE_PLATFORM: hp 260, atk 12 x 6 attacks/tick, range 4.8, speed 0.6, cost 36
 ```
 
 Design intent:
@@ -185,7 +221,7 @@ aliases for RAIDER and BMP, but new replay/state data should use RAIDER/BMP.
 Current provisional stats:
 
 ```text
-TURRET: hp 125, atk 5 x 3 attacks/tick, range 4.0, cost 24, build 14t
+TURRET: hp 150, atk 3 x 5 attacks/tick, range 4.0, cost 28, build 14t
 BOOSTER: hp 28, human-only, speed bonus +1.0, cost 18, build 10t
 POWER: hp 34, robot-only, +2 HP combat bonus, cost 22, build 12t
 LIFE: hp 34, infected-only, free unit every 6t, cost 22, build 12t
@@ -203,23 +239,23 @@ Applied before the next Sprint 3 training prep. Current live deltas:
 
 ```text
 RAIDER:
-  cost 3 -> 8
+  cost 3 -> 9
   hp 12 -> 56
   atk 8 -> 11 x 2 attacks/tick
   range 1.8 -> 2.8
   speed 3.0 -> 3.2
 
 BMP:
-  cost 16 -> 20
+  cost 16 -> 26
   hp 120 -> 230
   atk 10 x 2 -> 11 x 5 attacks/tick
   range 3.5 -> 4.0
 
 TURRET:
-  cost 12 -> 24
+  cost 12 -> 28
   build 8t -> 14t
-  hp 30 -> 125
-  atk 5 x 1 -> 5 x 3 attacks/tick
+  hp 30 -> 150
+  atk 5 x 1 -> 3 x 5 attacks/tick
 
 ENHANCED_TURRET:
   removed from the game
@@ -235,10 +271,11 @@ LIFE:
 
 BARON_HP: 200 -> 300
 NEUTRAL_GUARD_HP: 2 -> 4
-NEUTRAL_GUARD_ATK: 2 implied -> 3 explicit
+NEUTRAL_GUARD_ATK: 2 explicit
+NEUTRAL_GUARD_ATTACK_RATE: 1 implied -> 2 explicit
 LIFE_SPAWN_UNIT: SKIRMISHER -> SWARMLING
-OBSERVATION_VERSION: train_obs_v2.2 -> train_obs_v3.0
-ACTION_DIM: 2125 -> 5515
+OBSERVATION_VERSION: train_obs_v2.2 -> train_obs_v3.1
+ACTION_DIM: 2125 -> 447
 OBSERVATION_DIM: 2708 -> 5188
 
 ECONOMY_COLLECTOR:
@@ -378,7 +415,7 @@ Interpretation:
 - the Lord is no longer hard to kill in random macro, but many Baron fights end
   with no surviving valid owner, which should be watched during policy training.
 
-## RL Visibility
+## RL Visibility And Actions
 
 The observation vector exposes:
 
@@ -396,7 +433,20 @@ The action mask exposes:
 
 - `BUILD` actions only where legal;
 - special-unit production only after the required completed tech building;
-- previous `PRODUCE`, `MOVE`, and `PRODUCE_MOVE` actions.
+- three factorized heads: `produce`, `move`, and `build`.
+
+Current action-head breakdown:
+
+```text
+produce: NONE + 15 unit types = 16
+move: NONE + 338 source/destination/intent/lord actions = 339
+build: NONE + 91 building/node actions = 92
+flat mask/logit total = 447
+```
+
+This replaces the old single categorical `PRODUCE_MOVE` explosion. A policy can
+now produce one unit, move one group, and start one building in the same world
+tick. The game engine still resolves movement, then build, then production.
 
 ## Baseline Bots
 

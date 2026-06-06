@@ -22,7 +22,7 @@ from .constants import (
     UnitType, BuildingType, BUILDING_STATS, CORE_HP, CORE_ATK, CORE_ATTACK_RATE, BARON_HP, BARON_ATK, BARON_ATTACK_RATE,
     BARON_SECONDARY_ATK, BARON_SECONDARY_ATTACK_RATE, MAX_COMBAT_TICKS,
     TEAM_A_PLAYERS, TEAM_B_PLAYERS, TRAVEL_TIME, LORD_ATTACK_RANGE, CORE_ATTACK_RANGE,
-    NEUTRAL_GUARD_ATK, NEUTRAL_GUARD_HP,
+    NEUTRAL_GUARD_ATTACK_RATE, NEUTRAL_GUARD_ATK, NEUTRAL_GUARD_HP,
 )
 from .units import UnitInstance, UNIT_STATS
 
@@ -168,7 +168,7 @@ def _build_neutrals(neutral_hp: int) -> list[UnitInstance]:
             range=NEUTRAL_RANGE,
             speed=0.0,
             pos=CENTER_SIDE,
-            attack_rate=1,
+            attack_rate=NEUTRAL_GUARD_ATTACK_RATE,
             move_direction=0.0,
         )
         for _ in range(neutral_hp)

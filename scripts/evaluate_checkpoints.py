@@ -22,7 +22,7 @@ from src.training.ppo_trainer import (
     summarize_action_distribution,
     summarize_training_episodes,
 )
-from src.training.spaces import team_of
+from src.training.spaces import action_is_legal, team_of
 
 
 def parse_csv_ints(value: str) -> list[int]:
@@ -88,8 +88,16 @@ def episode_result(return_sum: float, shaping_sum: float, terminal_sum: float, s
     }
 
 
-def sequence_hash(actions: list[int]) -> str:
-    payload = ",".join(str(int(action)) for action in actions).encode("ascii")
+def _action_payload(action) -> list[int]:
+    action_array = np.asarray(action, dtype=np.int64).reshape(-1)
+    return [int(value) for value in action_array]
+
+
+def sequence_hash(actions: list) -> str:
+    payload = json.dumps(
+        [_action_payload(action) for action in actions],
+        separators=(",", ":"),
+    ).encode("ascii")
     return hashlib.sha1(payload).hexdigest()[:12]
 
 
@@ -141,8 +149,8 @@ def policy_eval_worker(request: dict) -> dict:
                 deterministic=bool(request["deterministic"]),
                 device="cpu",
             )
-            action = int(step.action)
-            if action < 0 or action >= len(mask) or not bool(mask[action]):
+            action = step.action
+            if not action_is_legal(action, mask):
                 invalid_actions += 1
             actions.append(action)
             entropies.append(float(step.entropy))

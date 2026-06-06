@@ -16,7 +16,7 @@ if ROOT not in sys.path:
 
 from scripts.analyze_random_lord_stats import aggregate as aggregate_lord_matches
 from scripts.analyze_random_lord_stats import run_one as run_lord_trace_match
-from src.core.combat import build_baron_unit, build_core_unit, build_neutral_units, build_player_units
+from src.core.combat import build_baron_unit, build_building_unit, build_core_unit, build_neutral_units, build_player_units
 from src.core.combat2d import (
     COMBAT_RANGE_TO_MAP_UNITS,
     tick_battle_units_2d,
@@ -38,6 +38,8 @@ from src.core.constants import (
     DEATH_TIME_START_TICK,
     PLAYER_IDS,
     RESOURCE_PER_TICK,
+    TEAM_A_PLAYERS,
+    TEAM_B_PLAYERS,
     TICK_LIMIT,
     UNIT_COST,
     BuildingType,
@@ -51,7 +53,9 @@ from src.core.map2d import (
     LORD_THREAT_RADIUS,
     MOVEMENT_MAP_UNITS_PER_TICK,
 )
-from src.core.runner import current_code_commit, rules_meta, run_match
+from src.core.runner import current_code_commit, make_bots, rules_meta, run_match
+from src.core.state import make_initial_state
+from src.core.engine import GameEngine
 from src.core.units import NEUTRAL_UNIT_BASE, UNIT_STATS
 
 
@@ -88,8 +92,10 @@ def build_report(seed: int, matches: int, lord_matches: int) -> dict[str, Any]:
             "equal_budget_50": equal_budget_matrix(50),
             "budget_curve": budget_curve([20, 30, 40, 50, 60]),
             "objectives": objective_tests([20, 30, 40, 50, 60]),
+            "building_objectives": building_objective_tests([30, 50, 80, 120]),
         },
         "macro_random": random_match_stats(seed, matches),
+        "macro_factions": faction_match_stats(seed + 20_000, max(1, matches // 2)),
         "lord_random": lord_stats(seed + 10_000, lord_matches),
     }
 
@@ -211,6 +217,45 @@ def objective_tests(budgets: list[int]) -> list[dict[str, Any]]:
     return rows
 
 
+def building_objective_tests(budgets: list[int]) -> list[dict[str, Any]]:
+    rows = []
+    for budget in budgets:
+        for attacker in UNIT_TYPES:
+            rows.append(run_building_objective(attacker, budget, [BuildingType.TURRET], label="turret"))
+            rows.append(run_building_objective(attacker, budget, [BuildingType.TURRET], include_core=True, label="turret_core"))
+            rows.append(run_building_objective(attacker, budget, [BuildingType.TECH_2, BuildingType.TECH_1], include_core=True, label="two_base_buildings_core"))
+    return rows
+
+
+def run_building_objective(
+    attacker_type: UnitType,
+    budget: int,
+    buildings: list[BuildingType],
+    *,
+    include_core: bool = False,
+    label: str,
+    max_ticks: int = 120,
+) -> dict[str, Any]:
+    attacker_count = budget // int(UNIT_COST[attacker_type])
+    attackers = build_player_units({attacker_type.value: attacker_count}, "A1", "attacker")
+    defenders = [
+        build_building_unit(building, "B1", hp=float(BUILDING_STATS[building]["hp"]))
+        for building in buildings
+    ]
+    if include_core:
+        defenders.append(build_core_unit("B1", hp=CORE_HP))
+    units = attackers + defenders
+    place_line(units, "A1", "B1", left_x=170.0, right_x=440.0)
+    result = simulate_units(units, neutral_aggro_teams=set(), max_ticks=max_ticks)
+    return {
+        "kind": "building_objective",
+        "budget": budget,
+        "attacker": army_label(attacker_type, attacker_count),
+        "objective": label,
+        **result,
+    }
+
+
 def run_unit_duel(left_type: UnitType, right_type: UnitType, budget: int, max_ticks: int = 80) -> dict[str, Any]:
     left_count = budget // int(UNIT_COST[left_type])
     right_count = budget // int(UNIT_COST[right_type])
@@ -306,21 +351,32 @@ def assign_formation(units, base_x: float, base_y: float, forward_x: float) -> N
         UnitType.RAIDER.value: 13.0,
         UnitType.RANGER.value: 2.0,
         UnitType.BMP.value: 0.0,
+        UnitType.SWARMLING.value: 20.0,
+        UnitType.SPITTER.value: 4.0,
+        UnitType.BRUTE.value: 22.0,
+        UnitType.RAVAGER.value: 14.0,
+        UnitType.BEHEMOTH.value: 24.0,
+        UnitType.WALKER.value: 22.0,
+        UnitType.LASER.value: 2.0,
+        UnitType.DRONE.value: 18.0,
+        UnitType.GUARDIAN_MECH.value: 18.0,
+        UnitType.SIEGE_PLATFORM.value: 0.0,
         "NEUTRAL": 0.0,
         "BARON": 0.0,
         "CORE": 0.0,
+        BuildingType.TURRET.value: 0.0,
+        BuildingType.BOOSTER.value: 0.0,
+        BuildingType.POWER.value: 0.0,
+        BuildingType.LIFE.value: 0.0,
+        BuildingType.ECONOMY_COLLECTOR.value: 0.0,
+        BuildingType.TECH_1.value: 0.0,
+        BuildingType.TECH_2.value: 0.0,
         UnitType.LORD.value: 22.0,
     }
     for unit_type in (
-        UnitType.VANGUARD.value,
-        UnitType.SKIRMISHER.value,
-        UnitType.RAIDER.value,
-        UnitType.RANGER.value,
-        UnitType.BMP.value,
-        UnitType.LORD.value,
-        "BARON",
-        "CORE",
-        "NEUTRAL",
+        tuple(unit.value for unit in UNIT_TYPES)
+        + tuple(building.value for building in BuildingType)
+        + (UnitType.LORD.value, "BARON", "CORE", "NEUTRAL")
     ):
         bucket = by_type.get(unit_type, [])
         visible_rows = min(9, max(1, len(bucket)))
@@ -405,6 +461,82 @@ def random_match_stats(seed: int, matches: int) -> dict[str, Any]:
     }
 
 
+def _factions_for_setup(setup: str) -> dict[str, str]:
+    if setup == "all_humans":
+        return {}
+    if setup == "all_infected":
+        return {player_id: "infected" for player_id in PLAYER_IDS}
+    if setup == "all_robots":
+        return {player_id: "robots" for player_id in PLAYER_IDS}
+    if setup == "humans_vs_infected":
+        return {player_id: ("humans" if player_id in TEAM_A_PLAYERS else "infected") for player_id in PLAYER_IDS}
+    if setup == "infected_vs_humans":
+        return {player_id: ("infected" if player_id in TEAM_A_PLAYERS else "humans") for player_id in PLAYER_IDS}
+    if setup == "humans_vs_robots":
+        return {player_id: ("humans" if player_id in TEAM_A_PLAYERS else "robots") for player_id in PLAYER_IDS}
+    if setup == "robots_vs_humans":
+        return {player_id: ("robots" if player_id in TEAM_A_PLAYERS else "humans") for player_id in PLAYER_IDS}
+    if setup == "infected_vs_robots":
+        return {player_id: ("infected" if player_id in TEAM_A_PLAYERS else "robots") for player_id in PLAYER_IDS}
+    if setup == "robots_vs_infected":
+        return {player_id: ("robots" if player_id in TEAM_A_PLAYERS else "infected") for player_id in PLAYER_IDS}
+    if setup == "mixed_slots":
+        factions = ("humans", "infected", "robots")
+        return {
+            player_id: factions[index % len(factions)]
+            for index, player_id in enumerate(PLAYER_IDS)
+        }
+    raise ValueError(setup)
+
+
+def faction_match_stats(seed: int, matches: int) -> dict[str, Any]:
+    setups = (
+        "all_humans",
+        "all_infected",
+        "all_robots",
+        "humans_vs_infected",
+        "infected_vs_humans",
+        "humans_vs_robots",
+        "robots_vs_humans",
+        "infected_vs_robots",
+        "robots_vs_infected",
+        "mixed_slots",
+    )
+    bot_types = ("random", "scripted")
+    rows = {}
+    for bot_type in bot_types:
+        for setup_index, setup in enumerate(setups):
+            winners = Counter()
+            winner_types = Counter()
+            ticks = []
+            final_core_team_hp = []
+            for match_index in range(matches):
+                match_seed = seed + setup_index * 10_000 + (0 if bot_type == "random" else 100_000) + match_index
+                state = make_initial_state(seed=match_seed, player_factions=_factions_for_setup(setup))
+                engine = GameEngine(
+                    state,
+                    make_bots(bot_type, seed_offset=match_seed * 10),
+                    record_trace=False,
+                    record_replay=False,
+                )
+                winner = engine.run()
+                winners[winner] += 1
+                winner_types[state.winner_type or "unknown"] += 1
+                ticks.append(state.tick)
+                final_core_team_hp.append({
+                    "TEAM_A": round(sum(float(state.players[player_id].core_hp) for player_id in TEAM_A_PLAYERS), 3),
+                    "TEAM_B": round(sum(float(state.players[player_id].core_hp) for player_id in TEAM_B_PLAYERS), 3),
+                })
+            rows[f"{bot_type}__{setup}"] = {
+                "matches": matches,
+                "winners": dict(winners),
+                "winner_types": dict(winner_types),
+                "ticks": numeric_stats(ticks),
+                "sample_final_core_team_hp": final_core_team_hp[:5],
+            }
+    return rows
+
+
 def lord_stats(seed: int, matches: int) -> dict[str, Any]:
     rows = [run_lord_trace_match(seed + index) for index in range(matches)]
     return {
@@ -459,6 +591,10 @@ def print_human_report(report: dict[str, Any]) -> None:
     print("\nrandom macro:")
     macro = report["macro_random"]
     print(f"  winners={macro['winners']} winner_types={macro['winner_types']} ticks={macro['ticks']}")
+
+    print("\nfaction macro:")
+    for name, data in report["macro_factions"].items():
+        print(f"  {name}: winners={data['winners']} winner_types={data['winner_types']} ticks={data['ticks']}")
 
     print("\nlord trace aggregate:")
     aggregate = report["lord_random"]["aggregate"]

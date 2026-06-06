@@ -124,6 +124,9 @@ Implementation status:
   per-tick command spam while removing the artificial "produce or move" choice.
   Movement is resolved before production, so a unit produced this tick remains
   at the core until a later command.
+- Current active training interface after construction/factions and factorized
+  actions is `train_obs_v3.1`: `OBSERVATION_DIM=5188`, `ACTION_DIM=447`.
+  Actions are split into `produce`, `move`, and `build` heads.
 - Resurrected Lord now waits 2 ticks before push. During this delay the replay
   and RL observation already expose owner, target, path, ready tick, and ETA.
 - Current 2D status and open technical issues are summarized in
@@ -423,9 +426,8 @@ checkpoint metadata must match
 old checkpoints are stale until revalidated
 ```
 
-Current v1.0 uses a single categorical output with bounded composite
-`PRODUCE_MOVE` actions. Do not move to true multi-head/factorized actions unless
-there is a separate explicit design decision and a fresh throughput check.
+Current v3.1 uses factorized `produce`, `move`, and `build` heads. PPO sums the
+three head log-probs/entropies while keeping one shared value estimate.
 
 ## Training Speed Contract
 

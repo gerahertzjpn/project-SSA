@@ -128,10 +128,22 @@ def validate_policy_state_compatible(policy_state: dict, checkpoint_path: Path) 
 
 def policy_state_interface(policy_state: dict) -> tuple[int, int]:
     first_layer = policy_state.get("body.0.weight")
-    actor = policy_state.get("actor.weight")
-    if first_layer is None or actor is None:
+    if first_layer is None:
         return -1, -1
-    return int(first_layer.shape[1]), int(actor.shape[0])
+    actor = policy_state.get("actor.weight")
+    if actor is not None:
+        return int(first_layer.shape[1]), int(actor.shape[0])
+    head_rows = []
+    head_index = 0
+    while True:
+        head = policy_state.get(f"actor_heads.{head_index}.weight")
+        if head is None:
+            break
+        head_rows.append(int(head.shape[0]))
+        head_index += 1
+    if not head_rows:
+        return -1, -1
+    return int(first_layer.shape[1]), int(sum(head_rows))
 
 
 def checkpoint_is_compatible(path: str | Path) -> bool:

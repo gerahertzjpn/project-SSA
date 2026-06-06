@@ -46,7 +46,7 @@ from src.core.map2d import (
 from src.core.units import UNIT_STATS
 
 
-OBSERVATION_VERSION = "train_obs_v3.0"
+OBSERVATION_VERSION = "train_obs_v3.1"
 
 UNIT_ORDER = (
     UnitType.VANGUARD,
@@ -140,28 +140,30 @@ BUILD_ACTION_SPECS: tuple[ActionSpec, ...] = tuple(
 )
 
 ACTION_SPECS: tuple[ActionSpec, ...] = (
-    (ActionSpec("HOLD"),)
+    (ActionSpec("NONE"),)
     + tuple(ActionSpec("PRODUCE", unit_type=unit_type) for unit_type in UNIT_ORDER)
+    + (ActionSpec("NONE"),)
     + MOVE_ACTION_SPECS
+    + (ActionSpec("NONE"),)
     + BUILD_ACTION_SPECS
-    + tuple(
-        ActionSpec(
-            "PRODUCE_MOVE",
-            unit_type=unit_type,
-            source=move_spec.source,
-            destination=move_spec.destination,
-            intent=move_spec.intent,
-        )
-        for unit_type in UNIT_ORDER
-        for move_spec in MOVE_ACTION_SPECS
-    )
 )
 ACTION_DIM = len(ACTION_SPECS)
+ACTION_HEADS = ("produce", "move", "build")
+PRODUCE_HEAD_DIM = 1 + len(UNIT_ORDER)
+MOVE_HEAD_DIM = 1 + len(MOVE_ACTION_SPECS)
+BUILD_HEAD_DIM = 1 + len(BUILD_ACTION_SPECS)
+ACTION_HEAD_DIMS = (PRODUCE_HEAD_DIM, MOVE_HEAD_DIM, BUILD_HEAD_DIM)
+ACTION_SHAPE = (len(ACTION_HEAD_DIMS),)
 _OBS_CACHE_KEY = "__training_spaces_cache"
-PRODUCE_ACTION_START = 1
-MOVE_ACTION_START = PRODUCE_ACTION_START + len(UNIT_ORDER)
-BUILD_ACTION_START = MOVE_ACTION_START + len(MOVE_ACTION_SPECS)
-PRODUCE_MOVE_ACTION_START = BUILD_ACTION_START + len(BUILD_ACTION_SPECS)
+PRODUCE_ACTION_START = 0
+MOVE_ACTION_START = PRODUCE_HEAD_DIM
+BUILD_ACTION_START = PRODUCE_HEAD_DIM + MOVE_HEAD_DIM
+ACTION_HEAD_OFFSETS = (PRODUCE_ACTION_START, MOVE_ACTION_START, BUILD_ACTION_START)
+ACTION_HEAD_SLICES = (
+    slice(PRODUCE_ACTION_START, MOVE_ACTION_START),
+    slice(MOVE_ACTION_START, BUILD_ACTION_START),
+    slice(BUILD_ACTION_START, ACTION_DIM),
+)
 
 MIRROR_NODES = {
     "A1": "B1",
@@ -199,6 +201,14 @@ COMBAT_LINE_MAX = 20.0
 _ACTION_INDEX_BY_SPEC = {
     (spec.kind, spec.unit_type, spec.building_type, spec.source, spec.destination, spec.intent): index
     for index, spec in enumerate(ACTION_SPECS)
+}
+_MOVE_LOCAL_INDEX_BY_SPEC = {
+    (spec.source, spec.destination, spec.intent): index + 1
+    for index, spec in enumerate(MOVE_ACTION_SPECS)
+}
+_BUILD_LOCAL_INDEX_BY_SPEC = {
+    (spec.building_type, spec.destination): index + 1
+    for index, spec in enumerate(BUILD_ACTION_SPECS)
 }
 
 
@@ -250,22 +260,93 @@ def policy_observation(obs: dict, player_id: str) -> tuple[dict, str]:
     return mirror_observation(obs), policy_player_id(player_id)
 
 
-def mirror_action_index(action_index: int) -> int:
-    if action_index < 0 or action_index >= ACTION_DIM:
-        return 0
-    spec = ACTION_SPECS[int(action_index)]
-    mirrored = ActionSpec(
-        kind=spec.kind,
-        unit_type=spec.unit_type,
-        building_type=spec.building_type,
-        source=mirrored_node_id(spec.source),
-        destination=mirrored_node_id(spec.destination),
-        intent=spec.intent,
-    )
-    return _ACTION_INDEX_BY_SPEC.get(
-        (mirrored.kind, mirrored.unit_type, mirrored.building_type, mirrored.source, mirrored.destination, mirrored.intent),
-        0,
-    )
+def flat_action_to_factorized(action_index: int) -> np.ndarray:
+    action_index = int(action_index)
+    action = np.zeros(len(ACTION_HEAD_DIMS), dtype=np.int64)
+    if PRODUCE_ACTION_START <= action_index < MOVE_ACTION_START:
+        action[0] = action_index - PRODUCE_ACTION_START
+    elif MOVE_ACTION_START <= action_index < BUILD_ACTION_START:
+        action[1] = action_index - MOVE_ACTION_START
+    elif BUILD_ACTION_START <= action_index < ACTION_DIM:
+        action[2] = action_index - BUILD_ACTION_START
+    return action
+
+
+def normalize_action(action_index) -> np.ndarray:
+    if isinstance(action_index, np.ndarray):
+        values = action_index.astype(np.int64, copy=False).reshape(-1)
+    elif isinstance(action_index, (list, tuple)):
+        values = np.asarray(action_index, dtype=np.int64).reshape(-1)
+    else:
+        return flat_action_to_factorized(int(action_index))
+    action = np.zeros(len(ACTION_HEAD_DIMS), dtype=np.int64)
+    limit = min(len(action), len(values))
+    if limit > 0:
+        action[:limit] = values[:limit]
+    return action
+
+
+def flatten_factorized_action(action_index) -> tuple[int, int, int]:
+    action = normalize_action(action_index)
+    return tuple(int(value) for value in action)
+
+
+def split_action_mask(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    mask_array = np.asarray(mask, dtype=np.bool_)
+    return tuple(mask_array[action_slice] for action_slice in ACTION_HEAD_SLICES)
+
+
+def action_is_legal(action_index, mask: np.ndarray) -> bool:
+    if not isinstance(action_index, (np.ndarray, list, tuple)):
+        try:
+            scalar_index = int(action_index)
+        except (TypeError, ValueError):
+            return False
+        if scalar_index < 0 or scalar_index >= ACTION_DIM:
+            return False
+    action = normalize_action(action_index)
+    mask_array = np.asarray(mask, dtype=np.bool_)
+    if mask_array.shape != (ACTION_DIM,):
+        return False
+    for local_index, offset, head_dim in zip(action, ACTION_HEAD_OFFSETS, ACTION_HEAD_DIMS):
+        local = int(local_index)
+        if local < 0 or local >= head_dim:
+            return False
+        if not bool(mask_array[offset + local]):
+            return False
+    return True
+
+
+def sample_legal_action(mask: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    mask_array = np.asarray(mask, dtype=np.bool_)
+    action = np.zeros(len(ACTION_HEAD_DIMS), dtype=np.int64)
+    for head_index, action_slice in enumerate(ACTION_HEAD_SLICES):
+        legal = np.flatnonzero(mask_array[action_slice])
+        action[head_index] = int(rng.choice(legal)) if len(legal) else 0
+    return action
+
+
+def mirror_action_index(action_index) -> np.ndarray:
+    action = normalize_action(action_index)
+    mirrored = np.array(action, dtype=np.int64, copy=True)
+
+    move_local = int(action[1])
+    if 0 < move_local <= len(MOVE_ACTION_SPECS):
+        spec = MOVE_ACTION_SPECS[move_local - 1]
+        mirrored[1] = _MOVE_LOCAL_INDEX_BY_SPEC.get(
+            (mirrored_node_id(spec.source), mirrored_node_id(spec.destination), spec.intent),
+            0,
+        )
+
+    build_local = int(action[2])
+    if 0 < build_local <= len(BUILD_ACTION_SPECS):
+        spec = BUILD_ACTION_SPECS[build_local - 1]
+        mirrored[2] = _BUILD_LOCAL_INDEX_BY_SPEC.get(
+            (spec.building_type, mirrored_node_id(spec.destination)),
+            0,
+        )
+
+    return mirrored
 
 
 def mirror_observation(obs: dict) -> dict:
@@ -478,8 +559,20 @@ def _living_neutral_lord(node_id: str, nodes: dict, baron: dict | None) -> bool:
     )
 
 
+def _dead_core_node_obs(obs: dict, node_id: str) -> bool:
+    if NODE_TYPES.get(node_id) != NodeType.CORE:
+        return False
+    player = (obs.get("players", {}) or {}).get(node_id)
+    return bool(player) and (
+        not player.get("alive", True)
+        or float(player.get("core_hp", 0.0) or 0.0) <= 0.0
+    )
+
+
 def _is_transit_node(player_id: str, node_id: str, nodes: dict, baron: dict | None) -> bool:
     if _living_neutral_lord(node_id, nodes, baron):
+        return False
+    if NODE_TYPES.get(node_id) == NodeType.CORE and nodes.get(node_id, {}).get("owner") == "NEUTRAL":
         return False
     owner = nodes[node_id]["owner"]
     return owner == "NEUTRAL" or _friendly_owner(owner, player_id)
@@ -494,6 +587,8 @@ def _is_accessible_destination(
 ) -> bool:
     if node_id == "Baron":
         return True
+    if NODE_TYPES.get(node_id) == NodeType.CORE and nodes.get(node_id, {}).get("owner") == "NEUTRAL":
+        return False
     owner = nodes[node_id]["owner"]
     if owner == "NEUTRAL" or _friendly_owner(owner, player_id):
         return True
@@ -780,6 +875,8 @@ def _intent_allowed(spec: ActionSpec, obs: dict, player_id: str) -> bool:
         return False
     if destination in SPECIAL_LORD_DESTINATIONS:
         return True
+    if _dead_core_node_obs(obs, destination):
+        return False
     if spec.intent == "CAPTURE":
         return True
     nodes = obs["nodes"]
@@ -789,12 +886,8 @@ def _intent_allowed(spec: ActionSpec, obs: dict, player_id: str) -> bool:
     return owner == "NEUTRAL" or _friendly_owner(owner, player_id)
 
 
-def _has_produce(spec: ActionSpec) -> bool:
-    return spec.kind in ("PRODUCE", "PRODUCE_MOVE") and spec.unit_type is not None
-
-
 def _has_move(spec: ActionSpec) -> bool:
-    return spec.kind in ("MOVE", "PRODUCE_MOVE") and bool(spec.source and spec.destination)
+    return spec.kind == "MOVE" and bool(spec.source and spec.destination)
 
 
 def _move_allowed(
@@ -901,16 +994,50 @@ def legal_action_mask(obs: dict, player_id: str) -> np.ndarray:
 
 def _legal_action_mask_absolute(obs: dict, player_id: str) -> np.ndarray:
     mask = np.zeros(ACTION_DIM, dtype=np.bool_)
-    resources = float(obs.get("resources", 0.0) or 0.0)
-    mask[0] = True
+    mask[PRODUCE_ACTION_START] = True
+    mask[MOVE_ACTION_START] = True
+    mask[BUILD_ACTION_START] = True
 
+    player = (obs.get("players", {}) or {}).get(player_id)
+    if player and (
+        not player.get("alive", True)
+        or float(player.get("core_hp", 0.0) or 0.0) <= 0.0
+    ):
+        return mask
+
+    resources = float(obs.get("resources", 0.0) or 0.0)
+
+    build_allowed: list[bool] = []
+    build_costs: list[float] = []
+    for spec in BUILD_ACTION_SPECS:
+        allowed = bool(
+            spec.building_type
+            and spec.destination
+            and _build_allowed_obs(
+                obs,
+                player_id,
+                spec.destination,
+                spec.building_type,
+                resources,
+            )
+        )
+        build_allowed.append(allowed)
+        if allowed and spec.building_type:
+            build_costs.append(float(BUILDING_COST[spec.building_type]))
+
+    # Factorized heads are masked independently. To avoid legal
+    # produce+build pairs that can overspend together, production reserves the
+    # most expensive currently legal build. This is deliberately conservative
+    # and keeps build decisions reliable for the policy.
+    build_reserve = max(build_costs) if build_costs else 0.0
+    produce_resources = max(0.0, resources - build_reserve)
     produce_allowed = [
-        _produce_allowed_obs(obs, player_id, unit_type, resources)
+        _produce_allowed_obs(obs, player_id, unit_type, produce_resources)
         for unit_type in UNIT_ORDER
     ]
     for unit_index, allowed in enumerate(produce_allowed):
         if allowed:
-            mask[PRODUCE_ACTION_START + unit_index] = True
+            mask[PRODUCE_ACTION_START + 1 + unit_index] = True
 
     movable_source_set = set(movable_sources(obs, player_id))
     move_allowed = [
@@ -920,94 +1047,73 @@ def _legal_action_mask_absolute(obs: dict, player_id: str) -> np.ndarray:
     for move_index, allowed in enumerate(move_allowed):
         if not allowed:
             continue
-        mask[MOVE_ACTION_START + move_index] = True
-        for unit_index, can_produce in enumerate(produce_allowed):
-            if can_produce:
-                mask[
-                    PRODUCE_MOVE_ACTION_START
-                    + unit_index * len(MOVE_ACTION_SPECS)
-                    + move_index
-                ] = True
-    for build_index, spec in enumerate(BUILD_ACTION_SPECS):
-        if spec.building_type and spec.destination and _build_allowed_obs(
-            obs,
-            player_id,
-            spec.destination,
-            spec.building_type,
-            resources,
-        ):
-            mask[BUILD_ACTION_START + build_index] = True
+        mask[MOVE_ACTION_START + 1 + move_index] = True
+    for build_index, allowed in enumerate(build_allowed):
+        if allowed:
+            mask[BUILD_ACTION_START + 1 + build_index] = True
     return mask
 
 
-def decode_action(action_index: int, obs: dict, player_id: str, assume_legal: bool = False) -> Action:
+def decode_action(action_index, obs: dict, player_id: str, assume_legal: bool = False) -> Action:
     policy_obs, policy_player = policy_observation(obs, player_id)
     return _decode_policy_action(action_index, policy_obs, policy_player, player_id, assume_legal=assume_legal)
 
 
 def _decode_policy_action(
-    action_index: int,
+    action_index,
     policy_obs: dict,
     policy_player: str,
     actual_player: str,
     assume_legal: bool = False,
 ) -> Action:
-    if action_index < 0 or action_index >= ACTION_DIM:
-        return Action(ActionType.HOLD)
+    action = normalize_action(action_index)
+    if not assume_legal:
+        mask = _legal_action_mask_absolute(policy_obs, policy_player)
+        if not action_is_legal(action, mask):
+            return Action(ActionType.HOLD)
 
-    spec = ACTION_SPECS[int(action_index)]
-    if spec.kind == "HOLD":
+    produce_local, move_local, build_local = (int(value) for value in action)
+    sub_actions: list[Action] = []
+
+    if produce_local > 0:
+        unit_index = produce_local - 1
+        if unit_index < len(UNIT_ORDER):
+            sub_actions.append(Action(ActionType.PRODUCE, unit_type=UNIT_ORDER[unit_index]))
+
+    if move_local > 0:
+        move_index = move_local - 1
+        if move_index < len(MOVE_ACTION_SPECS):
+            spec = MOVE_ACTION_SPECS[move_index]
+            source = spec.source
+            destination = spec.destination
+            if uses_mirrored_policy_perspective(actual_player):
+                source = mirrored_node_id(source)
+                destination = mirrored_node_id(destination)
+            sub_actions.append(Action(
+                ActionType.MOVE,
+                source=source,
+                destination=destination,
+                intent=spec.intent,
+            ))
+
+    if build_local > 0:
+        build_index = build_local - 1
+        if build_index < len(BUILD_ACTION_SPECS):
+            spec = BUILD_ACTION_SPECS[build_index]
+            destination = spec.destination
+            if uses_mirrored_policy_perspective(actual_player):
+                destination = mirrored_node_id(destination)
+            sub_actions.append(Action(
+                ActionType.BUILD,
+                building_type=spec.building_type,
+                destination=destination,
+            ))
+
+    if not sub_actions:
         return Action(ActionType.HOLD)
-    if spec.kind == "PRODUCE" and spec.unit_type is not None:
-        if assume_legal or _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
-            return Action(ActionType.PRODUCE, unit_type=spec.unit_type)
-        return Action(ActionType.HOLD)
-    if spec.kind == "MOVE" and spec.source and spec.destination:
-        if not assume_legal and not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
-            return Action(ActionType.HOLD)
-        source = spec.source
-        destination = spec.destination
-        if uses_mirrored_policy_perspective(actual_player):
-            source = mirrored_node_id(source)
-            destination = mirrored_node_id(destination)
-        return Action(
-            ActionType.MOVE,
-            source=source,
-            destination=destination,
-            intent=spec.intent,
-        )
-    if spec.kind == "BUILD" and spec.building_type and spec.destination:
-        if not assume_legal and not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
-            return Action(ActionType.HOLD)
-        destination = spec.destination
-        if uses_mirrored_policy_perspective(actual_player):
-            destination = mirrored_node_id(destination)
-        return Action(
-            ActionType.BUILD,
-            building_type=spec.building_type,
-            destination=destination,
-        )
-    if spec.kind == "PRODUCE_MOVE" and spec.unit_type and spec.source and spec.destination:
-        if not assume_legal and not _legal_action_mask_absolute(policy_obs, policy_player)[action_index]:
-            return Action(ActionType.HOLD)
-        source = spec.source
-        destination = spec.destination
-        if uses_mirrored_policy_perspective(actual_player):
-            source = mirrored_node_id(source)
-            destination = mirrored_node_id(destination)
-        return Action(
-            ActionType.MULTI,
-            sub_actions=[
-                Action(ActionType.PRODUCE, unit_type=spec.unit_type),
-                Action(
-                    ActionType.MOVE,
-                    source=source,
-                    destination=destination,
-                    intent=spec.intent,
-                ),
-            ],
-        )
-    return Action(ActionType.HOLD)
+    if len(sub_actions) == 1:
+        return sub_actions[0]
+    return Action(ActionType.MULTI, sub_actions=sub_actions[:3])
 
 
 def _normal_unit_counts(units: dict | None) -> list[float]:

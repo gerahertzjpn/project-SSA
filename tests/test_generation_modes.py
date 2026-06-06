@@ -7,6 +7,7 @@ from src.core.constants import (
     CORE_ATTACK_RANGE,
     LORD_ATTACK_RANGE,
     NEUTRAL_GUARD_ATK,
+    NEUTRAL_GUARD_ATTACK_RATE,
     NEUTRAL_GUARD_HP,
 )
 from src.core.map2d import MAP2D_VERSION
@@ -248,7 +249,8 @@ def test_replay_meta_records_code_and_rules_version(tmp_path: Path):
     assert replay["meta"]["rules"]["core_attack_rate"] == CORE_ATTACK_RATE
     assert replay["meta"]["rules"]["neutral_guard_hp"] == NEUTRAL_GUARD_HP
     assert replay["meta"]["rules"]["neutral_guard_atk"] == NEUTRAL_GUARD_ATK
-    assert replay["meta"]["rules"]["neutral_guard_total_atk"] == f"{NEUTRAL_GUARD_ATK} * guard_strength"
+    assert replay["meta"]["rules"]["neutral_guard_attack_rate"] == NEUTRAL_GUARD_ATTACK_RATE
+    assert replay["meta"]["rules"]["neutral_guard_total_atk"] == f"{NEUTRAL_GUARD_ATK} * {NEUTRAL_GUARD_ATTACK_RATE} * guard_strength"
     assert replay["meta"]["rules"]["neutral_income"] == "ceil(guard_strength / 2)"
     assert replay["meta"]["rules"]["lord_attack_range"] == LORD_ATTACK_RANGE
     assert replay["meta"]["rules"]["core_attack_range"] == CORE_ATTACK_RANGE
