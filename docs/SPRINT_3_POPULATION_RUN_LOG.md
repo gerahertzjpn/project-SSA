@@ -276,3 +276,103 @@ Interpretation:
 - Role-stress does block arbitrary cross-slot policy mixing. The foundation remains accepted only under slot-preserving use: A1-style policies in A1/B1 slots, A2-style policies in A2/B2 slots, and A3-style policies in A3/B3 slots.
 - Throughput remains below the 3M world-steps/hour target. The accepted safe value is still about `1.927M` world steps/hour, so performance optimization remains an explicit debt and should only be revisited with exact replay/state equivalence checks.
 - Population foundation status: accepted.
+
+## 2026-06-07 Fresh Universal Roots v3.1
+
+Purpose:
+
+- Restart the population foundation after the new v3.1 action/observation and
+  balance changes.
+- Build at least 6 fresh universal roots.
+- Do not train roots into explicit tactics or special counters. Diversity must
+  come from seed and hyperparameter variation, not from scripted-core,
+  raider-core, BMP-core, or other narrow opponent curricula.
+
+Correction:
+
+- An earlier batch template included special opponent variants for later roots.
+  This was rejected before those special-opponent roots were trained.
+- The batch script was corrected so all 6 fresh roots train only against the
+  generic `scripted` opponent with role shuffle enabled.
+- The first two completed roots were already generic scripted roots and remain
+  valid. The remaining four roots were then trained from scratch with the same
+  universal rule.
+
+Training artifacts:
+
+| root | run dir | selected checkpoint |
+| --- | --- | --- |
+| fresh01 | `training_runs/fresh_population_v31_seed01_scripted_std_s20261201` | `checkpoint_update_300.pt` |
+| fresh02 | `training_runs/fresh_population_v31_seed02_scripted_lowent_s20261202` | `checkpoint_update_320.pt` |
+| fresh03 | `training_runs/fresh_population_v31_seed03_scripted_highent_s20261203` | `checkpoint_update_240.pt` |
+| fresh04 | `training_runs/fresh_population_v31_seed04_scripted_fastlr_s20261204` | `checkpoint_update_240.pt` |
+| fresh05 | `training_runs/fresh_population_v31_seed05_scripted_slow_highent_s20261205` | `checkpoint_update_280.pt` |
+| fresh06 | `training_runs/fresh_population_v31_seed06_scripted_wide_minibatch_s20261206` | `checkpoint_update_320.pt` |
+
+Selection eval:
+
+- Eval dirs: `training_runs/evals/fresh_population_v31_selection_fresh01`
+  through `fresh_population_v31_selection_fresh06`.
+- Opponent: generic `scripted`.
+- Modes: `argmax,stochastic`.
+- Seed bases: `20261331,20271331,20281331,20291331`.
+- Episodes: 50 per seed block, 200 per checkpoint/mode.
+
+Best selected checkpoint summary against scripted:
+
+| root | checkpoint | argmax win | argmax normal | stochastic win | stochastic normal | note |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| fresh01 | u300 | 1.000 | 1.000 | 0.960 | 0.960 | strong |
+| fresh02 | u320 | 1.000 | 1.000 | 0.905 | 0.905 | strong argmax, usable stochastic |
+| fresh03 | u240 | 0.985 | 0.985 | 0.805 | 0.800 | weakest stochastic root |
+| fresh04 | u240 | 1.000 | 1.000 | 0.860 | 0.855 | u320 is more stochastic-friendly but weaker argmax |
+| fresh05 | u280 | 0.995 | 0.995 | 0.785 | 0.780 | reject u340 despite better stochastic; u340 argmax collapses |
+| fresh06 | u320 | 1.000 | 1.000 | 0.940 | 0.940 | strongest overall, u220 has best stochastic |
+
+Teammate-swap gate:
+
+- Eval dir: `training_runs/evals/fresh_population_v31_teammate_swap_universal_roots_v1`.
+- Checkpoints: the selected 6 fresh roots above.
+- Suite: `native,slot_mixed,role_stress`.
+- Modes: `argmax,stochastic`.
+- Seed bases: `20261441,20271441,20281441,20291441`.
+- Episodes: 50 per seed block, 200 per team/mode.
+- Observation/action metadata: `train_obs_v3.1`, observation dim `5188`,
+  action dim `447`.
+- Records: 48/48 completed, no stderr errors.
+
+Summary:
+
+| team kind | mode | win avg | win min | win max |
+| --- | ---: | ---: | ---: | ---: |
+| native | argmax | 0.994 | 0.965 | 1.000 |
+| native | stochastic | 0.894 | 0.815 | 0.965 |
+| slot_mixed | argmax | 0.970 | 0.745 | 1.000 |
+| slot_mixed | stochastic | 0.907 | 0.845 | 0.960 |
+| role_stress | argmax | 0.943 | 0.725 | 1.000 |
+| role_stress | stochastic | 0.912 | 0.825 | 0.975 |
+
+Weak samples below 0.85 win-rate:
+
+```text
+0.725 role_stress argmax: fresh03 u240 with A1<-A2, A2<-A3, A3<-A1
+0.745 slot_mixed argmax: A1 fresh03 u240 + A2 fresh05 u280 + A3 fresh04 u240
+0.815 native stochastic: fresh03 u240
+0.825 role_stress stochastic: fresh05 u280 with A1<-A2, A2<-A3, A3<-A1
+0.835 role_stress stochastic: fresh03 u240 with A1<-A2, A2<-A3, A3<-A1
+0.845 native stochastic: fresh05 u280
+0.845 slot_mixed stochastic: A1 fresh03 u240 + A2 fresh04 u240 + A3 fresh05 u280
+```
+
+Decision:
+
+- The 6-root universal foundation is valid against generic scripted.
+- Slot-mixed teammate-swap mostly passes; mixed teams do not collapse on
+  average.
+- Role-stress is no longer a hard failure against scripted in v3.1, but
+  `fresh03` and `fresh05` are weaker and should not be treated as equal-quality
+  league roots without stabilization or peer/self-play exposure.
+- The next large run should keep these as universal roots and proceed into a
+  mixed-team/self-play bridge instead of adding tactical-specialized roots.
+- Any later branch specialization must happen after these universal roots, not
+  in the root-training phase.
