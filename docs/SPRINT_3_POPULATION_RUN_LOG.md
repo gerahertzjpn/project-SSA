@@ -509,3 +509,192 @@ Interpretation:
   the bridge pool, not expansion to 18-24 roots.
 - This is still a good result for the current phase: we now have a working
   universal foundation and a clear harder opponent signal.
+
+## Fresh Population v3.1 Peer Curriculum Batch
+
+Date: 2026-06-08.
+
+Purpose:
+
+- Continue from the six universal bridge roots without tactical
+  specialization.
+- Train each root against a frozen trained peer, with role shuffle still
+  enabled.
+- Validate that the v3.1/factorized action-space population can learn against
+  trained policy opponents before expanding toward 18-24 league roots.
+
+Batch:
+
+- Batch id: `fresh_population_v31_peer_curriculum_v1`.
+- Batch dir:
+  `training_runs/fresh_population_v31_peer_batches/fresh_population_v31_peer_curriculum_v1`.
+- Script: `scripts/run_fresh_population_v31_peer_curriculum.py`.
+- Workers: 16.
+- Rollout steps: 512.
+- Eval interval: 20 updates.
+- Eval episodes per internal eval: 60.
+- Role assignment: `shuffle`.
+- Opponents: frozen stochastic bridge policies.
+- Result: 6/6 runs complete, all returncode `0`, empty `stderr.log`.
+
+Final internal evals against each run's frozen opponent:
+
+| peer run | resume | opponent | final update | final eval win | final eval loss | final eval draw |
+| --- | --- | --- | ---: | ---: | ---: | ---: |
+| peer01 | bridge01 u440 | bridge03 u400 stochastic | 660 | 0.983 | 0.017 | 0.000 |
+| peer02 | bridge02 u460 | bridge03 u400 stochastic | 700 | 0.917 | 0.083 | 0.000 |
+| peer03 | bridge03 u400 | bridge06 u440 stochastic | 580 | 0.983 | 0.017 | 0.000 |
+| peer04 | bridge04 u380 | bridge03 u400 stochastic | 600 | 0.933 | 0.067 | 0.000 |
+| peer05 | bridge05 u420 | bridge03 u400 stochastic | 660 | 1.000 | 0.000 | 0.000 |
+| peer06 | bridge06 u440 | bridge02 u460 stochastic | 620 | 0.900 | 0.100 | 0.000 |
+
+Selected checkpoints:
+
+```text
+peer01: training_runs/fresh_population_v31_peer_seed01_vs_bridge03_s20262001/checkpoints/checkpoint_update_660.pt
+peer02: training_runs/fresh_population_v31_peer_seed02_vs_bridge03_s20262002/checkpoints/checkpoint_update_700.pt
+peer03: training_runs/fresh_population_v31_peer_seed03_vs_bridge06_s20262003/checkpoints/checkpoint_update_580.pt
+peer04: training_runs/fresh_population_v31_peer_seed04_vs_bridge03_s20262004/checkpoints/checkpoint_update_600.pt
+peer05: training_runs/fresh_population_v31_peer_seed05_vs_bridge03_s20262005/checkpoints/checkpoint_update_660.pt
+peer06: training_runs/fresh_population_v31_peer_seed06_vs_bridge02_s20262006/checkpoints/checkpoint_update_620.pt
+```
+
+Interpretation:
+
+- All six lines learned against trained peer opponents.
+- No line collapsed into draw-heavy play during internal eval.
+- The lines are not clones: starts differed strongly (`peer02` and `peer05`
+  began weak and recovered; `peer01` and `peer03` were strong earlier).
+- Internal opponent eval is not enough for league acceptance, so the batch was
+  followed by scripted, teammate-swap, and cross-peer gates.
+
+### Gate: Scripted-Core Teammate Swap
+
+Eval dir:
+`training_runs/fresh_population_v31_peer_batches/fresh_population_v31_peer_curriculum_v1/eval_scripted_core_swap`.
+
+Setup:
+
+- Suite: `native,slot_mixed,role_stress`.
+- Modes: `argmax,stochastic`.
+- Opponent: `scripted_core`.
+- Seed bases: `20300101,20310101,20320101,20330101`.
+- Episodes: 20 per seed block, 80 per team/mode.
+- Records: 48/48 complete.
+
+Summary:
+
+| team kind | mode | win avg | win min | win max |
+| --- | --- | ---: | ---: | ---: |
+| native | argmax | 0.965 | 0.900 | 1.000 |
+| native | stochastic | 0.988 | 0.975 | 1.000 |
+| role_stress | argmax | 0.971 | 0.925 | 1.000 |
+| role_stress | stochastic | 0.994 | 0.988 | 1.000 |
+| slot_mixed | argmax | 0.798 | 0.288 | 1.000 |
+| slot_mixed | stochastic | 0.982 | 0.913 | 1.000 |
+
+Important note:
+
+- Native and role-stress scripted-core performance is strong.
+- Stochastic slot-mixed is strong.
+- Argmax slot-mixed has a severe outlier at `0.288`, so deterministic
+  mixed-team play is not yet reliable. This matters less for the intended
+  stochastic league mode, but it is a useful regression signal.
+
+### Gate: Frozen `bridge03 u400` Policy Teammate Swap
+
+Eval dir:
+`training_runs/fresh_population_v31_peer_batches/fresh_population_v31_peer_curriculum_v1/eval_bridge03_policy_swap`.
+
+Setup:
+
+- Suite: `native,slot_mixed,role_stress`.
+- Modes: `argmax,stochastic`.
+- Opponent: `bridge03 u400` as frozen stochastic policy.
+- Seed bases: `20340101,20350101,20360101,20370101`.
+- Episodes: 15 per seed block, 60 per team/mode.
+- Records: 48/48 complete.
+
+Summary:
+
+| team kind | mode | win avg | win min | win max |
+| --- | --- | ---: | ---: | ---: |
+| native | argmax | 0.964 | 0.950 | 1.000 |
+| native | stochastic | 0.892 | 0.717 | 0.983 |
+| role_stress | argmax | 0.964 | 0.900 | 1.000 |
+| role_stress | stochastic | 0.875 | 0.617 | 1.000 |
+| slot_mixed | argmax | 0.875 | 0.567 | 1.000 |
+| slot_mixed | stochastic | 0.815 | 0.533 | 0.983 |
+
+Weak samples:
+
+```text
+0.533 slot_mixed stochastic:
+  peer05 A1 + peer01 A2 + peer06 A3
+0.567 slot_mixed argmax:
+  peer04 A1 + peer05 A2 + peer06 A3
+0.617 role_stress stochastic:
+  peer06 role rotation
+0.717 native stochastic:
+  peer06 native
+```
+
+Interpretation:
+
+- Native teams now beat the old frozen `bridge03` peer clearly in argmax and
+  mostly in stochastic mode.
+- Role-stress is acceptable on average, but `peer06` is weak under stochastic
+  role rotation.
+- Mixed stochastic teams are not yet robust enough for free league drafting.
+  The pool is usable as training material, not as a final open-draft league.
+
+### Gate: Native Cross-Peer Against Strong `peer01`
+
+Eval dir:
+`training_runs/fresh_population_v31_peer_batches/fresh_population_v31_peer_curriculum_v1/eval_peer01_native_cross`.
+
+Setup:
+
+- Suite: `native`.
+- Modes: `argmax,stochastic`.
+- Opponent: `peer01 u660` as frozen stochastic policy.
+- Seed bases: `20380101,20390101,20400101,20410101`.
+- Episodes: 20 per seed block, 80 per checkpoint/mode.
+- Records: 12/12 complete.
+
+Summary:
+
+| evaluated native team | argmax win | stochastic win | notes |
+| --- | ---: | ---: | --- |
+| peer01 u660 | 0.713 | 0.425 | mirror-ish self check still favors opponent side/stochastic opponent |
+| peer02 u700 | 0.688 | 0.488 | close but not dominant |
+| peer03 u580 | 0.238 | 0.038 | weak into peer01 |
+| peer04 u600 | 0.625 | 0.225 | argmax useful, stochastic weak |
+| peer05 u660 | 0.625 | 0.550 | best stochastic non-peer01 line |
+| peer06 u620 | 0.325 | 0.150 | weak into peer01 |
+
+Interpretation:
+
+- Cross-peer is the current hard gate and it is not passed.
+- `peer01` is a strong opponent; `peer05` is the best stochastic challenger,
+  while `peer03` and `peer06` are weak in this matchup.
+- The current six checkpoints should not be multiplied into 18-24 population
+  lines yet.
+- Next recommended training phase: rotating peer/self-play curriculum that
+  samples opponents from this six-line pool and uses teammate mixing during
+  training. The goal is to preserve universal roots while improving cross-peer
+  and mixed-team robustness.
+
+Decision:
+
+- Accept the peer curriculum batch as a successful training step.
+- Do not accept the population as league-ready.
+- Do not proceed to 18-24 expansion yet.
+- Proceed to a rotating peer/self-play mix run with:
+  - the six selected peer checkpoints as the initial pool;
+  - stochastic opponents sampled from the pool;
+  - role shuffle enabled;
+  - teammate mixing included if the trainer supports it, or implemented as the
+    next training adapter change;
+  - gates after the run: scripted-core, bridge03, peer01, and full teammate
+    swap.
