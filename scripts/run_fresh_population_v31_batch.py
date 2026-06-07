@@ -63,34 +63,36 @@ FRESH_RUNS: tuple[FreshSeedRun, ...] = (
         description="fresh root, scripted opponent, higher entropy for policy diversity",
     ),
     FreshSeedRun(
-        run_id="fresh04_core_focus",
-        run_dir="training_runs/fresh_population_v31_seed04_core_focus_s20261204",
+        run_id="fresh04_scripted_fastlr",
+        run_dir="training_runs/fresh_population_v31_seed04_scripted_fastlr_s20261204",
         seed=20261204,
-        opponent_bot="scripted_core",
+        opponent_bot="scripted",
         entropy_coef=0.012,
-        learning_rate=1.0e-4,
-        updates=340,
-        description="fresh root, trained against core-focused scripted pressure",
+        learning_rate=1.2e-4,
+        updates=320,
+        description="fresh root, scripted opponent, slightly faster LR",
     ),
     FreshSeedRun(
-        run_id="fresh05_raider_pressure",
-        run_dir="training_runs/fresh_population_v31_seed05_raider_pressure_s20261205",
+        run_id="fresh05_scripted_slow_highent",
+        run_dir="training_runs/fresh_population_v31_seed05_scripted_slow_highent_s20261205",
         seed=20261205,
-        opponent_bot="scripted_core_raider",
-        entropy_coef=0.015,
-        learning_rate=9.0e-5,
+        opponent_bot="scripted",
+        entropy_coef=0.018,
+        learning_rate=7.0e-5,
         updates=340,
-        description="fresh root, trained against raider-flavored core pressure",
+        description="fresh root, scripted opponent, slower LR with higher entropy",
     ),
     FreshSeedRun(
-        run_id="fresh06_bmp_pressure",
-        run_dir="training_runs/fresh_population_v31_seed06_bmp_pressure_s20261206",
+        run_id="fresh06_scripted_wide_minibatch",
+        run_dir="training_runs/fresh_population_v31_seed06_scripted_wide_minibatch_s20261206",
         seed=20261206,
-        opponent_bot="scripted_core_bmp",
-        entropy_coef=0.015,
+        opponent_bot="scripted",
+        entropy_coef=0.012,
         learning_rate=9.0e-5,
-        updates=340,
-        description="fresh root, trained against BMP-flavored core pressure",
+        updates=320,
+        description="fresh root, scripted opponent, alternate minibatch/optimization cadence",
+        ppo_epochs=5,
+        minibatch_size=1024,
     ),
 )
 
@@ -246,7 +248,7 @@ def main() -> int:
     parser.add_argument("--random-baseline-episodes", type=int, default=50)
     parser.add_argument("--post-eval-seed-bases", default="20261221,20271221,20281221,20291221")
     parser.add_argument("--post-eval-episodes-per-seed", type=int, default=50)
-    parser.add_argument("--post-eval-opponents", default="scripted,scripted_core")
+    parser.add_argument("--post-eval-opponents", default="scripted")
     parser.add_argument("--smoke-updates", type=int, default=0)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--tee", action="store_true")
