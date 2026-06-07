@@ -376,3 +376,104 @@ Decision:
   mixed-team/self-play bridge instead of adding tactical-specialized roots.
 - Any later branch specialization must happen after these universal roots, not
   in the root-training phase.
+
+## 2026-06-07 Fresh v3.1 Self-Play Bridge
+
+Purpose:
+
+- Continue the 6 fresh universal roots against other universal roots.
+- Keep roots universal. This is not a tactical-specialized curriculum.
+- Stabilize the weaker fresh roots (`fresh03`, `fresh05`) without training them
+  toward a hand-authored style.
+
+Batch:
+
+- Script: `scripts/run_fresh_population_v31_selfplay_bridge.py`.
+- Batch id: `fresh_population_v31_selfplay_bridge_v1`.
+- Batch dir:
+  `training_runs/fresh_population_v31_bridge_batches/fresh_population_v31_selfplay_bridge_v1`.
+- Workers: 16.
+- Rollout steps: 512.
+- Role assignment: `shuffle`.
+- Opponent type: frozen universal policy peers.
+- Result: 6/6 runs complete, 6 compatible checkpoints in manifest.
+
+Runs:
+
+| bridge | resume | opponent | updates | final/best internal peer eval |
+| --- | --- | --- | ---: | --- |
+| bridge01 | fresh01 u300 | fresh06 u320 stochastic | 140 | u440: win 0.96, normal 0.96 |
+| bridge02 | fresh02 u320 | fresh04 u240 stochastic | 140 | u460: win 1.00, normal 1.00 |
+| bridge03 | fresh03 u240 | fresh06 u320 stochastic | 180 | u400/u420: win 0.98, normal 0.98 |
+| bridge04 | fresh04 u240 | fresh02 u320 stochastic | 140 | u360/u380: win 1.00, normal 1.00 |
+| bridge05 | fresh05 u280 | fresh01 u300 stochastic | 180 | u300/u340/u360/u380/u400/u420: win 0.98, normal 0.98 |
+| bridge06 | fresh06 u320 | fresh03 u240 stochastic | 120 | u440: win 1.00, normal 1.00 |
+
+Selection eval against generic scripted:
+
+- Eval dirs: `training_runs/evals/fresh_population_v31_bridge_selection_01`
+  through `fresh_population_v31_bridge_selection_06`.
+- Modes: `argmax,stochastic`.
+- Seed bases: `20261661,20271661,20281661,20291661`.
+- Episodes: 50 per seed block, 200 per checkpoint/mode.
+
+Selected bridge checkpoint summary:
+
+| root | checkpoint | argmax win | argmax normal | stochastic win | stochastic normal | note |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| bridge01 | u440 | 0.895 | 0.895 | 0.970 | 0.965 | stochastic improved, argmax scripted weaker |
+| bridge02 | u460 | 1.000 | 0.990 | 0.995 | 0.995 | strong |
+| bridge03 | u400 | 1.000 | 1.000 | 0.980 | 0.980 | weak fresh root recovered |
+| bridge04 | u380 | 0.920 | 0.920 | 0.990 | 0.990 | stochastic strong, argmax scripted weaker |
+| bridge05 | u420 | 0.990 | 0.960 | 0.995 | 0.990 | strong stochastic; u300 has cleanest argmax |
+| bridge06 | u440 | 0.905 | 0.905 | 0.995 | 0.995 | stochastic strong, argmax scripted weaker |
+
+Interpretation:
+
+- Self-play bridge improves league-mode stochastic performance.
+- It can reduce argmax performance against the weak scripted baseline for some
+  roots (`bridge01`, `bridge04`, `bridge06`), so selection cannot use a single
+  metric.
+- For future league use, stochastic robustness is more important than scripted
+  argmax perfection, but scripted argmax remains a useful regression guard.
+- `fresh03` and `fresh05` were not lost; both improved under universal peer
+  bridge without tactical specialization.
+
+Bridge teammate-swap gate:
+
+- Eval dir: `training_runs/evals/fresh_population_v31_bridge_teammate_swap_v1`.
+- Suite: `native,slot_mixed,role_stress`.
+- Modes: `argmax,stochastic`.
+- Seed bases: `20261771,20271771,20281771,20291771`.
+- Episodes: 50 per seed block, 200 per team/mode.
+- Records: 48/48 complete.
+
+Summary:
+
+| team kind | mode | win avg | win min | win max | normal avg | loss avg | death avg | draw avg |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.943 | 0.880 | 1.000 | 0.934 | 0.058 | 0.008 | 0.000 |
+| native | stochastic | 0.981 | 0.970 | 0.990 | 0.981 | 0.019 | 0.000 | 0.000 |
+| slot_mixed | argmax | 0.981 | 0.880 | 1.000 | 0.981 | 0.019 | 0.000 | 0.000 |
+| slot_mixed | stochastic | 0.973 | 0.930 | 1.000 | 0.973 | 0.028 | 0.000 | 0.000 |
+| role_stress | argmax | 0.974 | 0.905 | 1.000 | 0.974 | 0.026 | 0.000 | 0.000 |
+| role_stress | stochastic | 0.975 | 0.955 | 0.990 | 0.975 | 0.025 | 0.000 | 0.000 |
+
+Weak samples below 0.90:
+
+```text
+0.880 native argmax: bridge06 u440
+0.880 slot_mixed argmax: bridge04 u380 + bridge06 u440 + bridge05 u420
+0.885 native argmax: bridge01 u440
+```
+
+Decision:
+
+- Bridge population is accepted as a stronger universal stochastic pool than
+  the raw fresh roots.
+- It is not accepted as "argmax-perfect against scripted"; that is not the
+  right league objective, but it remains a regression note.
+- Next step should be a peer/self-play eval or bridge-vs-bridge league gate,
+  not another scripted-only training run.
+- Do not expand to 18-24 equal roots until the bridge pool is checked against
+  trained peers, not just scripted.
