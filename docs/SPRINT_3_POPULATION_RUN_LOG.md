@@ -477,3 +477,35 @@ Decision:
   not another scripted-only training run.
 - Do not expand to 18-24 equal roots until the bridge pool is checked against
   trained peers, not just scripted.
+
+### Peer Gate Against Frozen `bridge03 u400`
+
+Purpose:
+
+- Check whether the bridge pool only beats scripted or can also stand against a
+  trained peer.
+- Opponent: `bridge03 u400` as frozen stochastic policy.
+- First full-size attempt: `fresh_population_v31_bridge_teammate_swap_vs_bridge03_u400_v1`.
+  This reached 35/36 records before the shell timeout stopped the final record.
+- Clean artifact: `fresh_population_v31_bridge_teammate_swap_vs_bridge03_u400_quick_v1`.
+  This used 2 seed blocks and 25 episodes per block, 50 episodes per team/mode,
+  and completed 36/36 records.
+
+Quick peer-gate summary:
+
+| team kind | mode | win avg | win min | win max | normal avg | loss avg | death avg | draw avg |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.673 | 0.400 | 0.840 | 0.617 | 0.310 | 0.057 | 0.017 |
+| native | stochastic | 0.323 | 0.120 | 0.460 | 0.323 | 0.677 | 0.000 | 0.000 |
+| slot_mixed | argmax | 0.595 | 0.240 | 0.860 | 0.578 | 0.400 | 0.017 | 0.005 |
+| slot_mixed | stochastic | 0.375 | 0.200 | 0.580 | 0.375 | 0.625 | 0.000 | 0.000 |
+
+Interpretation:
+
+- Scripted gates are not enough. Against a trained peer, the bridge pool is not
+  yet league-ready.
+- Argmax has some useful teams, but stochastic league-mode performance is weak.
+- The immediate next training phase should be a peer/self-play curriculum from
+  the bridge pool, not expansion to 18-24 roots.
+- This is still a good result for the current phase: we now have a working
+  universal foundation and a clear harder opponent signal.
