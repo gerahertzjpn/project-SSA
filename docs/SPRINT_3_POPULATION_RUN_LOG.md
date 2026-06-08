@@ -982,3 +982,55 @@ Decision:
   at 0.667, although its mixed/stress results are acceptable.
 - Next step: launch `fresh_population_v31_selfplay_v3_pool_v1`, six stochastic
   peer-pressure continuations from the selected v3 pool.
+
+## 2026-06-08 - Self-Play v3 Pool
+
+Batch: `fresh_population_v31_selfplay_v3_pool_v1`.
+
+Goal: continue the selected hard-negative teammate-mix pool into self-play style
+training without specializing agents to a hand-authored tactic. All runs used
+role shuffle, stochastic frozen peer opponents, factorized actions, and
+`train_obs_v3.1`.
+
+Internal results:
+
+| run | source vs peer | best update | best eval W/L/D | final update | final train W/L/D | final eval W/L/D |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| spv3_01 | tmix10 vs tmix11 | 200 | 0.983 / 0.000 / 0.017 | 240 | 0.889 / 0.056 / 0.056 | 0.967 / 0.033 / 0.000 |
+| spv3_02 | tmix11 vs tmix08 | 240 | 0.983 / 0.017 / 0.000 | 240 | 0.913 / 0.065 / 0.022 | 0.983 / 0.017 / 0.000 |
+| spv3_03 | tmix08 vs tmix09 | 240 | 0.550 / 0.317 / 0.133 | 240 | 0.788 / 0.212 / 0.000 | 0.550 / 0.317 / 0.133 |
+| spv3_04 | tmix09 vs tmix10 | 240 | 0.983 / 0.017 / 0.000 | 240 | 0.769 / 0.205 / 0.026 | 0.983 / 0.017 / 0.000 |
+| spv3_05 | tmix10 vs tmix08 | 220 | 0.867 / 0.067 / 0.067 | 220 | 0.743 / 0.229 / 0.029 | 0.867 / 0.067 / 0.067 |
+| spv3_06 | tmix11 vs tmix09 | 200 | 0.900 / 0.033 / 0.067 | 220 | 0.825 / 0.175 / 0.000 | 0.850 / 0.067 / 0.083 |
+
+Manifest:
+`training_runs/self_play_pools/fresh_population_v31_selfplay_v3_pool_v1_manifest.json`.
+Compatible entries: 6/6.
+
+External gate against frozen stochastic `tmix10 u80`:
+`training_runs/evals/fresh_population_v31_selfplay_v3_pool_vs_peer10_stoch_v1`.
+
+| team kind | mode | win avg | win min | win max | loss avg | draw avg | normal avg | death-time avg |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.781 | 0.233 | 1.000 | 0.108 | 0.111 | 0.703 | 0.078 |
+| native | stochastic | 0.703 | 0.600 | 0.783 | 0.253 | 0.044 | 0.647 | 0.056 |
+| role_stress | argmax | 0.842 | 0.700 | 0.950 | 0.075 | 0.083 | 0.725 | 0.117 |
+| role_stress | stochastic | 0.708 | 0.583 | 0.817 | 0.231 | 0.061 | 0.633 | 0.075 |
+| slot_mixed | argmax | 0.806 | 0.550 | 0.933 | 0.086 | 0.108 | 0.696 | 0.110 |
+| slot_mixed | stochastic | 0.662 | 0.467 | 0.833 | 0.278 | 0.060 | 0.585 | 0.078 |
+
+Worst findings:
+
+- `spv3_03` is not accepted as a strong line yet: native argmax fell to 0.233
+  vs frozen stochastic `tmix10 u80`.
+- `slot_mixed stochastic` minimum is 0.467, mostly involving `spv3_03`.
+- `spv3_05` is usable but soft: native stochastic 0.600 and role-stress
+  stochastic 0.633.
+
+Decision:
+
+- Do not accept this as a clean six-line open-draft pool yet.
+- Keep `spv3_01`, `spv3_02`, `spv3_04`, and `spv3_06` as strong candidates.
+- Launch a recovery/stabilization pass for `spv3_03` and `spv3_05` before the
+  next population gate. This is still universal training: no scripted tactic
+  specialization, just stochastic peer pressure with role shuffle.
