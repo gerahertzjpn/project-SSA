@@ -698,3 +698,172 @@ Decision:
     next training adapter change;
   - gates after the run: scripted-core, bridge03, peer01, and full teammate
     swap.
+
+## Fresh Population v3.1 Rotating Peer Mix v1
+
+Date: 2026-06-08.
+
+Goal:
+
+- Continue the six peer-curriculum roots against stronger frozen policy peers.
+- Keep role shuffle enabled so roots stay position-universal.
+- Check whether simple peer/opponent rotation is enough for league-style
+  teammate swaps.
+
+Batch:
+
+- Batch id: `fresh_population_v31_rotating_peer_mix_v1`.
+- Batch dir:
+  `training_runs/fresh_population_v31_rotmix_batches/fresh_population_v31_rotating_peer_mix_v1`.
+- Script: `scripts/run_fresh_population_v31_rotating_peer_mix.py`.
+- Workers: 16.
+- Rollout steps: 512.
+- Role assignment: `shuffle`.
+- Stage 1: six roots, 120 updates each, resumed from peer-curriculum
+  checkpoints.
+- Stage 2: six roots, 80 updates each, resumed from Stage 1 and rotated
+  against updated peer lines.
+- Result: 12/12 runs complete, all returncode `0`, no batch stderr.
+
+Important limitation:
+
+- This was rotating peer/opponent training, not true in-episode teammate
+  mixing. The current trainer still resumes a whole three-slot team checkpoint.
+  Mixed teammate compatibility must therefore be validated by eval and, if it
+  fails, fixed by a training-adapter change.
+
+Internal eval summary:
+
+| run | best update | best W/L/D | final update | final W/L/D |
+| --- | ---: | --- | ---: | --- |
+| mix01 stage1 | 720 | 0.983 / 0.017 / 0.000 | 780 | 0.933 / 0.050 / 0.017 |
+| mix01 stage2 | 840 | 0.950 / 0.050 / 0.000 | 860 | 0.933 / 0.067 / 0.000 |
+| mix02 stage1 | 780 | 0.950 / 0.050 / 0.000 | 820 | 0.867 / 0.133 / 0.000 |
+| mix02 stage2 | 880 | 0.883 / 0.117 / 0.000 | 900 | 0.883 / 0.117 / 0.000 |
+| mix03 stage1 | 680 | 0.600 / 0.383 / 0.017 | 700 | 0.533 / 0.350 / 0.117 |
+| mix03 stage2 | 780 | 0.817 / 0.167 / 0.017 | 780 | 0.817 / 0.167 / 0.017 |
+| mix04 stage1 | 660 | 0.950 / 0.033 / 0.017 | 720 | 0.950 / 0.050 / 0.000 |
+| mix04 stage2 | 800 | 0.767 / 0.167 / 0.067 | 800 | 0.767 / 0.167 / 0.067 |
+| mix05 stage1 | 760 | 0.967 / 0.017 / 0.017 | 780 | 0.817 / 0.150 / 0.033 |
+| mix05 stage2 | 840 | 0.800 / 0.133 / 0.067 | 860 | 0.783 / 0.117 / 0.100 |
+| mix06 stage1 | 720 | 0.617 / 0.317 / 0.067 | 740 | 0.617 / 0.367 / 0.017 |
+| mix06 stage2 | 800 | 0.767 / 0.200 / 0.033 | 820 | 0.767 / 0.217 / 0.017 |
+
+Selected candidate checkpoints:
+
+```text
+mix01: training_runs/fresh_population_v31_rotmix_mix01_peer01_stage2_s20263101/checkpoints/checkpoint_update_840.pt
+mix02: training_runs/fresh_population_v31_rotmix_mix02_peer02_stage2_s20263102/checkpoints/checkpoint_update_900.pt
+mix03: training_runs/fresh_population_v31_rotmix_mix03_peer03_stage2_s20263103/checkpoints/checkpoint_update_780.pt
+mix04: training_runs/fresh_population_v31_rotmix_mix04_peer04_stage1_s20263004/checkpoints/checkpoint_update_720.pt
+mix05: training_runs/fresh_population_v31_rotmix_mix05_peer05_stage1_s20263005/checkpoints/checkpoint_update_760.pt
+mix06: training_runs/fresh_population_v31_rotmix_mix06_peer06_stage2_s20263106/checkpoints/checkpoint_update_820.pt
+```
+
+Why Stage 1 checkpoints were kept for `mix04` and `mix05`:
+
+- Their Stage 2 best/final evals were worse than Stage 1.
+- Keeping the stronger checkpoint preserves line diversity without accepting a
+  clearly regressed continuation.
+
+### Gate: Scripted-Core Rotmix v1 Swap
+
+Eval dir: `training_runs/evals/rotmix_v1_swap_scripted_core`.
+
+Setup:
+
+- Suite: `native,slot_mixed,role_stress`.
+- Modes: `argmax,stochastic`.
+- Opponent: `scripted_core`.
+- Ally bot: `scripted_core`.
+- Seed bases: `20260609,20270609,20280609`.
+- Episodes: 20 per seed block, 60 per team/mode.
+- Records: 48/48 complete.
+
+Summary:
+
+| team kind | mode | win avg | win min | win max | loss avg | draw avg |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.650 | 0.317 | 1.000 | 0.350 | 0.000 |
+| native | stochastic | 0.981 | 0.950 | 1.000 | 0.019 | 0.000 |
+| role_stress | argmax | 0.711 | 0.133 | 1.000 | 0.283 | 0.006 |
+| role_stress | stochastic | 0.961 | 0.917 | 1.000 | 0.039 | 0.000 |
+| slot_mixed | argmax | 0.886 | 0.300 | 1.000 | 0.114 | 0.000 |
+| slot_mixed | stochastic | 0.994 | 0.983 | 1.000 | 0.006 | 0.000 |
+
+Weak argmax samples:
+
+```text
+0.133 role_stress: mix06 u820, A1<-A2 A2<-A3 A3<-A1
+0.300 slot_mixed: mix04 u720 + mix05 u760 + mix06 u820
+0.317 native: mix06 u820
+0.333 slot_mixed_alt: mix04 u720 + mix06 u820 + mix05 u760
+0.350 role_stress: mix02 u900, A1<-A2 A2<-A3 A3<-A1
+```
+
+Interpretation:
+
+- Stochastic scripted-core performance is strong, including mixed teams.
+- Argmax is not clean. `mix06` and some role/slot combinations can collapse.
+- This does not block stochastic league experiments by itself, but it is a
+  warning that deterministic eval should not be the only selection criterion.
+
+### Gate: Frozen `peer01 u660` Stochastic Rotmix v1 Swap
+
+Eval dir: `training_runs/evals/rotmix_v1_swap_vs_peer01_stoch`.
+
+Setup:
+
+- Suite: `native,slot_mixed,role_stress`.
+- Modes: `argmax,stochastic`.
+- Opponent: `peer01 u660` as frozen stochastic policy.
+- Ally bot: `scripted_core`.
+- Seed bases: `20260610,20270610,20280610`.
+- Episodes: 20 per seed block, 60 per team/mode.
+- Records: 48/48 complete.
+
+Summary:
+
+| team kind | mode | win avg | win min | win max | loss avg | draw avg |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.839 | 0.567 | 1.000 | 0.133 | 0.028 |
+| native | stochastic | 0.689 | 0.283 | 0.933 | 0.308 | 0.003 |
+| role_stress | argmax | 0.803 | 0.450 | 1.000 | 0.156 | 0.042 |
+| role_stress | stochastic | 0.672 | 0.150 | 0.950 | 0.317 | 0.011 |
+| slot_mixed | argmax | 0.715 | 0.167 | 0.967 | 0.279 | 0.006 |
+| slot_mixed | stochastic | 0.454 | 0.133 | 0.683 | 0.546 | 0.000 |
+
+Weak samples:
+
+```text
+0.133 stochastic slot_mixed: mix04 u720 + mix05 u760 + mix06 u820
+0.150 stochastic slot_mixed_alt: mix04 u720 + mix06 u820 + mix05 u760
+0.150 stochastic role_stress: mix03 u780, A1<-A2 A2<-A3 A3<-A1
+0.167 argmax slot_mixed: mix04 u720 + mix05 u760 + mix06 u820
+0.233 argmax slot_mixed_alt: mix04 u720 + mix06 u820 + mix05 u760
+0.283 stochastic native: mix06 u820
+0.450 stochastic native: mix03 u780
+```
+
+Interpretation:
+
+- Native argmax mostly improved against the hard `peer01` opponent.
+- Stochastic native is uneven: `mix03` and `mix06` remain weak.
+- Slot-mixed stochastic is the hard failure: average win rate is below 50% and
+  several mixed teams are nearly unusable.
+- Rotating peer/opponent training alone is not enough for open teammate draft.
+
+Decision:
+
+- Accept `fresh_population_v31_rotating_peer_mix_v1` as a useful training
+  step.
+- Do not accept the pool as league-ready.
+- Do not expand to 18-24 population lines yet.
+- Next step must target teammate compatibility directly:
+  - implement a training adapter that can assemble A1/A2/A3 from different
+    checkpoint player states during training, or otherwise sample mixed
+    teammates in the trainer;
+  - keep role shuffle enabled;
+  - train against stochastic peers sampled from the pool;
+  - re-run gates against `scripted_core`, `bridge03`, `peer01`, and full
+    teammate swap.
