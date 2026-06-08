@@ -1034,3 +1034,77 @@ Decision:
 - Launch a recovery/stabilization pass for `spv3_03` and `spv3_05` before the
   next population gate. This is still universal training: no scripted tactic
   specialization, just stochastic peer pressure with role shuffle.
+
+## 2026-06-08 - Self-Play v3 Recovery
+
+Recovery runs were launched after the v3 pool gate identified `spv3_03` as
+the main failed line and `spv3_05` as a soft line. Both runs used the same
+universal setup: role shuffle, stochastic frozen `tmix10 u80` peer, no
+hand-authored tactical specialization.
+
+| run | resume | best update | best eval W/L/D | final update | final train W/L/D | final eval W/L/D |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| spv303_recovery | spv3_03 u240 | 420 | 0.850 / 0.117 / 0.033 | 420 | 0.723 / 0.255 / 0.021 | 0.850 / 0.117 / 0.033 |
+| spv305_recovery | spv3_05 u220 | 340 | 0.950 / 0.017 / 0.033 | 360 | 0.842 / 0.132 / 0.026 | 0.933 / 0.000 / 0.067 |
+
+Recovery candidate pool:
+
+```text
+spv3_01: training_runs/fresh_population_v31_selfplay_v3_tmix10_vs_tmix11_s20264201/checkpoints/checkpoint_update_200.pt
+spv3_02: training_runs/fresh_population_v31_selfplay_v3_tmix11_vs_tmix08_s20264202/checkpoints/checkpoint_update_240.pt
+spv3_03R: training_runs/fresh_population_v31_selfplay_v3_recovery_spv303_vs_peer10_s20264303/checkpoints/checkpoint_update_420.pt
+spv3_04: training_runs/fresh_population_v31_selfplay_v3_tmix09_vs_tmix10_s20264204/checkpoints/checkpoint_update_240.pt
+spv3_05R: training_runs/fresh_population_v31_selfplay_v3_recovery_spv305_vs_peer10_s20264305/checkpoints/checkpoint_update_340.pt
+spv3_06: training_runs/fresh_population_v31_selfplay_v3_tmix11_vs_tmix09_s20264206/checkpoints/checkpoint_update_200.pt
+```
+
+Recovery pool gate:
+`training_runs/evals/fresh_population_v31_selfplay_v3_recovery_pool_vs_peer10_stoch_v1`.
+
+| team kind | mode | win avg | win min | win max | loss avg | draw avg | normal avg | death-time avg |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.903 | 0.767 | 0.983 | 0.036 | 0.061 | 0.811 | 0.092 |
+| native | stochastic | 0.789 | 0.600 | 0.867 | 0.150 | 0.061 | 0.711 | 0.078 |
+| role_stress | argmax | 0.878 | 0.750 | 0.967 | 0.058 | 0.064 | 0.769 | 0.108 |
+| role_stress | stochastic | 0.775 | 0.700 | 0.833 | 0.181 | 0.044 | 0.725 | 0.050 |
+| slot_mixed | argmax | 0.849 | 0.600 | 0.967 | 0.071 | 0.081 | 0.747 | 0.101 |
+| slot_mixed | stochastic | 0.713 | 0.567 | 0.833 | 0.221 | 0.067 | 0.646 | 0.067 |
+
+Decision:
+
+- Recovery fixed the catastrophic native argmax hole: min improved from 0.233
+  to 0.767.
+- Open-draft stochastic mixed-team compatibility is still not clean: worst
+  `slot_mixed stochastic` improved only from 0.467 to 0.567.
+- The current pool is much better than v3, but not yet acceptable as a final
+  six-line open-draft league pool.
+
+## 2026-06-08 - Hard-Negative v4 Probe
+
+Created v4 hard-negative mixed init checkpoints from the worst recovery-pool
+mixed teams:
+
+```text
+tmix12_spv4_465: A1 spv3_04 u240, A2 spv3_06 u200, A3 spv3_05R u340
+tmix13_spv4_243: A1 spv3_02 u240, A2 spv3_04 u240, A3 spv3_03R u420
+tmix14_spv4_345: A1 spv3_03R u420, A2 spv3_04 u240, A3 spv3_05R u340
+```
+
+Ran the first and most important v4 probe:
+`training_runs/fresh_population_v31_teammate_mix_v4_tmix12_465_s20264412`.
+
+| run | best update | best eval W/L/D | final update | final train W/L/D | final eval W/L/D |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| tmix12_spv4_465 | 100 | 0.817 / 0.017 / 0.167 | 120 | 0.531 / 0.250 / 0.219 | 0.817 / 0.067 / 0.117 |
+
+Decision:
+
+- v4 hard-negative init is not obviously enough by itself: `tmix12` improved
+  over the raw worst mix but did not reach the strong-line region, and draws
+  stayed high.
+- Do not blindly spend the next hours on `tmix13`/`tmix14` with the exact same
+  setup unless we accept this as exploration.
+- Better next engineering/training step: add proper varied-teammate sampling
+  during training, or run a broader curriculum that rotates teammates/opponents
+  inside the trainer instead of producing one fixed mixed checkpoint per weak
+  case.
