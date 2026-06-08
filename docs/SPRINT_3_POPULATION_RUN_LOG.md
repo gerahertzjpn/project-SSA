@@ -867,3 +867,118 @@ Decision:
   - train against stochastic peers sampled from the pool;
   - re-run gates against `scripted_core`, `bridge03`, `peer01`, and full
     teammate swap.
+
+## Fresh Population v3.1 Teammate-Mix Adaptation
+
+Goal: close the make-or-break league risk where policies only worked with
+their native A1/A2/A3 teammates. Training used mixed team checkpoints, role
+shuffle, and frozen stochastic `peer01 u660` pressure. This is not a tactical
+specialization pass; it is a compatibility pass for open teammate draft.
+
+### Teammate-Mix v1
+
+Run family: `training_runs/fresh_population_v31_teammate_mix_tmix01..06_*`.
+
+Selected candidates:
+
+```text
+tmix01: training_runs/fresh_population_v31_teammate_mix_tmix01_worst456_s20264001/checkpoints/latest.pt
+tmix02: training_runs/fresh_population_v31_teammate_mix_tmix02_worst465_s20264002/checkpoints/latest.pt
+tmix03: training_runs/fresh_population_v31_teammate_mix_tmix03_132_s20264003/checkpoints/latest.pt
+tmix04: training_runs/fresh_population_v31_teammate_mix_tmix04_354_s20264004/checkpoints/checkpoint_update_40.pt
+tmix05: training_runs/fresh_population_v31_teammate_mix_tmix05_621_s20264005/checkpoints/latest.pt
+tmix06: training_runs/fresh_population_v31_teammate_mix_tmix06_243_s20264006/checkpoints/checkpoint_update_40.pt
+```
+
+Gate against frozen stochastic `peer01 u660`:
+`training_runs/evals/teammate_mix_adapt_v1_swap_vs_peer01_stoch`.
+
+| team kind | mode | win avg | win min | win max | loss avg | draw avg |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.889 | 0.733 | 0.983 | 0.100 | 0.011 |
+| native | stochastic | 0.750 | 0.617 | 0.850 | 0.244 | 0.006 |
+| role_stress | argmax | 0.947 | 0.867 | 1.000 | 0.044 | 0.008 |
+| role_stress | stochastic | 0.819 | 0.650 | 0.883 | 0.181 | 0.000 |
+| slot_mixed | argmax | 0.731 | 0.050 | 0.983 | 0.242 | 0.028 |
+| slot_mixed | stochastic | 0.544 | 0.083 | 0.850 | 0.454 | 0.001 |
+
+Decision: v1 improved averages but did not close the gate. Worst stochastic
+slot-mixed teams were still unusable.
+
+### Hard-Negative v2
+
+Targeted exact weak combinations from v1:
+
+```text
+tmix07_hard612: A1 tmix06 u40, A2 tmix01 latest, A3 tmix02 latest
+tmix08_hard345: A1 tmix03 latest, A2 tmix04 u40, A3 tmix05 latest
+tmix09_hard561: A1 tmix05 latest, A2 tmix06 u40, A3 tmix01 latest
+```
+
+Internal best checkpoints:
+
+| run | best update | best eval W/L/D | final update | final eval W/L/D |
+| --- | ---: | ---: | ---: | ---: |
+| tmix07_hard612 | 60 | 0.983 / 0.017 / 0.000 | 120 | 0.867 / 0.133 / 0.000 |
+| tmix08_hard345 | 100 | 1.000 / 0.000 / 0.000 | 120 | 1.000 / 0.000 / 0.000 |
+| tmix09_hard561 | 60 | 0.983 / 0.017 / 0.000 | 120 | 0.983 / 0.017 / 0.000 |
+
+Selected v2 pool gate:
+`training_runs/evals/teammate_mix_hard_v2_selected_full_vs_peer01_stoch`.
+
+| team kind | mode | win avg | win min | win max | loss avg | draw avg |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.889 | 0.733 | 0.987 | 0.111 | 0.000 |
+| native | stochastic | 0.836 | 0.760 | 0.880 | 0.164 | 0.000 |
+| role_stress | argmax | 0.942 | 0.907 | 0.987 | 0.044 | 0.013 |
+| role_stress | stochastic | 0.880 | 0.867 | 0.893 | 0.120 | 0.000 |
+| slot_mixed | argmax | 0.900 | 0.787 | 0.987 | 0.091 | 0.009 |
+| slot_mixed | stochastic | 0.742 | 0.400 | 0.920 | 0.253 | 0.004 |
+
+Decision: v2 was much better, but still failed the league gate because one
+slot-mixed stochastic team fell to 40%.
+
+### Hard-Negative v3
+
+Targeted remaining weak slot-mixed stochastic teams:
+
+```text
+tmix10_hard987: A1 tmix09 u60, A2 tmix08 u100, A3 tmix07 u100
+tmix11_hard978: A1 tmix09 u60, A2 tmix07 u100, A3 tmix08 u100
+```
+
+Training checkpoints:
+
+| run | best update | best eval W/L/D | final update | final train W/L/D | final eval W/L/D |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| tmix10_hard987 | 80 | 1.000 / 0.000 / 0.000 | 140 | 0.940 / 0.060 / 0.000 | 0.967 / 0.033 / 0.000 |
+| tmix11_hard978 | 80 | 1.000 / 0.000 / 0.000 | 120 | 0.892 / 0.108 / 0.000 | 0.983 / 0.017 / 0.000 |
+
+Selected v3 pool:
+
+```text
+tmix10: training_runs/fresh_population_v31_teammate_mix_tmix10_hard987_s20264110/checkpoints/checkpoint_update_80.pt
+tmix11: training_runs/fresh_population_v31_teammate_mix_tmix11_hard978_s20264111/checkpoints/checkpoint_update_80.pt
+tmix08: training_runs/fresh_population_v31_teammate_mix_tmix08_hard345_s20264108/checkpoints/checkpoint_update_100.pt
+tmix09: training_runs/fresh_population_v31_teammate_mix_tmix09_hard561_s20264109/checkpoints/checkpoint_update_60.pt
+```
+
+Gate: `training_runs/evals/teammate_mix_hard_v3_selected_full_vs_peer01_stoch`.
+
+| team kind | mode | win avg | win min | win max | loss avg | draw avg |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| native | argmax | 0.975 | 0.950 | 0.983 | 0.021 | 0.004 |
+| native | stochastic | 0.850 | 0.667 | 0.950 | 0.150 | 0.000 |
+| role_stress | argmax | 0.962 | 0.900 | 1.000 | 0.029 | 0.008 |
+| role_stress | stochastic | 0.887 | 0.833 | 0.933 | 0.113 | 0.000 |
+| slot_mixed | argmax | 0.973 | 0.900 | 1.000 | 0.021 | 0.006 |
+| slot_mixed | stochastic | 0.858 | 0.750 | 0.950 | 0.142 | 0.000 |
+
+Decision:
+
+- Teammate-swap blocker is reduced enough to begin the next self-play bridge.
+- `slot_mixed stochastic` improved from min 0.400 in v2 to min 0.750 in v3.
+- Keep `tmix09` under watch: native stochastic was the lowest remaining sample
+  at 0.667, although its mixed/stress results are acceptable.
+- Next step: launch `fresh_population_v31_selfplay_v3_pool_v1`, six stochastic
+  peer-pressure continuations from the selected v3 pool.
