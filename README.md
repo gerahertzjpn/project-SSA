@@ -83,16 +83,9 @@ Most team checkpoints store three policy states:
 policy_states: A1, A2, A3
 ```
 
-That means the neural policies are slot-specific, not team-side-specific.
-When a checkpoint is assigned to `B1`, `B2`, or `B3`, the code mirrors the slot:
-
-```text
-B1 -> A1 policy state
-B2 -> A2 policy state
-B3 -> A3 policy state
-```
-
-The Pixi UI shows this explicitly, for example:
+Those names identify the source policy state inside the checkpoint. They are
+not a binding to the match position. The Pixi UI exposes each state as its own
+model id, for example:
 
 ```text
 Mix12 latest A1
@@ -100,8 +93,14 @@ Mix12 latest A2
 Recover305 latest A3
 ```
 
-So `Mix12` is a run/lineage family name, and `A1/A2/A3` is the actual policy
-slot inside the checkpoint.
+Any of those entries can be assigned to any player slot. For example, `B3` can
+run `Mix12 latest A2`; the generated replay metadata will store that exact
+model id in `player_models.B3`.
+
+So `Mix12` is a run/lineage family name, `latest` is the checkpoint, and
+`A1/A2/A3` is the selected neural state inside that checkpoint. Legacy policy
+ids without an explicit `#A1`/`#A2`/`#A3` state are still accepted for backward
+compatibility and use the old slot fallback logic.
 
 See also:
 
@@ -178,4 +177,3 @@ replays*/               Generated replay JSON fixtures and debug output
 - `src/core/runner.py::run_match` is the main simulation entrypoint.
 - Policy checkpoints must be compatible with the current observation/action
   metadata before they appear in the viewer model list.
-

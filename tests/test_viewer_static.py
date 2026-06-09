@@ -26,6 +26,7 @@ def test_viewer_generation_server_is_ui_limited_only():
     assert "source_fingerprint" in server
     assert "discover_policy_checkpoints" in server
     assert "policy_model_id_for_checkpoint" in server
+    assert "policy_state_ids_for_checkpoint" in server
     assert "Access-Control-Allow-Origin" in server
     assert "Cache-Control" in server
     assert "do_OPTIONS" in server

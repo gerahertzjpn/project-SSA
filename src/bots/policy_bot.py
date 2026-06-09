@@ -35,12 +35,18 @@ class PolicyBot(Bot):
         checkpoint_path: str | Path,
         deterministic: bool = True,
         device: str = "cpu",
+        policy_state_id: Optional[str] = None,
     ):
         super().__init__(player_id, team)
         self.checkpoint_path = Path(checkpoint_path)
+        self.policy_state_id = policy_state_id
         self.deterministic = deterministic
         self.device = torch.device(device)
-        policy_state, hidden_size = cached_policy_state(self.checkpoint_path, player_id)
+        policy_state, hidden_size = cached_policy_state(
+            self.checkpoint_path,
+            player_id,
+            policy_state_id=policy_state_id,
+        )
         self.policy = MaskedActorCritic(hidden_size=hidden_size).to(self.device)
         self.policy.load_state_dict(policy_state)
         self.policy.eval()
@@ -57,12 +63,22 @@ class PolicyBot(Bot):
         return decode_action(action, obs, self.player_id, assume_legal=True)
 
 
-def cached_policy_state(path: str | Path, player_id: str) -> tuple[dict, int]:
+def cached_policy_state(
+    path: str | Path,
+    player_id: str,
+    policy_state_id: Optional[str] = None,
+) -> tuple[dict, int]:
     checkpoint_path = Path(path)
-    cache_key = f"{checkpoint_path.resolve()}::{player_id}"
+    lookup_state_id = policy_state_id or player_id
+    cache_key = f"{checkpoint_path.resolve()}::{lookup_state_id}"
     if cache_key not in _POLICY_STATE_CACHE:
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        policy_state = policy_state_from_checkpoint(checkpoint, checkpoint_path, player_id)
+        policy_state = policy_state_from_checkpoint(
+            checkpoint,
+            checkpoint_path,
+            player_id,
+            policy_state_id=policy_state_id,
+        )
         validate_checkpoint_compatible(checkpoint, policy_state, checkpoint_path)
         _POLICY_STATE_CACHE[cache_key] = (
             policy_state,
@@ -71,20 +87,32 @@ def cached_policy_state(path: str | Path, player_id: str) -> tuple[dict, int]:
     return _POLICY_STATE_CACHE[cache_key]
 
 
-def policy_state_from_checkpoint(checkpoint: dict, checkpoint_path: Path, player_id: str) -> dict:
+def policy_state_from_checkpoint(
+    checkpoint: dict,
+    checkpoint_path: Path,
+    player_id: str,
+    policy_state_id: Optional[str] = None,
+) -> dict:
     if "policy_state" in checkpoint:
+        if policy_state_id:
+            raise ValueError(
+                f"Policy checkpoint {checkpoint_path} has a single policy_state, "
+                f"not a named {policy_state_id} state"
+            )
         return checkpoint["policy_state"]
 
     policy_states = checkpoint.get("policy_states")
     if isinstance(policy_states, dict):
-        if player_id in policy_states:
-            return policy_states[player_id]
-        mirrored_player_id = MIRRORED_PLAYER_SLOT.get(player_id)
-        if mirrored_player_id in policy_states:
-            return policy_states[mirrored_player_id]
+        requested_state_id = policy_state_id or player_id
+        if requested_state_id in policy_states:
+            return policy_states[requested_state_id]
+        if policy_state_id is None:
+            mirrored_player_id = MIRRORED_PLAYER_SLOT.get(player_id)
+            if mirrored_player_id in policy_states:
+                return policy_states[mirrored_player_id]
         available = ", ".join(sorted(policy_states))
         raise ValueError(
-            f"Team policy checkpoint {checkpoint_path} has no state for {player_id}; "
+            f"Team policy checkpoint {checkpoint_path} has no state for {requested_state_id}; "
             f"available states: {available}"
         )
 
@@ -167,6 +195,14 @@ def checkpoint_is_compatible(path: str | Path) -> bool:
         return False
 
 
+def policy_state_ids_for_checkpoint(path: str | Path) -> list[str]:
+    checkpoint = torch.load(Path(path), map_location="cpu", weights_only=False)
+    policy_states = checkpoint.get("policy_states")
+    if not isinstance(policy_states, dict):
+        return []
+    return sorted(str(player_id) for player_id in policy_states)
+
+
 def default_policy_checkpoint() -> Optional[Path]:
     candidates = [
         Path("training_runs/sprint2_random_first_real_v1/checkpoints/checkpoint_update_180.pt"),
@@ -189,20 +225,25 @@ def default_team_policy_checkpoint() -> Optional[Path]:
     return None
 
 
-def policy_model_id_for_checkpoint(path: str | Path) -> str:
+def policy_model_id_for_checkpoint(path: str | Path, policy_state_id: Optional[str] = None) -> str:
     checkpoint_path = Path(path).resolve()
     try:
         relative = checkpoint_path.relative_to(PROJECT_ROOT)
     except ValueError:
         relative = checkpoint_path
-    return f"policy:{relative.as_posix()}"
+    model_id = f"policy:{relative.as_posix()}"
+    if policy_state_id:
+        model_id = f"{model_id}#{policy_state_id}"
+    return model_id
 
 
 def checkpoint_from_policy_model_id(model_id: str) -> Path:
     if not model_id.startswith("policy:"):
         raise ValueError(f"Not a policy model id: {model_id}")
 
-    raw_path = Path(model_id.split(":", 1)[1])
+    raw_value = model_id.split(":", 1)[1]
+    raw_checkpoint, _, _raw_state = raw_value.partition("#")
+    raw_path = Path(raw_checkpoint)
     if raw_path.is_absolute():
         raise ValueError("Policy model path must be relative")
 
@@ -216,3 +257,12 @@ def checkpoint_from_policy_model_id(model_id: str) -> Path:
     if checkpoint_path.suffix != ".pt" or not checkpoint_path.exists():
         raise ValueError(f"Policy checkpoint is not available: {raw_path.as_posix()}")
     return checkpoint_path
+
+
+def policy_state_id_from_model_id(model_id: str) -> Optional[str]:
+    if not model_id.startswith("policy:"):
+        raise ValueError(f"Not a policy model id: {model_id}")
+    _raw_checkpoint, separator, raw_state = model_id.split(":", 1)[1].partition("#")
+    if not separator:
+        return None
+    return raw_state or None

@@ -372,7 +372,7 @@ function populatePlayerConfigGrid() {
       const model = document.createElement("select");
       model.dataset.playerModel = playerId;
       model.setAttribute("aria-label", `${playerId} model`);
-      populateModelOptions(model, selectedModels[playerId] || defaultModel, playerId);
+      populateModelOptions(model, selectedModels[playerId] || defaultModel);
       model.addEventListener("change", validateGeneratorControls);
 
       const faction = document.createElement("select");
@@ -389,14 +389,14 @@ function populatePlayerConfigGrid() {
   }
 }
 
-function populateModelOptions(select, selectedId, playerId = "") {
+function populateModelOptions(select, selectedId) {
   const models = visibleModels();
   select.innerHTML = "";
   for (const model of models) {
     const option = document.createElement("option");
     option.value = model.id;
-    option.textContent = modelLabel(model, playerId);
-    option.title = modelTitle(model, playerId);
+    option.textContent = modelLabel(model);
+    option.title = modelTitle(model);
     select.appendChild(option);
   }
   select.value = models.some((model) => model.id === selectedId) ? selectedId : models[0]?.id || "random";
@@ -407,7 +407,11 @@ function visibleModels() {
   if (appState.showAllModels) {
     return [...models];
   }
-  const latest = models.filter((model) => model.show_by_default !== false || model.kind === "baseline" || model.is_latest);
+  const latest = models.filter((model) => (
+    model.kind === "baseline"
+    || model.show_by_default === true
+    || (model.show_by_default !== false && model.is_latest)
+  ));
   return latest.length ? latest : [...models];
 }
 
@@ -423,30 +427,16 @@ function populateFactionOptions(select, selectedFaction) {
   select.value = factions.includes(selectedFaction) ? selectedFaction : factions[0] || "humans";
 }
 
-function modelLabel(model = {}, playerId = "") {
-  const label = model.label || model.id || "?";
-  const slot = policySlotForPlayer(model, playerId);
-  return slot ? `${label} ${slot}` : label;
+function modelLabel(model = {}) {
+  return model.label || model.id || "?";
 }
 
-function modelTitle(model = {}, playerId = "") {
-  const slot = policySlotForPlayer(model, playerId);
+function modelTitle(model = {}) {
   const checkpoint = model.checkpoint || model.label || model.id;
-  if (!slot) {
-    return checkpoint;
+  if (model.policy_state) {
+    return `${checkpoint} | policy state ${model.policy_state} | assignable to any player`;
   }
-  return `${checkpoint} | uses ${slot} policy state for ${playerId}`;
-}
-
-function policySlotForPlayer(model = {}, playerId = "") {
-  if (!playerId || model.kind !== "policy") {
-    return "";
-  }
-  const id = String(playerId || "");
-  if (/^[AB][123]$/.test(id)) {
-    return `A${id.slice(1)}`;
-  }
-  return "";
+  return checkpoint;
 }
 
 function preferredModelId() {

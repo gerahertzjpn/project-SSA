@@ -13,6 +13,7 @@ from src.bots.policy_bot import (
     checkpoint_from_policy_model_id,
     default_policy_checkpoint,
     default_team_policy_checkpoint,
+    policy_state_id_from_model_id,
 )
 from src.core.constants import (
     BARON_ATTACK_RATE,
@@ -112,6 +113,7 @@ def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
             team,
             checkpoint_path=checkpoint_from_policy_model_id(model_id),
             deterministic=True,
+            policy_state_id=policy_state_id_from_model_id(model_id),
         )
     if model_id in {"ppo_random_v1", "ppo_random_v1_latest"}:
         if model_id == "ppo_random_v1_latest":

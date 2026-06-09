@@ -23,6 +23,7 @@ from src.bots.policy_bot import (
     default_policy_checkpoint,
     default_team_policy_checkpoint,
     policy_model_id_for_checkpoint,
+    policy_state_ids_for_checkpoint,
 )
 
 
@@ -65,7 +66,6 @@ def available_models() -> list[dict]:
     seen_checkpoints: set[Path] = set()
     team_checkpoint = default_team_policy_checkpoint()
     if team_checkpoint is not None:
-        seen_checkpoints.add(team_checkpoint.resolve())
         models.append({
             "id": "ppo_team_scripted_v1",
             "label": "Team Best",
@@ -76,7 +76,6 @@ def available_models() -> list[dict]:
         })
     latest_team_checkpoint = ROOT / "training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt"
     if latest_team_checkpoint.exists() and checkpoint_is_compatible(latest_team_checkpoint):
-        seen_checkpoints.add(latest_team_checkpoint.resolve())
         models.append({
             "id": "ppo_team_scripted_v1_latest",
             "label": "Team Latest",
@@ -84,11 +83,10 @@ def available_models() -> list[dict]:
             "checkpoint": checkpoint_display_path(latest_team_checkpoint),
             "updated_at": int(latest_team_checkpoint.stat().st_mtime),
             "is_latest": True,
-            "show_by_default": True,
+            "show_by_default": False,
         })
     best_checkpoint = default_policy_checkpoint()
     if best_checkpoint is not None:
-        seen_checkpoints.add(best_checkpoint.resolve())
         models.append({
             "id": "ppo_random_v1",
             "label": "Random Best",
@@ -99,7 +97,6 @@ def available_models() -> list[dict]:
         })
     latest_checkpoint = ROOT / "training_runs/sprint2_random_first_real_v1/checkpoints/latest.pt"
     if latest_checkpoint.exists() and checkpoint_is_compatible(latest_checkpoint):
-        seen_checkpoints.add(latest_checkpoint.resolve())
         models.append({
             "id": "ppo_random_v1_latest",
             "label": "Random Latest",
@@ -107,24 +104,14 @@ def available_models() -> list[dict]:
             "checkpoint": checkpoint_display_path(latest_checkpoint),
             "updated_at": int(latest_checkpoint.stat().st_mtime),
             "is_latest": True,
-            "show_by_default": True,
+            "show_by_default": False,
         })
     for checkpoint in discover_policy_checkpoints():
         resolved = checkpoint.resolve()
         if resolved in seen_checkpoints:
             continue
         seen_checkpoints.add(resolved)
-        relative = checkpoint.relative_to(ROOT).as_posix()
-        is_latest = checkpoint.name == "latest.pt"
-        models.append({
-            "id": policy_model_id_for_checkpoint(checkpoint),
-            "label": short_policy_label(checkpoint),
-            "kind": "policy",
-            "checkpoint": relative,
-            "updated_at": int(checkpoint.stat().st_mtime),
-            "is_latest": is_latest,
-            "show_by_default": is_latest,
-        })
+        models.extend(policy_models_for_checkpoint(checkpoint))
     return models
 
 
@@ -136,6 +123,33 @@ def baseline_model(model_id: str, label: str) -> dict:
         "is_latest": True,
         "show_by_default": True,
     }
+
+
+def policy_models_for_checkpoint(checkpoint: Path) -> list[dict]:
+    state_ids = policy_state_ids_for_checkpoint(checkpoint)
+    if not state_ids:
+        return [policy_model(checkpoint)]
+    return [policy_model(checkpoint, policy_state_id=state_id) for state_id in state_ids]
+
+
+def policy_model(checkpoint: Path, policy_state_id: str | None = None) -> dict:
+    relative = checkpoint.relative_to(ROOT).as_posix()
+    is_latest = checkpoint.name == "latest.pt"
+    label = short_policy_label(checkpoint)
+    if policy_state_id:
+        label = f"{label} {policy_state_id}"
+    model = {
+        "id": policy_model_id_for_checkpoint(checkpoint, policy_state_id),
+        "label": label,
+        "kind": "policy",
+        "checkpoint": relative,
+        "updated_at": int(checkpoint.stat().st_mtime),
+        "is_latest": is_latest,
+        "show_by_default": is_latest,
+    }
+    if policy_state_id:
+        model["policy_state"] = policy_state_id
+    return model
 
 
 def checkpoint_display_path(path: Path) -> str:

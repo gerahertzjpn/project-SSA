@@ -78,10 +78,15 @@ def test_viewer_server_discovers_policy_checkpoints(tmp_path: Path, monkeypatch)
         checkpoint,
     )
     monkeypatch.setattr(server, "ROOT", tmp_path)
+    monkeypatch.setattr(server, "default_policy_checkpoint", lambda: None)
+    monkeypatch.setattr(server, "default_team_policy_checkpoint", lambda: None)
     monkeypatch.setattr(
         server,
         "policy_model_id_for_checkpoint",
-        lambda path: f"policy:{Path(path).relative_to(tmp_path).as_posix()}",
+        lambda path, policy_state_id=None: (
+            f"policy:{Path(path).relative_to(tmp_path).as_posix()}"
+            f"{'#' + policy_state_id if policy_state_id else ''}"
+        ),
     )
 
     models = server.available_models()
@@ -94,3 +99,49 @@ def test_viewer_server_discovers_policy_checkpoints(tmp_path: Path, monkeypatch)
     assert discovered["is_latest"] is True
     assert discovered["show_by_default"] is True
     assert all(len(model["label"].split()) <= 3 for model in models)
+
+
+def test_viewer_server_exposes_team_policy_states_as_assignable_models(tmp_path: Path, monkeypatch):
+    checkpoint = tmp_path / "training_runs" / "team_policy" / "checkpoints" / "latest.pt"
+    checkpoint.parent.mkdir(parents=True)
+    policy = MaskedActorCritic(hidden_size=32)
+    torch.save(
+        {
+            "policy_states": {
+                "A1": policy.state_dict(),
+                "A2": policy.state_dict(),
+                "A3": policy.state_dict(),
+            },
+            "config": {"hidden_size": 32},
+            "observation_version": OBSERVATION_VERSION,
+            "observation_dim": OBSERVATION_DIM,
+            "action_dim": ACTION_DIM,
+        },
+        checkpoint,
+    )
+    monkeypatch.setattr(server, "ROOT", tmp_path)
+    monkeypatch.setattr(server, "default_policy_checkpoint", lambda: None)
+    monkeypatch.setattr(server, "default_team_policy_checkpoint", lambda: None)
+    monkeypatch.setattr(
+        server,
+        "policy_model_id_for_checkpoint",
+        lambda path, policy_state_id=None: (
+            f"policy:{Path(path).relative_to(tmp_path).as_posix()}"
+            f"{'#' + policy_state_id if policy_state_id else ''}"
+        ),
+    )
+
+    models = server.available_models()
+    policy_models = {
+        model["policy_state"]: model
+        for model in models
+        if model.get("checkpoint") == "training_runs/team_policy/checkpoints/latest.pt"
+    }
+
+    assert sorted(policy_models) == ["A1", "A2", "A3"]
+    assert policy_models["A1"]["id"].endswith("#A1")
+    assert policy_models["A2"]["id"].endswith("#A2")
+    assert policy_models["A3"]["id"].endswith("#A3")
+    assert policy_models["A2"]["label"] == "TeaPol latest A2"
+    assert policy_models["A2"]["show_by_default"] is True
+    assert all(len(model["label"].split()) <= 3 for model in policy_models.values())

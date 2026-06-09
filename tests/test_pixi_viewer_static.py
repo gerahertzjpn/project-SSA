@@ -85,6 +85,8 @@ def test_pixi_viewer_uses_pixi_application_and_replay_positions():
     assert "toggleConfigMode" in script
     assert "toggleModelScope" in script
     assert "visibleModels" in script
+    assert "policySlotForPlayer" not in script
+    assert "assignable to any player" in script
     assert "applyConfigMode" in script
     assert "closeInspector" in script
     assert "playerModelSelection" in script
