@@ -1,7 +1,9 @@
+import math
+
 import pytest
 
 from src.core.map2d import NODE_LAYOUT, get_approach, point_on_approach_edge
-from src.core.visual2d import moving_group_visual
+from src.core.visual2d import moving_group_visual, moving_group_visual_smooth
 
 
 def group(**overrides):
@@ -85,3 +87,69 @@ def test_visual2d_clamps_progress_for_stable_replay_positions():
 
     assert (start["x"], start["y"]) == pytest.approx(get_approach("A1", "CP1").exit_point, abs=1e-3)
     assert (end["x"], end["y"]) == pytest.approx(get_approach("A1", "CP1").entry_point, abs=1e-3)
+
+
+def journey_group(**overrides):
+    base = {
+        "src": "A1",
+        "dst": "CP1",
+        "phase": "node_exit",
+        "progress": 0.0,
+        "segment_node": None,
+        "path": ["A1", "CP1", "CP3", "CP5", "B1"],
+        "started_tick": 4,
+        "arrival_tick": 20,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_smooth_visual_starts_at_origin_and_ends_at_destination():
+    start = moving_group_visual_smooth(journey_group(), current_tick=4)
+    end = moving_group_visual_smooth(journey_group(), current_tick=20)
+
+    assert (start["x"], start["y"]) == pytest.approx(NODE_LAYOUT["A1"].center, abs=1e-3)
+    assert (end["x"], end["y"]) == pytest.approx(NODE_LAYOUT["B1"].center, abs=1e-3)
+
+
+def test_smooth_visual_advances_at_constant_speed():
+    # Per-tick world displacement must stay uniform across the whole journey:
+    # no slow-down at node-exit/transit waypoints and no sprint along edges.
+    positions = []
+    for tick in range(4, 21):
+        visual = moving_group_visual_smooth(journey_group(), current_tick=tick)
+        positions.append((visual["x"], visual["y"]))
+
+    steps = [math.dist(positions[i], positions[i + 1]) for i in range(len(positions) - 1)]
+    assert min(steps) > 0.0
+    # Uniform: spread across ticks is tiny (only polyline-vertex rounding), far
+    # below the multi-x swings the per-segment projection used to produce.
+    assert max(steps) - min(steps) < 0.05 * max(steps)
+
+
+def test_smooth_visual_preserves_segment_metadata():
+    base = moving_group_visual(journey_group(phase="node_transit", segment_node="CP1", dst="CP3"))
+    smooth = moving_group_visual_smooth(
+        journey_group(phase="node_transit", segment_node="CP1", dst="CP3"),
+        current_tick=10,
+    )
+
+    for key in ("lane_id", "approach_id", "phase", "entry_approach_id", "transit_node"):
+        assert smooth.get(key) == base.get(key)
+    assert "x" in smooth and "y" in smooth
+
+
+def test_smooth_visual_falls_back_when_timing_missing():
+    # Degenerate timing (no journey window) must not crash and must reuse the
+    # segment-based projection unchanged.
+    plain = group(phase="edge", progress=0.5)
+    fallback = moving_group_visual_smooth(plain, current_tick=7)
+    base = moving_group_visual(plain)
+
+    assert (fallback["x"], fallback["y"]) == pytest.approx((base["x"], base["y"]), abs=1e-6)
+
+    zero_window = moving_group_visual_smooth(
+        journey_group(started_tick=10, arrival_tick=10),
+        current_tick=10,
+    )
+    assert "x" in zero_window and "y" in zero_window

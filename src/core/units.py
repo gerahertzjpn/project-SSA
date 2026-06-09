@@ -191,6 +191,16 @@ class UnitInstance:
     forward_x: float = 1.0
     forward_y: float = 0.0
     visual_id: str = ""
+    # Visual-only deployment bridge: when a unit joins a battle from a moving
+    # group it is snapped to its combat formation slot. These fields drive a
+    # velocity-clamped "walk-in": the replay renders the unit advancing from its
+    # incoming map position toward its combat slot by at most one marching step
+    # per tick, instead of teleporting. They never affect combat resolution
+    # (gameplay uses x/y directly).
+    deploy_active: bool = False
+    deploy_cur_x: float = 0.0
+    deploy_cur_y: float = 0.0
+    deploy_seed_tick: int = -1
 
     def is_alive(self) -> bool:
         return self.hp > 0
