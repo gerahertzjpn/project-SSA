@@ -91,6 +91,8 @@ UNIT_COST = {
     UnitType.SIEGE_PLATFORM: 36,
 }
 
+MIN_SEND_SQUAD_COST = 20
+
 UNIT_TECH_REQUIREMENTS = {
     UnitType.RAIDER: BuildingType.TECH_1,
     UnitType.BMP: BuildingType.TECH_2,

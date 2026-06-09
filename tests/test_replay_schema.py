@@ -143,6 +143,41 @@ def test_replay_moving_group_includes_stable_started_tick():
     assert "visual_units" not in observed
 
 
+def test_battle_entry_has_no_visual_teleport():
+    # A unit marching into a node battle must walk into its combat formation at
+    # roughly its own speed: the joining frame should not snap the unit across
+    # the map. Vanguards move ~45 map units/tick, so every per-tick visual step
+    # (including the moving->battle hand-off) must stay near that, never the
+    # 100px+ jump the raw formation snap used to produce.
+    _, engine = make_node_battle_engine()
+    for _ in range(20):
+        engine.tick()
+
+    tracks = {}
+    for snapshot in engine.replay_ticks:
+        for unit in snapshot.get("visual_units", []):
+            if unit.get("owner") != "A1":
+                continue
+            tracks.setdefault(unit["id"], {})[snapshot["tick"]] = (unit["x"], unit["y"])
+
+    saw_entry_step = False
+    max_step = 0.0
+    for frames in tracks.values():
+        ordered = sorted(frames)
+        for earlier, later in zip(ordered, ordered[1:]):
+            if later != earlier + 1:
+                continue
+            (x0, y0), (x1, y1) = frames[earlier], frames[later]
+            step = ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+            max_step = max(max_step, step)
+            saw_entry_step = True
+
+    assert saw_entry_step, "no A1 visual unit movement was recorded"
+    # Vanguard marching step is 45 map units; allow slack for the seed anchor
+    # frame but stay far below a formation-snap teleport.
+    assert max_step < 60.0, f"battle entry teleported {max_step:.1f} map units in one tick"
+
+
 def test_replay_visual_unit_ids_survive_move_to_battle():
     _, engine = make_node_battle_engine()
 
@@ -167,7 +202,7 @@ def test_replay_visual_unit_ids_survive_move_to_battle():
 
 def test_replay_moving_group_visual_preserves_transit_entry_and_exit_approaches():
     state = make_initial_state(seed=42)
-    state.nodes["A3"].units = {UnitType.VANGUARD.value: 2}
+    state.nodes["A3"].units = {UnitType.VANGUARD.value: 7}
     state.nodes["CP1"].owner = "NEUTRAL"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP3"].owner = "NEUTRAL"

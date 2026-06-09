@@ -315,13 +315,14 @@ def test_multi_action_moves_existing_units_before_production():
             )
 
     state = make_initial_state(seed=12)
+    state.nodes["A1"].units = {UnitType.VANGUARD.value: 7}
     engine = GameEngine(state, {"A1": BundleBot()}, record_trace=False, record_replay=False)
 
     engine.tick()
 
     assert state.nodes["A1"].units == {UnitType.SKIRMISHER.value: 1}
     assert len(state.moving_groups) == 1
-    assert state.moving_groups[0].units == {UnitType.VANGUARD.value: 2}
+    assert state.moving_groups[0].units == {UnitType.VANGUARD.value: 7}
 
 
 def test_factorized_mask_reserves_resources_for_legal_builds_before_production():

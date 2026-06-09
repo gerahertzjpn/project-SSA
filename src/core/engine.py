@@ -26,9 +26,10 @@ from .constants import (
     BOOSTER_SPEED_BONUS, LIFE_SPAWN_INTERVAL_TICKS, LIFE_SPAWN_UNIT, POWER_HP_BONUS,
     BUILDING_REGEN_DELAY_TICKS, BUILDING_ZERO_HP_REGEN_DELAY_MULTIPLIER,
     BUILDING_REGEN_HP_PER_TICK,
+    UNIT_COST, MIN_SEND_SQUAD_COST,
 )
 from .state import GameState, MovingGroup, NodeState, Battle, get_enemy_team, get_team
-from .map import ADJACENCY, NODE_TYPES, NodeType
+from .map import ADJACENCY, NODE_TYPES, NodeType, CORE_NODES
 from .map2d import (
     approach_edge_length,
     canonical_lane_id,
@@ -42,7 +43,7 @@ from .map2d import (
     threat_zone_entry_progress,
     threat_zone_ids_for_approach,
 )
-from .visual2d import moving_group_visual
+from .visual2d import moving_group_visual, moving_group_visual_smooth
 from .combat import (
     build_player_units, build_neutral_units, build_core_unit, build_baron_unit,
     build_building_unit,
@@ -57,7 +58,7 @@ from .combat2d import (
     unit_range_map,
 )
 from .production import apply_build, apply_production, collect_income, player_has_completed_building
-from .units import UNIT_STATS
+from .units import UNIT_STATS, UnitInstance
 
 
 def unit_total(units: dict) -> int:
@@ -66,6 +67,12 @@ def unit_total(units: dict) -> int:
 
 NODE_RANGED_THREAT_SCALE = 24.0
 NODE_RANGED_MIN_RANGE = 1.0
+
+# Visual-only battle-entry deployment bridge. When a moving group joins a battle
+# its units are snapped to their combat formation slots; below this snap distance
+# we render instantly, otherwise the replay walks the unit in at marching speed
+# (gameplay positions are untouched).
+VISUAL_DEPLOY_MIN_GAP = 16.0
 
 
 @dataclass
@@ -1100,6 +1107,8 @@ class GameEngine:
             }
 
         src_node = state.nodes[src]
+        if src in CORE_NODES and not self._squad_cost_ok(player_id, src_node):
+            return None
         units_to_send, visual_units_to_send = self._take_units_for_move(player_id, src_node)
         if not units_to_send:
             return None
@@ -1138,6 +1147,21 @@ class GameEngine:
             "base_speed": round(base_speed, 3),
             "arrives": group.arrival_tick,
         }
+
+    def _squad_cost_ok(self, player_id: str, node: NodeState) -> bool:
+        if node.unit_ready_tick.get(player_id, 0) > self.state.tick:
+            return False
+        if node.owner == player_id and node.units:
+            units = node.units
+        elif player_id in node.visiting_units and node.visiting_units[player_id]:
+            units = node.visiting_units[player_id]
+        else:
+            return False
+        cost = sum(
+            UNIT_COST.get(UnitType.RANGER if ut == "ARCHER" else UnitType(ut), 0) * int(cnt)
+            for ut, cnt in units.items()
+        )
+        return cost >= MIN_SEND_SQUAD_COST
 
     def _take_units_for_move(self, player_id: str, node: NodeState) -> tuple[dict, dict]:
         if node.unit_ready_tick.get(player_id, 0) > self.state.tick:
@@ -2771,6 +2795,11 @@ class GameEngine:
             entry_side=entry_side,
             progress=group_progress,
         )
+        if (
+            current_group is not None
+            and getattr(current_group, "player_id", None) == player_id
+        ):
+            self._arm_visual_deploy_bridge(built_units, current_group)
         battle.units.extend(built_units)
         if not existing_lord_push_metadata:
             battle.participant_routes[player_id] = (src, dst)
@@ -2781,6 +2810,69 @@ class GameEngine:
                 battle.participant_segment_indices[player_id] = getattr(current_group, "segment_index", 0)
                 battle.participant_speeds[player_id] = getattr(current_group, "speed", 1.0)
                 battle.participant_final_dsts[player_id] = getattr(current_group, "final_dst", dst) or dst
+
+    def _arm_visual_deploy_bridge(self, units: list, group: MovingGroup) -> None:
+        """Start a visual walk-in for units that just joined a battle.
+
+        Visual-only: ``place_player_units_2d`` already snapped the units to their
+        combat formation slots (those positions drive targeting/range). Here we
+        seed each unit's *visual* cursor at the group's smooth marching anchor —
+        where it was rendered this tick while moving — so the replay can advance
+        it toward the slot one marching step at a time instead of teleporting.
+        Combat resolution is unchanged.
+        """
+
+        if not self.record_replay or not units:
+            return
+        try:
+            anchor_visual = moving_group_visual_smooth(group, self.state.tick)
+            from_x = float(anchor_visual["x"])
+            from_y = float(anchor_visual["y"])
+        except (KeyError, ValueError, TypeError):
+            return
+
+        for unit in units:
+            gap = math.hypot(float(unit.x) - from_x, float(unit.y) - from_y)
+            if gap < VISUAL_DEPLOY_MIN_GAP:
+                continue
+            unit.deploy_active = True
+            unit.deploy_cur_x = from_x
+            unit.deploy_cur_y = from_y
+            unit.deploy_seed_tick = int(self.state.tick)
+
+    def _visual_deploy_point(self, unit: UnitInstance) -> tuple[float, float]:
+        """Velocity-clamped visual position for a unit walking into formation.
+
+        Advances the unit's visual cursor toward its live combat slot by at most
+        one marching step (``speed * units-per-tick``) per tick, so the on-screen
+        approach never exceeds the unit's normal speed. Once the cursor reaches
+        the combat slot the bridge deactivates and combat positions are rendered
+        verbatim. Mutates only the visual cursor, never gameplay ``x``/``y``.
+        """
+
+        if not getattr(unit, "deploy_active", False):
+            return float(unit.x), float(unit.y)
+
+        # On the tick the bridge is seeded, render the incoming marching anchor
+        # itself so the moving->battle hand-off is a single smooth step; only
+        # start closing toward the combat slot on later ticks.
+        if int(self.state.tick) == int(getattr(unit, "deploy_seed_tick", -1)):
+            return float(unit.deploy_cur_x), float(unit.deploy_cur_y)
+
+        target_x, target_y = float(unit.x), float(unit.y)
+        dx = target_x - float(unit.deploy_cur_x)
+        dy = target_y - float(unit.deploy_cur_y)
+        distance = math.hypot(dx, dy)
+        step = MOVEMENT_MAP_UNITS_PER_TICK * max(0.001, float(unit.speed))
+        if distance <= step or distance <= 1e-6:
+            unit.deploy_active = False
+            unit.deploy_cur_x = target_x
+            unit.deploy_cur_y = target_y
+            return target_x, target_y
+
+        unit.deploy_cur_x += dx / distance * step
+        unit.deploy_cur_y += dy / distance * step
+        return float(unit.deploy_cur_x), float(unit.deploy_cur_y)
 
     def _apply_power_building_hp_bonus(self, player_id: str, units: list) -> None:
         player = self.state.players.get(player_id)
@@ -4109,7 +4201,7 @@ class GameEngine:
                 continue
             self._ensure_visual_bucket(group.visual_units, group.player_id, group.units)
             try:
-                visual = moving_group_visual(group)
+                visual = moving_group_visual_smooth(group, state.tick)
                 anchor = (float(visual["x"]), float(visual["y"]))
                 heading = tuple(visual.get("heading") or [1.0, 0.0])
             except (KeyError, ValueError):
@@ -4129,14 +4221,15 @@ class GameEngine:
                     continue
                 if not getattr(unit, "visual_id", ""):
                     unit.visual_id = self._new_visual_id(unit.team, unit.unit_type)
+                deploy_x, deploy_y = self._visual_deploy_point(unit)
                 rows.append({
                     "id": unit.visual_id,
                     "owner": unit.team,
                     "team": unit.team,
                     "unit_type": unit.unit_type,
                     "type": self._unit_type_code(unit.unit_type),
-                    "x": round(float(unit.x), 3),
-                    "y": round(float(unit.y), 3),
+                    "x": round(deploy_x, 3),
+                    "y": round(deploy_y, 3),
                     "hp": round(max(0.0, float(unit.hp)), 3),
                     "max_hp": round(max(0.0, float(unit.max_hp)), 3),
                     "hp_ratio": self._visual_hp_ratio(unit.hp, unit.max_hp),
@@ -4509,7 +4602,7 @@ class GameEngine:
             "intent": group.intent,
         }
         if include_visual and lane_id and approach_id:
-            snapshot["visual"] = moving_group_visual(group)
+            snapshot["visual"] = moving_group_visual_smooth(group, self.state.tick)
         if include_visual and getattr(group, "visual_units", None):
             snapshot["visual_units"] = {
                 unit_type: list(ids)

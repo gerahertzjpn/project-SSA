@@ -181,6 +181,7 @@ def test_human_booster_increases_departing_core_group_speed():
     state.players["A1"].resources = 200
     assert apply_build(state, "A1", "A1", BuildingType.BOOSTER) is True
     state.tick += BUILDING_BUILD_TICKS[BuildingType.BOOSTER]
+    state.nodes["A1"].units = {UnitType.VANGUARD.value: 7}
     engine = make_engine(state)
 
     event = engine._apply_move(

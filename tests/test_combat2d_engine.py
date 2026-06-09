@@ -52,7 +52,7 @@ def run_until_battle(engine: GameEngine, battle_key: str, max_ticks: int = 16):
 
 def test_engine_battle_units_have_real_map_positions():
     state = make_initial_state(seed=501)
-    state.nodes["A1"].units = {UnitType.VANGUARD.value: 4}
+    state.nodes["A1"].units = {UnitType.VANGUARD.value: 7}
     state.nodes["CP1"].owner = "B1"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP1"].units = {UnitType.RANGER.value: 2}
@@ -102,7 +102,7 @@ def test_lord_approach_battle_uses_baron_center_and_approach_positions():
 
 def test_2d_combat_range_is_map_distance_based():
     state = make_initial_state(seed=503)
-    state.nodes["A1"].units = {UnitType.RANGER.value: 1}
+    state.nodes["A1"].units = {UnitType.RANGER.value: 4}
     state.nodes["CP1"].owner = "B1"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP1"].units = {UnitType.VANGUARD.value: 1}

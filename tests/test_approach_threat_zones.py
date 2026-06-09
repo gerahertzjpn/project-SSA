@@ -111,7 +111,7 @@ def test_allied_core_approach_does_not_start_core_threat_battle():
 
 def test_ranged_garrison_starts_approach_battle_before_node_entry():
     state = make_initial_state(seed=304)
-    state.nodes["A1"].units = {UnitType.VANGUARD.value: 4}
+    state.nodes["A1"].units = {UnitType.VANGUARD.value: 7}
     state.nodes["CP1"].owner = "B1"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP1"].units = {UnitType.RANGER.value: 1}
@@ -135,7 +135,7 @@ def test_ranged_garrison_starts_approach_battle_before_node_entry():
 
 def test_melee_garrison_does_not_start_ranged_approach_battle():
     state = make_initial_state(seed=305)
-    state.nodes["A1"].units = {UnitType.VANGUARD.value: 4}
+    state.nodes["A1"].units = {UnitType.VANGUARD.value: 7}
     state.nodes["CP1"].owner = "B1"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP1"].units = {UnitType.VANGUARD.value: 4}

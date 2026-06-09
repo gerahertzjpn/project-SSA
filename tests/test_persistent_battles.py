@@ -373,7 +373,7 @@ def test_reinforcement_joins_node_battle():
 
 def test_neutrals_passive_until_attacked():
     state = make_initial_state(seed=4)
-    state.nodes["A1"].units = {UnitType.VANGUARD.value: 3}
+    state.nodes["A1"].units = {UnitType.VANGUARD.value: 7}
     state.nodes["CP1"].owner = "NEUTRAL"
     state.nodes["CP1"].neutral_hp = 5
 
@@ -484,7 +484,7 @@ def test_transit_group_joins_active_node_battle_instead_of_passing_through():
 
 def test_arrived_units_cannot_leave_node_until_next_tick():
     state = make_initial_state(seed=14)
-    state.nodes["A1"].units = {UnitType.VANGUARD.value: 2}
+    state.nodes["A1"].units = {UnitType.VANGUARD.value: 7}
     state.nodes["CP1"].owner = "NEUTRAL"
     state.nodes["CP1"].neutral_hp = 0
 
@@ -501,7 +501,7 @@ def test_arrived_units_cannot_leave_node_until_next_tick():
         engine.tick()
 
     assert state.nodes["CP1"].owner == "A1"
-    assert state.nodes["CP1"].units == {UnitType.VANGUARD.value: 2}
+    assert state.nodes["CP1"].units == {UnitType.VANGUARD.value: 7}
     assert state.moving_groups == []
 
     bots["A1"].actions.append(Action(ActionType.MOVE, source="CP1", destination="CP3"))
@@ -537,7 +537,7 @@ def test_node_remembers_arrival_side_for_stationed_units():
 
 def test_long_move_builds_shortest_route_and_walks_through_node():
     state = make_initial_state(seed=17)
-    state.nodes["A3"].units = {UnitType.VANGUARD.value: 2}
+    state.nodes["A3"].units = {UnitType.VANGUARD.value: 7}
     state.nodes["CP1"].owner = "NEUTRAL"
     state.nodes["CP1"].neutral_hp = 0
     state.nodes["CP3"].owner = "NEUTRAL"
@@ -617,8 +617,8 @@ def test_route_does_not_transit_enemy_nodes_or_living_lord():
 
 def test_movement_speed_uses_slowest_unit_in_group():
     state = make_initial_state(seed=18)
-    state.nodes["A1"].units = {UnitType.SKIRMISHER.value: 2}
-    state.nodes["A2"].units = {UnitType.SKIRMISHER.value: 2, UnitType.RANGER.value: 1}
+    state.nodes["A1"].units = {UnitType.SKIRMISHER.value: 10}
+    state.nodes["A2"].units = {UnitType.RANGER.value: 4}
     state.nodes["CP1"].owner = "NEUTRAL"
     state.nodes["CP1"].neutral_hp = 0
 
