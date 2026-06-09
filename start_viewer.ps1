@@ -88,8 +88,8 @@ if (-not $Port) {
     throw "Could not start viewer API on ports 8001-8010."
 }
 
-$Url = "http://127.0.0.1:$Port/viewer_pixi/index.html"
-Write-Host "Pixi viewer: $Url"
+$Url = "http://127.0.0.1:$Port/viewer_pixi/home.html"
+Write-Host "Main menu: $Url"
 
 if (-not $NoOpen) {
     Start-Process $Url

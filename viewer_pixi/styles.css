@@ -431,3 +431,69 @@ button.primary {
     display: none;
   }
 }
+
+/* Back button + embed (recording-only) mode, shared with the league flow. */
+.is-hidden {
+  display: none !important;
+}
+
+.back-btn {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 6;
+  padding: 7px 13px;
+  border-radius: 9px;
+  border: 1px solid rgba(132, 148, 166, 0.42);
+  background: rgba(16, 20, 25, 0.86);
+  color: #eef4fa;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.back-btn:hover {
+  background: rgba(36, 44, 53, 0.92);
+}
+
+.embed-title {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  padding: 7px 16px;
+  border-radius: 9px;
+  border: 1px solid rgba(132, 148, 166, 0.32);
+  background: rgba(16, 20, 25, 0.82);
+  color: #eef4fa;
+  font-size: 13px;
+  font-weight: 700;
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.embed-replay #topHud {
+  display: none;
+}
+
+.brand-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 6px;
+  border-radius: 7px;
+  border: 1px solid rgba(132, 148, 166, 0.4);
+  color: #eef4fa;
+  text-decoration: none;
+  font-size: 13px;
+}
+
+.brand-menu:hover {
+  background: rgba(36, 44, 53, 0.92);
+}

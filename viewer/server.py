@@ -5,7 +5,10 @@ import json
 import os
 import re
 import sys
+import threading
 import time
+import traceback
+import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,6 +27,16 @@ from src.bots.policy_bot import (
     default_team_policy_checkpoint,
     policy_model_id_for_checkpoint,
     policy_state_ids_for_checkpoint,
+)
+from src.league import (
+    LeagueError,
+    create_league,
+    advance_day,
+    league_public_view,
+    load_league,
+    list_leagues,
+    encounter_detail,
+    list_templates,
 )
 
 
@@ -333,6 +346,67 @@ def generate_replays(payload: dict) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# League endpoints
+# --------------------------------------------------------------------------- #
+
+LEAGUE_JOBS: dict[str, dict] = {}
+LEAGUE_JOBS_LOCK = threading.Lock()
+LEAGUE_ENDPOINT = re.compile(r"^/api/league/(?P<league_id>[^/]+)(?:/(?P<action>encounter|advance))?(?:/(?P<arg>\d+))?$")
+
+
+def start_league_job(payload: dict) -> dict:
+    info = server_info()
+    if info["stale"]:
+        raise RuntimeError(
+            f"Viewer API is running old code ({info['commit']}); restart viewer for {info['current_commit']}"
+        )
+    name = str(payload.get("name") or "League").strip() or "League"
+    template_id = str(payload.get("template") or "classic_6x3")
+    teams = payload.get("teams") or []
+    seed = int(payload.get("seed", 0) or 0)
+    allowed = {model["id"] for model in available_models()}
+
+    job_id = uuid.uuid4().hex
+    with LEAGUE_JOBS_LOCK:
+        LEAGUE_JOBS[job_id] = {"status": "running", "done": 0, "total": 0, "league_id": None, "error": None}
+
+    def progress(done: int, total: int) -> None:
+        with LEAGUE_JOBS_LOCK:
+            job = LEAGUE_JOBS.get(job_id)
+            if job is not None:
+                job["done"] = done
+                job["total"] = total
+
+    def worker() -> None:
+        try:
+            league = create_league(
+                name=name,
+                template_id=template_id,
+                teams=teams,
+                seed=seed,
+                allowed_models=allowed,
+                progress_cb=progress,
+            )
+            with LEAGUE_JOBS_LOCK:
+                LEAGUE_JOBS[job_id].update(status="done", league_id=league["id"])
+        except Exception as error:  # noqa: BLE001 - surfaced to the client
+            traceback.print_exc()
+            with LEAGUE_JOBS_LOCK:
+                LEAGUE_JOBS[job_id].update(status="error", error=str(error))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {"job_id": job_id, "status": "running"}
+
+
+def league_job_status(job_id: str) -> dict:
+    with LEAGUE_JOBS_LOCK:
+        job = LEAGUE_JOBS.get(job_id)
+        if job is None:
+            raise LeagueError(f"Unknown league job: {job_id}")
+        return dict(job, job_id=job_id)
+
+
 class ViewerRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -368,20 +442,75 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/replays":
             self._send_json({"replays": replay_files(), "server": server_info()})
             return
+        if path == "/api/league/templates":
+            self._send_json({"templates": list_templates(), "models": available_models(),
+                             "factions": list(FACTION_TYPES), "server": server_info()})
+            return
+        if path == "/api/league/list":
+            self._send_json({"leagues": list_leagues(), "server": server_info()})
+            return
+        if path.startswith("/api/league/"):
+            self._handle_league_get(path)
+            return
         super().do_GET()
+
+    def _handle_league_get(self, path: str) -> None:
+        if path.startswith("/api/league/job/"):
+            job_id = path[len("/api/league/job/"):]
+            try:
+                self._send_json(league_job_status(job_id))
+            except LeagueError as error:
+                self._send_json({"error": str(error)}, status=404)
+            return
+        match = LEAGUE_ENDPOINT.match(path)
+        if not match:
+            self.send_error(404, "Unknown league endpoint")
+            return
+        league_id = match.group("league_id")
+        action = match.group("action")
+        arg = match.group("arg")
+        try:
+            if action == "encounter" and arg is not None:
+                self._send_json({"encounter": encounter_detail(league_id, int(arg))})
+            elif action is None:
+                self._send_json({"league": league_public_view(load_league(league_id))})
+            else:
+                self.send_error(404, "Unknown league endpoint")
+        except LeagueError as error:
+            self._send_json({"error": str(error)}, status=404)
+        except Exception as error:  # noqa: BLE001
+            self._send_json({"error": str(error)}, status=400)
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
-        if path != "/api/generate-replays":
-            self.send_error(404, "Unknown API endpoint")
+        if path == "/api/generate-replays":
+            try:
+                payload = self._read_json()
+                self._send_json(generate_replays(payload))
+            except RuntimeError as error:
+                self._send_json({"error": str(error), "server": server_info()}, status=409)
+            except Exception as error:
+                self._send_json({"error": str(error), "server": server_info()}, status=400)
             return
-        try:
-            payload = self._read_json()
-            self._send_json(generate_replays(payload))
-        except RuntimeError as error:
-            self._send_json({"error": str(error), "server": server_info()}, status=409)
-        except Exception as error:
-            self._send_json({"error": str(error), "server": server_info()}, status=400)
+        if path == "/api/league/create":
+            try:
+                payload = self._read_json()
+                self._send_json(start_league_job(payload))
+            except RuntimeError as error:
+                self._send_json({"error": str(error), "server": server_info()}, status=409)
+            except Exception as error:
+                self._send_json({"error": str(error), "server": server_info()}, status=400)
+            return
+        league_advance = re.match(r"^/api/league/(?P<league_id>[^/]+)/advance$", path)
+        if league_advance:
+            try:
+                self._send_json({"league": advance_day(league_advance.group("league_id"))})
+            except LeagueError as error:
+                self._send_json({"error": str(error)}, status=404)
+            except Exception as error:
+                self._send_json({"error": str(error)}, status=400)
+            return
+        self.send_error(404, "Unknown API endpoint")
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0") or 0)

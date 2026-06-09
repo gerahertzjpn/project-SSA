@@ -45,4 +45,5 @@ def test_viewer_has_one_click_windows_launcher():
     assert "viewer/server.py" in script
     assert "8001..8010" in script
     assert "-WindowStyle Hidden" in script
-    assert "viewer_pixi/index.html" in script
+    # Launcher now opens the main menu, which links to the match viewer and league.
+    assert "viewer_pixi/home.html" in script

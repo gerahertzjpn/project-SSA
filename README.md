@@ -38,14 +38,41 @@ Or double-click:
 start_viewer.bat
 ```
 
-Open:
+Open the main menu:
 
 ```text
-http://127.0.0.1:8001/viewer_pixi/index.html
+http://127.0.0.1:8001/viewer_pixi/home.html
 ```
+
+The main menu links to two modes:
+
+- **Match** — `viewer_pixi/index.html`, the existing configure-and-watch viewer.
+- **League** — `viewer_pixi/league.html`, the round-robin season manager.
 
 The startup script searches ports `8001..8010` and opens the first working
 viewer API.
+
+## League
+
+`viewer_pixi/league.html` runs full seasons on top of the match simulator.
+
+- Pick a template (currently `Classic 6x3`: six teams of three, single
+  round-robin, Best-of-3, one encounter per day).
+- Build teams and assign each player a model + faction (manual now, structured
+  for an LLM manager later).
+- Generating a season simulates **every** encounter and game on the Python
+  server up front (background job with a progress bar). Results are stored but
+  hidden — the league reveals one day/encounter at a time via "Play next day".
+- Standings, match history, per-encounter and per-game player stats, and a
+  one-click "Watch recording" (opens the Pixi player in recording-only embed
+  mode) are all driven from the stored league.
+- Every league screen has a Back button; recordings carry a Back link straight
+  to their encounter.
+
+API: `GET /api/league/templates|list`, `GET /api/league/<id>`,
+`GET /api/league/<id>/encounter/<n>`, `POST /api/league/create` (returns a
+`job_id`), `GET /api/league/job/<job_id>`, `POST /api/league/<id>/advance`.
+Leagues persist under `leagues/<league_id>/` (gitignored).
 
 ## Pixi Viewer
 
@@ -160,6 +187,7 @@ viewer/                 Disabled legacy diagnostics UI redirect
 viewer_game/            Disabled legacy canvas UI redirect
 src/core/               Game state, engine, combat, replay, runner
 src/bots/               Random, scripted, and policy bots
+src/league/             League templates, scheduling, simulation, standings
 src/training/           RL observation/action spaces and PPO training envs
 scripts/                Training, evaluation, audit, and benchmark scripts
 tests/                  Unit, integration, API, and browser tests

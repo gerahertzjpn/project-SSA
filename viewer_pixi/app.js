@@ -155,9 +155,13 @@ const layers = {
   effects: new Container(),
 };
 
+const EMBED = readEmbedParams();
+
 const els = {
   topHud: document.getElementById("topHud"),
   stage: document.getElementById("pixiStage"),
+  backBtn: document.getElementById("backBtn"),
+  embedTitle: document.getElementById("embedTitle"),
   metaText: document.getElementById("metaText"),
   replaySelect: document.getElementById("replaySelect"),
   loadBtn: document.getElementById("loadBtn"),
@@ -200,12 +204,47 @@ async function setup() {
 
   applyConfigMode();
   applyModelScope();
+  applyEmbedMode();
   bindControls();
   await loadReplayList();
+  if (EMBED.active) {
+    appState.samples = [{ label: EMBED.label, path: EMBED.replay }];
+    populateReplaySelect();
+    els.replaySelect.value = "0";
+  }
   drawStaticMap();
   fitCamera();
   await loadSelectedReplay();
   app.ticker.add((ticker) => frame(ticker.deltaMS));
+}
+
+function readEmbedParams() {
+  const params = new URLSearchParams(window.location.search);
+  const replay = params.get("replay");
+  if (!replay) {
+    return { active: false };
+  }
+  return {
+    active: true,
+    replay,
+    back: params.get("back") || "./home.html",
+    label: params.get("label") || "Match recording",
+  };
+}
+
+function applyEmbedMode() {
+  if (!EMBED.active) {
+    return;
+  }
+  document.body.classList.add("embed-replay");
+  if (els.backBtn) {
+    els.backBtn.href = EMBED.back;
+    els.backBtn.classList.remove("is-hidden");
+  }
+  if (els.embedTitle) {
+    els.embedTitle.textContent = EMBED.label;
+    els.embedTitle.classList.remove("is-hidden");
+  }
 }
 
 function bindControls() {
