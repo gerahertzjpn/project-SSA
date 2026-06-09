@@ -108,6 +108,7 @@ def _state_digest(state) -> dict:
                 _float(player.resources),
                 player.alive,
                 _float(player.core_hp),
+                player.faction,
             )
             for player_id, player in sorted(state.players.items())
         },
@@ -221,6 +222,33 @@ def test_replay_profile_accepts_per_player_models(tmp_path: Path):
     assert replay["meta"]["bot_type"] == "mixed"
     assert replay["meta"]["player_models"] == player_models
     assert len(replay["ticks"]) == result.total_ticks
+
+
+def test_replay_profile_accepts_per_player_factions(tmp_path: Path):
+    replay_path = tmp_path / "faction_replay.json"
+    player_factions = {
+        "A1": "infected",
+        "A2": "robots",
+        "A3": "humans",
+        "B1": "robots",
+        "B2": "infected",
+        "B3": "humans",
+    }
+
+    result = run_match(
+        seed=19,
+        bot_type="random",
+        replay_path=str(replay_path),
+        mode="replay",
+        player_factions=player_factions,
+    )
+    replay = load_replay(str(replay_path))
+
+    assert replay["meta"]["player_factions"] == player_factions
+    assert result.state.players["A1"].faction == "infected"
+    assert result.state.players["A2"].faction == "robots"
+    assert replay["ticks"][0]["players"]["A1"]["faction"] == "infected"
+    assert replay["ticks"][0]["players"]["A2"]["faction"] == "robots"
 
 
 def test_replay_meta_records_code_and_rules_version(tmp_path: Path):

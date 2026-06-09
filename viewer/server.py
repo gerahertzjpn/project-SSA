@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.core.constants import PLAYER_IDS
+from src.core.constants import FACTION_TYPES, PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS
 from src.core.replay import REPLAY_SCHEMA_VERSION
 from src.core.runner import current_code_commit, rules_meta, run_match
 from src.bots.policy_bot import (
@@ -56,11 +56,11 @@ SERVER_SOURCE_FINGERPRINT = source_fingerprint()
 
 def available_models() -> list[dict]:
     models = [
-        {"id": "random", "label": "Random bot"},
-        {"id": "scripted", "label": "Scripted bot"},
-        {"id": "scripted_core", "label": "Scripted core-focus"},
-        {"id": "scripted_core_raider", "label": "Scripted core Raider"},
-        {"id": "scripted_core_bmp", "label": "Scripted core BMP"},
+        baseline_model("random", "Random Bot"),
+        baseline_model("scripted", "Scripted Bot"),
+        baseline_model("scripted_core", "Core Bot"),
+        baseline_model("scripted_core_raider", "Raider Core"),
+        baseline_model("scripted_core_bmp", "BMP Core"),
     ]
     seen_checkpoints: set[Path] = set()
     team_checkpoint = default_team_policy_checkpoint()
@@ -68,39 +68,120 @@ def available_models() -> list[dict]:
         seen_checkpoints.add(team_checkpoint.resolve())
         models.append({
             "id": "ppo_team_scripted_v1",
-            "label": f"Sprint 3 team scripted best ({team_checkpoint.name})",
+            "label": "Team Best",
+            "kind": "policy",
+            "checkpoint": checkpoint_display_path(team_checkpoint),
+            "is_latest": False,
+            "show_by_default": False,
         })
     latest_team_checkpoint = ROOT / "training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt"
     if latest_team_checkpoint.exists() and checkpoint_is_compatible(latest_team_checkpoint):
         seen_checkpoints.add(latest_team_checkpoint.resolve())
         models.append({
             "id": "ppo_team_scripted_v1_latest",
-            "label": "Sprint 3 team scripted latest",
+            "label": "Team Latest",
+            "kind": "policy",
+            "checkpoint": checkpoint_display_path(latest_team_checkpoint),
+            "updated_at": int(latest_team_checkpoint.stat().st_mtime),
+            "is_latest": True,
+            "show_by_default": True,
         })
     best_checkpoint = default_policy_checkpoint()
     if best_checkpoint is not None:
         seen_checkpoints.add(best_checkpoint.resolve())
         models.append({
             "id": "ppo_random_v1",
-            "label": f"PPO random v1 ({best_checkpoint.name})",
+            "label": "Random Best",
+            "kind": "policy",
+            "checkpoint": checkpoint_display_path(best_checkpoint),
+            "is_latest": False,
+            "show_by_default": False,
         })
     latest_checkpoint = ROOT / "training_runs/sprint2_random_first_real_v1/checkpoints/latest.pt"
     if latest_checkpoint.exists() and checkpoint_is_compatible(latest_checkpoint):
         seen_checkpoints.add(latest_checkpoint.resolve())
         models.append({
             "id": "ppo_random_v1_latest",
-            "label": "PPO random v1 latest",
+            "label": "Random Latest",
+            "kind": "policy",
+            "checkpoint": checkpoint_display_path(latest_checkpoint),
+            "updated_at": int(latest_checkpoint.stat().st_mtime),
+            "is_latest": True,
+            "show_by_default": True,
         })
     for checkpoint in discover_policy_checkpoints():
         resolved = checkpoint.resolve()
         if resolved in seen_checkpoints:
             continue
         seen_checkpoints.add(resolved)
+        relative = checkpoint.relative_to(ROOT).as_posix()
+        is_latest = checkpoint.name == "latest.pt"
         models.append({
             "id": policy_model_id_for_checkpoint(checkpoint),
-            "label": f"Policy {checkpoint.relative_to(ROOT).as_posix()}",
+            "label": short_policy_label(checkpoint),
+            "kind": "policy",
+            "checkpoint": relative,
+            "updated_at": int(checkpoint.stat().st_mtime),
+            "is_latest": is_latest,
+            "show_by_default": is_latest,
         })
     return models
+
+
+def baseline_model(model_id: str, label: str) -> dict:
+    return {
+        "id": model_id,
+        "label": label,
+        "kind": "baseline",
+        "is_latest": True,
+        "show_by_default": True,
+    }
+
+
+def checkpoint_display_path(path: Path) -> str:
+    try:
+        return path.resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def short_policy_label(checkpoint: Path) -> str:
+    return f"{short_run_label(checkpoint.parent.parent.name)} {short_checkpoint_label(checkpoint)}"
+
+
+def short_checkpoint_label(checkpoint: Path) -> str:
+    if checkpoint.name == "latest.pt":
+        return "latest"
+    match = re.search(r"checkpoint_update_(\d+)", checkpoint.stem)
+    if match:
+        return f"u{match.group(1)}"
+    return re.sub(r"[^A-Za-z0-9]+", "", checkpoint.stem)[:10] or "checkpoint"
+
+
+def short_run_label(run_name: str) -> str:
+    patterns = [
+        (r"teammate_mix_v4_tmix(\d+)", "Mix{}"),
+        (r"teammate_mix_tmix(\d+)", "Mix{}"),
+        (r"selfplay_v3_recovery_spv(\d+)", "Recover{}"),
+        (r"selfplay_v3_tmix(\d+)_vs_tmix(\d+)", "Tmix{}v{}"),
+        (r"rotmix_mix(\d+)_peer\d+_stage(\d+)", "RotMix{}s{}"),
+        (r"bridge_seed(\d+)_vs_seed(\d+)", "Bridge{}v{}"),
+        (r"peer_seed(\d+)_vs_bridge(\d+)", "Peer{}v{}"),
+        (r"seed(\d+)_scripted", "Seed{}"),
+    ]
+    for pattern, template in patterns:
+        match = re.search(pattern, run_name)
+        if match:
+            values = [str(int(value)) if value.isdigit() else value for value in match.groups()]
+            return template.format(*values)
+    if "sprint3_team_scripted" in run_name:
+        return "SlotScript"
+    if "sprint2_random" in run_name:
+        return "RandomPPO"
+    words = [word for word in re.split(r"[^A-Za-z0-9]+", run_name) if word]
+    useful = [word for word in words if word not in {"fresh", "population", "v31", "checkpoints"}]
+    compact = "".join(word[:3].title() for word in useful[:2])
+    return compact or "Policy"
 
 
 def discover_policy_checkpoints() -> list[Path]:
@@ -118,7 +199,7 @@ def discover_policy_checkpoints() -> list[Path]:
             checkpoints.append(path)
             if len(checkpoints) >= MAX_DISCOVERED_POLICY_MODELS:
                 break
-    return sorted(checkpoints, key=lambda path: (path.parent.parent.name, path.name))
+    return checkpoints
 
 
 def server_info() -> dict:
@@ -190,6 +271,16 @@ def generate_replays(payload: dict) -> dict:
             raise ValueError(f"Unknown model for {player_id}: {model_id}")
         player_models[player_id] = model_id
 
+    allowed_factions = set(FACTION_TYPES)
+    factions = payload.get("factions", {}) or {}
+    player_factions = {}
+    for player_id in PLAYER_IDS:
+        faction = str(factions.get(player_id, "humans"))
+        if faction not in allowed_factions:
+            choices = ", ".join(FACTION_TYPES)
+            raise ValueError(f"Unknown faction for {player_id}: {faction}; expected one of: {choices}")
+        player_factions[player_id] = faction
+
     clear_replays()
     results = []
     winners: dict[str, int] = {}
@@ -202,6 +293,7 @@ def generate_replays(payload: dict) -> dict:
             replay_path=str(replay_path),
             mode="replay",
             player_models=player_models,
+            player_factions=player_factions,
         )
         winners[result.winner] = winners.get(result.winner, 0) + 1
         winner_types[result.winner_type] = winner_types.get(result.winner_type, 0) + 1
@@ -218,6 +310,7 @@ def generate_replays(payload: dict) -> dict:
         "runs": runs,
         "seed": seed,
         "players": player_models,
+        "factions": player_factions,
         "winners": winners,
         "winner_types": winner_types,
         "results": results,
@@ -247,6 +340,11 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/models":
             self._send_json({
                 "players": PLAYER_IDS,
+                "teams": {
+                    "TEAM_A": TEAM_A_PLAYERS,
+                    "TEAM_B": TEAM_B_PLAYERS,
+                },
+                "factions": list(FACTION_TYPES),
                 "models": available_models(),
                 "max_ui_runs": MAX_UI_RUNS,
                 "replays": replay_files(),
@@ -292,7 +390,7 @@ def main() -> None:
     args = parser.parse_args()
 
     server = ThreadingHTTPServer((args.host, args.port), ViewerRequestHandler)
-    print(f"Viewer server: http://{args.host}:{args.port}/viewer/index.html", flush=True)
+    print(f"Pixi viewer: http://{args.host}:{args.port}/viewer_pixi/index.html", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

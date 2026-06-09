@@ -2,11 +2,8 @@ import socket
 import subprocess
 import sys
 import time
-from io import BytesIO
 from pathlib import Path
 from urllib.request import urlopen
-
-import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,24 +15,19 @@ def free_port() -> int:
         return sock.getsockname()[1]
 
 
-def wait_for_http(url: str, timeout: float = 5.0) -> None:
+def wait_for_http(url: str, timeout: float = 5.0) -> bytes:
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
             with urlopen(url, timeout=0.5) as response:
                 if response.status == 200:
-                    return
+                    return response.read()
         except OSError:
             time.sleep(0.1)
     raise AssertionError(f"HTTP server did not answer: {url}")
 
 
-def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
-    playwright_module = pytest.importorskip("playwright.sync_api")
-    image_module = pytest.importorskip("PIL.Image")
-    if not (ROOT / "replays_viewer_debug_smoke" / "replay_0.json").exists():
-        pytest.skip("viewer sample replays are not generated")
-
+def test_legacy_viewer_route_serves_pixi_redirect():
     port = free_port()
     server = subprocess.Popen(
         [sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1"],
@@ -44,142 +36,9 @@ def test_viewer_loads_replay_in_browser_with_nonblank_screenshot():
         stderr=subprocess.DEVNULL,
     )
     try:
-        wait_for_http(f"http://127.0.0.1:{port}/viewer/index.html")
-        with playwright_module.sync_playwright() as playwright:
-            try:
-                browser = playwright.chromium.launch(headless=True)
-            except Exception as exc:
-                pytest.skip(f"Playwright Chromium is not installed: {exc}")
-
-            page = browser.new_page(viewport={"width": 1280, "height": 800})
-            page.goto(f"http://127.0.0.1:{port}/viewer/index.html", wait_until="domcontentloaded")
-            page.click("#loadSampleBtn")
-            page.wait_for_function("document.querySelector('#replayMeta').textContent.includes('schema')")
-            page.click('[data-tab="state"]')
-            page.wait_for_selector(".state-node-card")
-            route_check = page.evaluate(
-                """() => {
-                    const tickIndex = state.replay.ticks.findIndex((item) =>
-                        (item.moving_groups || []).some((group) => movementNodeId(group))
-                    );
-                    if (tickIndex < 0) {
-                        return null;
-                    }
-                    seekTo(tickIndex);
-                    const tick = state.replay.ticks[tickIndex];
-                    const inside = (tick.moving_groups || []).find((group) => movementNodeId(group));
-                    const nodeId = movementNodeId(inside);
-                    const stack = document.querySelector(`.node[data-node-id="${nodeId}"] .stack`);
-                    return {
-                        tick: tickIndex,
-                        nodeId,
-                        routeDots: document.querySelectorAll('.route').length,
-                        edgeGroups: (tick.moving_groups || []).filter((group) => !group.phase || group.phase === 'edge').length,
-                        expectedStack: nodeDisplayTotal(tick.nodes[nodeId], tick, nodeId),
-                        stackText: stack ? stack.textContent : '0'
-                    };
-                }"""
-            )
-            lord_check = page.evaluate(
-                """() => {
-                    const hasLord = (units = {}) => Number(units.LORD || units.BARON || units.L || units.B || 0) > 0;
-                    const battleHasLord = (battle) => (battle.formation || []).some((row) =>
-                        Array.isArray(row) && row.length >= 3 && row[2] === 'L' && /^[AB]\\d+$/.test(String(row[1] || ''))
-                    );
-                    const tickIndex = state.replay.ticks.findIndex((item) =>
-                        (item.moving_groups || []).some((group) => hasLord(group.units)) ||
-                        (item.active_battles || []).some(battleHasLord)
-                    );
-                    if (tickIndex < 0) {
-                        return null;
-                    }
-                    seekTo(tickIndex);
-                    const tick = state.replay.ticks[tickIndex];
-                    const nodeLord = (tick.moving_groups || []).find((group) => hasLord(group.units) && movementNodeId(group));
-                    const nodeId = nodeLord ? movementNodeId(nodeLord) : null;
-                    return {
-                        tick: tickIndex,
-                        markers: document.querySelectorAll('.lord-marker').length,
-                        routeDots: document.querySelectorAll('.route').length,
-                        nonLordEdgeGroups: (tick.moving_groups || []).filter((group) =>
-                            (!group.phase || group.phase === 'edge') && !hasLord(group.units)
-                        ).length,
-                        nodeId,
-                        nodeStackHidden: nodeId ? !document.querySelector(`.node[data-node-id="${nodeId}"] .stack`) : true,
-                        nodeLabelHidden: nodeId ? !document.querySelector(`.node[data-node-id="${nodeId}"] .node-label`)?.textContent.trim() : true
-                    };
-                }"""
-            )
-
-            counts = page.evaluate(
-                """() => {
-                    seekTo(0);
-                    return ({
-                    nodes: document.querySelectorAll('.node').length,
-                    routes: document.querySelectorAll('.route').length,
-                    stateCards: document.querySelectorAll('.state-node-card').length,
-                    forceCards: document.querySelectorAll('.state-force-card').length,
-                    unitCanvasWidth: document.querySelector('#unitCanvas')?.width || 0,
-                    unitCanvasHeight: document.querySelector('#unitCanvas')?.height || 0,
-                    mapForces: document.querySelectorAll('.map-force').length,
-                    tunnelPaths: document.querySelectorAll('.edge-path.tunnel').length,
-                    coreHpBars: document.querySelectorAll('.state-hp.core').length,
-                    lordHpBars: document.querySelectorAll('.state-hp.lord').length,
-                    activeTab: document.querySelector('.panel-tab.active')?.dataset.tab,
-                    meta: document.querySelector('#replayMeta').textContent
-                    });
-                }"""
-            )
-            filter_check = page.evaluate(
-                """() => {
-                    seekTo(0);
-                    document.querySelector('#stateFilterNoneBtn').click();
-                    const afterNone = document.querySelectorAll('.state-node-card').length;
-                    const emptyText = document.querySelector('#stateList .empty')?.textContent || '';
-                    document.querySelector('input[data-state-node="CP1"]').click();
-                    const cards = Array.from(document.querySelectorAll('.state-node-card'));
-                    return {
-                        afterNone,
-                        emptyText,
-                        afterCp1: cards.length,
-                        cp1Visible: cards[0]?.querySelector('.state-node-head strong')?.textContent === '1'
-                    };
-                }"""
-            )
-            screenshot = page.screenshot(full_page=False)
-            browser.close()
-
-        image = image_module.open(BytesIO(screenshot)).convert("RGB")
-        pixels = list(image.getdata())
-        step = max(1, len(pixels) // 20000)
-        sample = pixels[::step]
-
-        assert counts["nodes"] == 13
-        assert counts["unitCanvasWidth"] > 0
-        assert counts["unitCanvasHeight"] > 0
-        assert counts["mapForces"] > 0
-        assert counts["tunnelPaths"] == 12
-        assert counts["stateCards"] > 0
-        assert counts["forceCards"] > 0
-        assert filter_check["afterNone"] == 0
-        assert "No selected nodes" in filter_check["emptyText"]
-        assert filter_check["afterCp1"] == 1
-        assert filter_check["cp1Visible"]
-        assert counts["coreHpBars"] >= 6
-        assert counts["lordHpBars"] >= 1
-        assert counts["activeTab"] == "state"
-        assert "schema" in counts["meta"]
-        assert route_check is not None
-        assert route_check["routeDots"] == route_check["edgeGroups"]
-        assert int(route_check["stackText"]) == route_check["expectedStack"]
-        if lord_check is not None:
-            assert lord_check["markers"] >= 1
-            assert lord_check["routeDots"] == lord_check["nonLordEdgeGroups"]
-            assert lord_check["nodeStackHidden"]
-            assert lord_check["nodeLabelHidden"]
-        assert len(screenshot) > 50_000
-        assert len(set(sample)) > 50
-        assert sum(1 for red, green, blue in sample if red + green + blue > 90) > 1000
+        body = wait_for_http(f"http://127.0.0.1:{port}/viewer/index.html").decode("utf-8")
+        assert "Legacy diagnostics UI is intentionally disabled" in body
+        assert "../viewer_pixi/index.html" in body
     finally:
         server.terminate()
         try:

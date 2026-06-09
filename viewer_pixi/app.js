@@ -95,10 +95,40 @@ const TUNNELS = new Set([
   "B1|CP5", "B1|CP6", "B2|CP5", "B2|CP6", "B3|CP5", "B3|CP6",
 ]);
 
+const PLAYER_IDS = ["A1", "A2", "A3", "B1", "B2", "B3"];
+const TEAM_PLAYERS = {
+  TEAM_A: ["A1", "A2", "A3"],
+  TEAM_B: ["B1", "B2", "B3"],
+};
+const TEAM_LABELS = {
+  TEAM_A: "Team A",
+  TEAM_B: "Team B",
+};
+const DEFAULT_FACTIONS = ["humans", "infected", "robots"];
+const FACTION_LABELS = {
+  humans: "Humans",
+  infected: "Infected",
+  robots: "Robots",
+};
+const FALLBACK_MODELS = [
+  { id: "random", label: "Random Bot", kind: "baseline", show_by_default: true },
+  { id: "scripted", label: "Scripted Bot", kind: "baseline", show_by_default: true },
+  { id: "scripted_core", label: "Core Bot", kind: "baseline", show_by_default: true },
+  { id: "scripted_core_raider", label: "Raider Core", kind: "baseline", show_by_default: true },
+  { id: "scripted_core_bmp", label: "BMP Core", kind: "baseline", show_by_default: true },
+];
+
 const appState = {
   app: null,
   replay: null,
   samples: [...FALLBACK_REPLAYS],
+  models: [...FALLBACK_MODELS],
+  players: [...PLAYER_IDS],
+  teams: { ...TEAM_PLAYERS },
+  factions: [...DEFAULT_FACTIONS],
+  apiAvailable: false,
+  apiStale: false,
+  serverInfo: null,
   replayLabel: "",
   tickFloat: 0,
   playing: false,
@@ -113,6 +143,8 @@ const appState = {
   lastMapSignature: "",
   generating: false,
   maxUiRuns: 100,
+  configExpanded: readStoredFlag("pixiConfigExpanded", false),
+  showAllModels: readStoredFlag("pixiShowAllModels", false),
 };
 
 const layers = {
@@ -124,10 +156,14 @@ const layers = {
 };
 
 const els = {
+  topHud: document.getElementById("topHud"),
   stage: document.getElementById("pixiStage"),
   metaText: document.getElementById("metaText"),
   replaySelect: document.getElementById("replaySelect"),
   loadBtn: document.getElementById("loadBtn"),
+  configToggleBtn: document.getElementById("configToggleBtn"),
+  modelsToggleBtn: document.getElementById("modelsToggleBtn"),
+  playerConfigGrid: document.getElementById("playerConfigGrid"),
   generateCountInput: document.getElementById("generateCountInput"),
   generateSeedInput: document.getElementById("generateSeedInput"),
   generateBtn: document.getElementById("generateBtn"),
@@ -139,6 +175,8 @@ const els = {
   tickNow: document.getElementById("tickNow"),
   tickMax: document.getElementById("tickMax"),
   speedSelect: document.getElementById("speedSelect"),
+  inspectPanel: document.getElementById("inspectPanel"),
+  inspectCloseBtn: document.getElementById("inspectCloseBtn"),
   inspectBody: document.getElementById("inspectBody"),
 };
 
@@ -160,6 +198,8 @@ async function setup() {
   layers.root.addChild(layers.map, layers.labels, layers.effects, layers.units);
   app.stage.addChild(layers.root);
 
+  applyConfigMode();
+  applyModelScope();
   bindControls();
   await loadReplayList();
   drawStaticMap();
@@ -174,6 +214,8 @@ function bindControls() {
     drawStaticMap();
   });
   els.loadBtn.addEventListener("click", loadSelectedReplay);
+  els.configToggleBtn.addEventListener("click", toggleConfigMode);
+  els.modelsToggleBtn.addEventListener("click", toggleModelScope);
   els.generateBtn.addEventListener("click", generateReplays);
   els.generateCountInput.addEventListener("input", validateGeneratorControls);
   els.generateSeedInput.addEventListener("input", validateGeneratorControls);
@@ -183,20 +225,91 @@ function bindControls() {
   els.tickSlider.addEventListener("input", (event) => seekTo(Number(event.target.value)));
   els.speedSelect.addEventListener("change", () => resetPlaybackClock(performance.now()));
   els.stage.addEventListener("click", (event) => selectAt(event));
+  els.inspectCloseBtn.addEventListener("click", closeInspector);
+}
+
+function toggleConfigMode() {
+  appState.configExpanded = !appState.configExpanded;
+  storeFlag("pixiConfigExpanded", appState.configExpanded);
+  applyConfigMode();
+}
+
+function applyConfigMode() {
+  els.topHud.classList.toggle("compact", !appState.configExpanded);
+  els.configToggleBtn.textContent = appState.configExpanded ? "Compact" : "Config";
+  els.configToggleBtn.setAttribute("aria-expanded", appState.configExpanded ? "true" : "false");
+}
+
+function toggleModelScope() {
+  appState.showAllModels = !appState.showAllModels;
+  storeFlag("pixiShowAllModels", appState.showAllModels);
+  applyModelScope();
+  populatePlayerConfigGrid();
+  validateGeneratorControls();
+}
+
+function applyModelScope() {
+  els.topHud.classList.toggle("show-all-models", appState.showAllModels);
+  els.modelsToggleBtn.textContent = appState.showAllModels ? "Latest only" : "All models";
+  els.modelsToggleBtn.setAttribute("aria-pressed", appState.showAllModels ? "true" : "false");
+  els.modelsToggleBtn.title = appState.showAllModels
+    ? "Show only current latest models"
+    : "Show every compatible checkpoint";
+}
+
+function closeInspector() {
+  appState.selected = null;
+  updateInspector();
+}
+
+function readStoredFlag(key, fallback) {
+  try {
+    const value = window.localStorage.getItem(key);
+    return value === null ? fallback : value === "1";
+  } catch {
+    return fallback;
+  }
+}
+
+function storeFlag(key, value) {
+  try {
+    window.localStorage.setItem(key, value ? "1" : "0");
+  } catch {
+    // Ignore storage failures; the current session still updates.
+  }
 }
 
 async function loadReplayList() {
   try {
     const payload = await fetchJson("/api/models");
+    appState.apiAvailable = true;
+    appState.serverInfo = payload.server || null;
+    appState.apiStale = Boolean(appState.serverInfo?.stale);
     appState.samples = payload.replays?.length ? payload.replays : [...FALLBACK_REPLAYS];
+    appState.models = payload.models?.length ? payload.models : [...FALLBACK_MODELS];
+    appState.players = payload.players?.length ? payload.players : [...PLAYER_IDS];
+    appState.teams = payload.teams || { ...TEAM_PLAYERS };
+    appState.factions = payload.factions?.length ? payload.factions : [...DEFAULT_FACTIONS];
     appState.maxUiRuns = Number(payload.max_ui_runs || 100);
     els.generateCountInput.max = String(appState.maxUiRuns);
-    setGenerateStatus("");
-  } catch {
+    setGenerateStatus(
+      appState.apiStale ? "API stale" : "Ready",
+      appState.apiStale ? "error" : "",
+      serverStatusLabel(appState.serverInfo),
+    );
+  } catch (error) {
+    appState.apiAvailable = false;
+    appState.apiStale = false;
+    appState.serverInfo = null;
     appState.samples = [...FALLBACK_REPLAYS];
-    setGenerateStatus("Generation API offline", "error");
+    appState.models = [...FALLBACK_MODELS];
+    appState.players = [...PLAYER_IDS];
+    appState.teams = { ...TEAM_PLAYERS };
+    appState.factions = [...DEFAULT_FACTIONS];
+    setGenerateStatus("API offline", "error", error.message || "Generation API offline");
   }
   populateReplaySelect();
+  populatePlayerConfigGrid();
   validateGeneratorControls();
 }
 
@@ -206,6 +319,198 @@ function populateReplaySelect() {
     .join("");
 }
 
+function populatePlayerConfigGrid() {
+  if (!els.playerConfigGrid) {
+    return;
+  }
+  const selectedModels = playerModelSelection({ allowMissing: true });
+  const selectedFactions = playerFactionSelection({ allowMissing: true });
+  const defaultModel = preferredModelId();
+
+  els.playerConfigGrid.innerHTML = "";
+  for (const [teamId, teamPlayers] of Object.entries(normalizedTeams())) {
+    const group = document.createElement("section");
+    group.className = `team-config ${teamClass(teamId)}`;
+
+    const header = document.createElement("div");
+    header.className = "team-config-head";
+
+    const title = document.createElement("strong");
+    title.textContent = TEAM_LABELS[teamId] || teamId;
+
+    const teamModel = document.createElement("select");
+    teamModel.className = "team-model-select";
+    teamModel.dataset.teamModel = teamId;
+    teamModel.setAttribute("aria-label", `${TEAM_LABELS[teamId] || teamId} model preset`);
+    populateModelOptions(teamModel, defaultModel);
+
+    const teamFaction = document.createElement("select");
+    teamFaction.className = "team-faction-select";
+    teamFaction.dataset.teamFaction = teamId;
+    teamFaction.setAttribute("aria-label", `${TEAM_LABELS[teamId] || teamId} faction preset`);
+    populateFactionOptions(teamFaction, "humans");
+
+    const apply = document.createElement("button");
+    apply.className = "mini-command";
+    apply.type = "button";
+    apply.textContent = "Apply";
+    apply.addEventListener("click", () => applyTeamConfig(teamId));
+
+    header.append(title, teamModel, teamFaction, apply);
+    group.appendChild(header);
+
+    const rows = document.createElement("div");
+    rows.className = "player-config-rows";
+    for (const playerId of teamPlayers) {
+      const row = document.createElement("div");
+      row.className = "player-config-row";
+
+      const slot = document.createElement("span");
+      slot.className = "player-slot";
+      slot.textContent = playerId;
+
+      const model = document.createElement("select");
+      model.dataset.playerModel = playerId;
+      model.setAttribute("aria-label", `${playerId} model`);
+      populateModelOptions(model, selectedModels[playerId] || defaultModel, playerId);
+      model.addEventListener("change", validateGeneratorControls);
+
+      const faction = document.createElement("select");
+      faction.dataset.playerFaction = playerId;
+      faction.setAttribute("aria-label", `${playerId} faction`);
+      populateFactionOptions(faction, selectedFactions[playerId] || "humans");
+      faction.addEventListener("change", validateGeneratorControls);
+
+      row.append(slot, model, faction);
+      rows.appendChild(row);
+    }
+    group.appendChild(rows);
+    els.playerConfigGrid.appendChild(group);
+  }
+}
+
+function populateModelOptions(select, selectedId, playerId = "") {
+  const models = visibleModels();
+  select.innerHTML = "";
+  for (const model of models) {
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = modelLabel(model, playerId);
+    option.title = modelTitle(model, playerId);
+    select.appendChild(option);
+  }
+  select.value = models.some((model) => model.id === selectedId) ? selectedId : models[0]?.id || "random";
+}
+
+function visibleModels() {
+  const models = appState.models.length ? appState.models : FALLBACK_MODELS;
+  if (appState.showAllModels) {
+    return [...models];
+  }
+  const latest = models.filter((model) => model.show_by_default !== false || model.kind === "baseline" || model.is_latest);
+  return latest.length ? latest : [...models];
+}
+
+function populateFactionOptions(select, selectedFaction) {
+  const factions = appState.factions.length ? appState.factions : DEFAULT_FACTIONS;
+  select.innerHTML = "";
+  for (const faction of factions) {
+    const option = document.createElement("option");
+    option.value = faction;
+    option.textContent = FACTION_LABELS[faction] || faction;
+    select.appendChild(option);
+  }
+  select.value = factions.includes(selectedFaction) ? selectedFaction : factions[0] || "humans";
+}
+
+function modelLabel(model = {}, playerId = "") {
+  const label = model.label || model.id || "?";
+  const slot = policySlotForPlayer(model, playerId);
+  return slot ? `${label} ${slot}` : label;
+}
+
+function modelTitle(model = {}, playerId = "") {
+  const slot = policySlotForPlayer(model, playerId);
+  const checkpoint = model.checkpoint || model.label || model.id;
+  if (!slot) {
+    return checkpoint;
+  }
+  return `${checkpoint} | uses ${slot} policy state for ${playerId}`;
+}
+
+function policySlotForPlayer(model = {}, playerId = "") {
+  if (!playerId || model.kind !== "policy") {
+    return "";
+  }
+  const id = String(playerId || "");
+  if (/^[AB][123]$/.test(id)) {
+    return `A${id.slice(1)}`;
+  }
+  return "";
+}
+
+function preferredModelId() {
+  const models = visibleModels();
+  const policies = models
+    .filter((model) => model.kind === "policy" || String(model.id || "").startsWith("policy:"))
+    .sort((left, right) => Number(right.updated_at || 0) - Number(left.updated_at || 0));
+  return policies[0]?.id || models.find((model) => model.id === "scripted")?.id || models[0]?.id || "random";
+}
+
+function normalizedTeams() {
+  return {
+    TEAM_A: appState.teams?.TEAM_A?.length ? appState.teams.TEAM_A : TEAM_PLAYERS.TEAM_A,
+    TEAM_B: appState.teams?.TEAM_B?.length ? appState.teams.TEAM_B : TEAM_PLAYERS.TEAM_B,
+  };
+}
+
+function teamClass(value) {
+  const text = String(value || "");
+  return text === "TEAM_A" || text.startsWith("A") ? "team-a" : "team-b";
+}
+
+function applyTeamConfig(teamId) {
+  const model = els.playerConfigGrid.querySelector(`select[data-team-model="${teamId}"]`)?.value;
+  const faction = els.playerConfigGrid.querySelector(`select[data-team-faction="${teamId}"]`)?.value;
+  for (const playerId of normalizedTeams()[teamId] || []) {
+    const modelSelect = els.playerConfigGrid.querySelector(`select[data-player-model="${playerId}"]`);
+    const factionSelect = els.playerConfigGrid.querySelector(`select[data-player-faction="${playerId}"]`);
+    if (modelSelect && model) {
+      modelSelect.value = model;
+    }
+    if (factionSelect && faction) {
+      factionSelect.value = faction;
+    }
+  }
+  validateGeneratorControls();
+}
+
+function playerModelSelection(options = {}) {
+  const players = {};
+  for (const playerId of appState.players.length ? appState.players : PLAYER_IDS) {
+    const select = els.playerConfigGrid?.querySelector(`select[data-player-model="${playerId}"]`);
+    if (select?.value) {
+      players[playerId] = select.value;
+    } else if (!options.allowMissing) {
+      players[playerId] = preferredModelId();
+    }
+  }
+  return players;
+}
+
+function playerFactionSelection(options = {}) {
+  const factions = {};
+  for (const playerId of appState.players.length ? appState.players : PLAYER_IDS) {
+    const select = els.playerConfigGrid?.querySelector(`select[data-player-faction="${playerId}"]`);
+    if (select?.value) {
+      factions[playerId] = select.value;
+    } else if (!options.allowMissing) {
+      factions[playerId] = "humans";
+    }
+  }
+  return factions;
+}
+
 async function generateReplays() {
   if (!validateGeneratorControls()) {
     return;
@@ -213,16 +518,20 @@ async function generateReplays() {
 
   const runs = Number(els.generateCountInput.value || 20);
   const seed = Number(els.generateSeedInput.value || 20260602);
+  const players = playerModelSelection();
+  const factions = playerFactionSelection();
   appState.generating = true;
   validateGeneratorControls();
-  setGenerateStatus("Generating", "loading", `Generating ${runs} matches`);
+  setGenerateStatus("Generating", "loading", `${runs} matches | ${matchConfigSummary(players, factions)}`);
 
   try {
     const payload = await fetchJson("/api/generate-replays", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ runs, seed }),
+      body: JSON.stringify({ runs, seed, players, factions }),
     });
+    appState.serverInfo = payload.server || appState.serverInfo;
+    appState.apiStale = Boolean(appState.serverInfo?.stale);
     appState.samples = payload.replays?.length ? payload.replays : [...FALLBACK_REPLAYS];
     populateReplaySelect();
     els.replaySelect.value = "0";
@@ -241,17 +550,34 @@ function validateGeneratorControls() {
   const seed = Number(els.generateSeedInput.value || 0);
   const validRuns = Number.isInteger(runs) && runs >= 1 && runs <= appState.maxUiRuns;
   const validSeed = Number.isFinite(seed);
-  const disabled = appState.generating || !validRuns || !validSeed;
+  const validPlayers = hasCompletePlayerConfig();
+  const disabled = appState.generating || !appState.apiAvailable || appState.apiStale || !validRuns || !validSeed || !validPlayers;
   els.generateBtn.disabled = disabled;
   els.generateBtn.setAttribute("aria-busy", appState.generating ? "true" : "false");
   if (!validRuns) {
     els.generateBtn.title = `Matches must be 1..${appState.maxUiRuns}`;
   } else if (!validSeed) {
     els.generateBtn.title = "Seed must be a number";
+  } else if (!validPlayers) {
+    els.generateBtn.title = "Every player needs a model and faction";
+  } else if (appState.apiStale) {
+    els.generateBtn.title = "Restart the viewer API";
+  } else if (!appState.apiAvailable) {
+    els.generateBtn.title = "Generation API offline";
   } else {
     els.generateBtn.title = "Generate replay files";
   }
   return !disabled;
+}
+
+function hasCompletePlayerConfig() {
+  const models = playerModelSelection();
+  const factions = playerFactionSelection();
+  const allowedModels = new Set(visibleModels().map((model) => model.id));
+  const allowedFactions = new Set(appState.factions.length ? appState.factions : DEFAULT_FACTIONS);
+  return (appState.players.length ? appState.players : PLAYER_IDS).every((playerId) => (
+    allowedModels.has(models[playerId]) && allowedFactions.has(factions[playerId])
+  ));
 }
 
 function setGenerateStatus(message, tone = "", title = "") {
@@ -278,6 +604,7 @@ function generationSummary(payload = {}) {
     `${payload.runs || 0} matches generated`,
     winners ? `winners ${winners}` : "",
     types ? `types ${types}` : "",
+    payload.players && payload.factions ? matchConfigSummary(payload.players, payload.factions) : "",
   ].filter(Boolean).join(" | ");
 }
 
@@ -286,6 +613,38 @@ function countSummary(values = {}) {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}:${value}`)
     .join(" ");
+}
+
+function matchConfigSummary(players = {}, factions = {}) {
+  return Object.entries(normalizedTeams())
+    .map(([teamId, teamPlayers]) => {
+      const playerText = teamPlayers
+        .map((playerId) => `${playerId}:${shortModelId(players[playerId])}/${shortFaction(factions[playerId])}`)
+        .join(" ");
+      return `${TEAM_LABELS[teamId] || teamId} ${playerText}`;
+    })
+    .join(" | ");
+}
+
+function shortModelId(modelId) {
+  const model = (appState.models.length ? appState.models : FALLBACK_MODELS).find((item) => item.id === modelId);
+  if (model?.checkpoint) {
+    return model.label || model.checkpoint.split("/").slice(-3).join("/");
+  }
+  return String(model?.label || modelId || "?").replace(/\s+bot$/i, "");
+}
+
+function shortFaction(faction) {
+  return String(faction || "humans").slice(0, 3);
+}
+
+function serverStatusLabel(info) {
+  if (!info) {
+    return "";
+  }
+  const commit = info.commit || "?";
+  const schema = info.schema_version || "?";
+  return `build ${commit} | schema ${schema}${info.stale ? " | stale" : ""}`;
 }
 
 async function loadSelectedReplay() {
@@ -307,9 +666,26 @@ async function loadSelectedReplay() {
   els.tickNow.textContent = "0";
   els.tickMax.textContent = String(Math.max(0, (replay.ticks || []).length - 1));
   els.playBtn.textContent = ">";
-  els.metaText.textContent = `schema ${replay.meta?.schema_version || "?"} | ${replay.meta?.winner || "?"} | ${replay.meta?.total_ticks || 0}t`;
+  els.metaText.textContent = replayMetaText(replay);
+  els.metaText.title = replayMetaTitle(replay);
   drawStaticMap();
   updateInspector();
+}
+
+function replayMetaText(replay) {
+  const meta = replay?.meta || {};
+  const factions = meta.player_factions || {};
+  const teamA = TEAM_PLAYERS.TEAM_A.map((playerId) => `${playerId}:${shortFaction(factions[playerId])}`).join(" ");
+  const teamB = TEAM_PLAYERS.TEAM_B.map((playerId) => `${playerId}:${shortFaction(factions[playerId])}`).join(" ");
+  return `schema ${meta.schema_version || "?"} | ${meta.winner || "?"} | ${meta.total_ticks || 0}t | ${teamA} vs ${teamB}`;
+}
+
+function replayMetaTitle(replay) {
+  const meta = replay?.meta || {};
+  if (!meta.player_models && !meta.player_factions) {
+    return "";
+  }
+  return matchConfigSummary(meta.player_models || {}, meta.player_factions || {});
 }
 
 function frame(deltaMS) {
@@ -1134,9 +1510,11 @@ function selectAt(event) {
 function updateInspector() {
   const selected = appState.selected;
   if (!selected) {
-    els.inspectBody.innerHTML = `<span class="muted">Click a unit, room, or fight.</span>`;
+    els.inspectPanel.classList.add("is-hidden");
+    els.inspectBody.innerHTML = "";
     return;
   }
+  els.inspectPanel.classList.remove("is-hidden");
   if (selected.type === "unit") {
     const data = selected.data || {};
     els.inspectBody.innerHTML = `
@@ -1150,9 +1528,11 @@ function updateInspector() {
   }
   const node = selected.data || {};
   const buildings = buildingSummary(node.buildings || {});
+  const player = currentTick()?.players?.[selected.id];
   els.inspectBody.innerHTML = `
     <div class="row"><span>Node</span><strong>${escapeHtml(selected.id)}</strong></div>
     <div class="row"><span>Owner</span><strong>${escapeHtml(node.owner || "?")}</strong></div>
+    ${player?.faction ? `<div class="row"><span>Faction</span><strong>${escapeHtml(player.faction)}</strong></div>` : ""}
     <div class="row"><span>Units</span><strong>${unitSummary(node.units || {}) || "-"}</strong></div>
     <div class="row"><span>Visitors</span><strong>${Object.keys(node.visiting_units || {}).length}</strong></div>
     <div class="row"><span>Neutral HP</span><strong>${Number(node.neutral_hp || 0)}</strong></div>

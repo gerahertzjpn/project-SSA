@@ -88,10 +88,8 @@ if (-not $Port) {
     throw "Could not start viewer API on ports 8001-8010."
 }
 
-$Url = "http://127.0.0.1:$Port/viewer/index.html"
-$GameUrl = "http://127.0.0.1:$Port/viewer_game/index.html"
-Write-Host "Viewer server: $Url"
-Write-Host "Game viewer:   $GameUrl"
+$Url = "http://127.0.0.1:$Port/viewer_pixi/index.html"
+Write-Host "Pixi viewer: $Url"
 
 if (-not $NoOpen) {
     Start-Process $Url

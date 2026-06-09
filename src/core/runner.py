@@ -230,12 +230,13 @@ def run_match(
     mode: str = "replay",
     pretty_replay: bool = False,
     player_models: Optional[dict[str, str]] = None,
+    player_factions: Optional[dict[str, str]] = None,
 ) -> MatchResult:
     profile = generation_profile(mode)
     if profile.save_replay and replay_path is None:
         raise ValueError("replay_path is required in replay generation mode")
 
-    state = make_initial_state(seed=seed)
+    state = make_initial_state(seed=seed, player_factions=player_factions)
     bots = (
         make_bots_from_models(player_models, seed_offset=seed * 10)
         if player_models is not None
@@ -262,6 +263,7 @@ def run_match(
                 "rules": rules_meta(),
                 "map2d": map2d_replay_meta(),
                 "player_models": dict(player_models or {}),
+                "player_factions": dict(player_factions or {}),
                 "winner_type": state.winner_type,
                 "core_combat_damage": round(state.core_combat_damage, 3),
                 "core_damage_by_team": {

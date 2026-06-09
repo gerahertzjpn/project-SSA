@@ -18,9 +18,13 @@ def test_pixi_viewer_assets_exist_and_are_wired():
     assert 'id="generateCountInput"' in index
     assert 'id="generateSeedInput"' in index
     assert 'id="generateStatus"' in index
+    assert 'id="configToggleBtn"' in index
+    assert 'id="modelsToggleBtn"' in index
+    assert 'id="playerConfigGrid"' in index
+    assert 'id="inspectCloseBtn"' in index
     assert 'id="tickSlider"' in index
-    assert "../viewer_game/index.html" in index
-    assert "../viewer/index.html" in index
+    assert "../viewer_game/index.html" not in index
+    assert "../viewer/index.html" not in index
 
 
 def test_pixi_viewer_uses_pixi_application_and_replay_positions():
@@ -77,6 +81,16 @@ def test_pixi_viewer_uses_pixi_application_and_replay_positions():
     assert "/api/generate-replays" in script
     assert "generateReplays" in script
     assert "validateGeneratorControls" in script
+    assert "populatePlayerConfigGrid" in script
+    assert "toggleConfigMode" in script
+    assert "toggleModelScope" in script
+    assert "visibleModels" in script
+    assert "applyConfigMode" in script
+    assert "closeInspector" in script
+    assert "playerModelSelection" in script
+    assert "playerFactionSelection" in script
+    assert "player_factions" in script
+    assert "factions" in script
     assert "maxUiRuns" in script
     assert "replays_viewer_debug_smoke" in script
 
@@ -89,6 +103,15 @@ def test_pixi_viewer_layout_is_fullscreen_hud():
     assert ".top-hud" in styles
     assert ".generate-status" in styles
     assert ".mini-field" in styles
+    assert ".player-config-grid" in styles
+    assert ".top-hud.compact" in styles
+    assert ".config-toggle" in styles
+    assert ".models-toggle" in styles
+    assert ".top-hud.show-all-models" in styles
+    assert ".team-config" in styles
+    assert ".player-config-row" in styles
+    assert ".inspect-panel.is-hidden" in styles
+    assert ".inspect-head" in styles
     assert 'input[type="number"]::-webkit-inner-spin-button' in styles
     assert ".bottom-hud" in styles
     assert ".inspect-panel" in styles

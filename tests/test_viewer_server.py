@@ -22,6 +22,14 @@ def test_ui_generation_replaces_old_replays_and_returns_numbered_list(tmp_path: 
         "runs": 2,
         "seed": 20260603,
         "players": {player_id: "random" for player_id in PLAYER_IDS},
+        "factions": {
+            "A1": "infected",
+            "A2": "robots",
+            "A3": "humans",
+            "B1": "robots",
+            "B2": "infected",
+            "B3": "humans",
+        },
     }
     result = server.generate_replays(payload)
 
@@ -29,9 +37,11 @@ def test_ui_generation_replaces_old_replays_and_returns_numbered_list(tmp_path: 
     assert [item["label"] for item in result["replays"]] == ["replay_0.json", "replay_1.json"]
     assert (tmp_path / "replay_0.json").exists()
     assert (tmp_path / "replay_1.json").exists()
+    assert result["factions"] == payload["factions"]
 
     replay = load_replay(str(tmp_path / "replay_0.json"))
     assert replay["meta"]["schema_version"] == "0.7.2"
+    assert replay["meta"]["player_factions"] == payload["factions"]
     assert replay["meta"]["rules"]["no_shoot_while_moving"] is False
     assert replay["meta"]["rules"]["ranger_can_attack_after_moving"] is True
     assert replay["meta"]["rules"]["approach_threat_battles"] is True
@@ -76,7 +86,11 @@ def test_viewer_server_discovers_policy_checkpoints(tmp_path: Path, monkeypatch)
 
     models = server.available_models()
 
-    assert any(
-        model["id"] == "policy:training_runs/new_policy/checkpoints/latest.pt"
-        for model in models
+    discovered = next(
+        model for model in models
+        if model["id"] == "policy:training_runs/new_policy/checkpoints/latest.pt"
     )
+    assert discovered["label"] == "NewPol latest"
+    assert discovered["is_latest"] is True
+    assert discovered["show_by_default"] is True
+    assert all(len(model["label"].split()) <= 3 for model in models)
