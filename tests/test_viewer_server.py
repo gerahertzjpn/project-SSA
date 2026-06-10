@@ -95,10 +95,13 @@ def test_viewer_server_discovers_policy_checkpoints(tmp_path: Path, monkeypatch)
         model for model in models
         if model["id"] == "policy:training_runs/new_policy/checkpoints/latest.pt"
     )
-    assert discovered["label"] == "NewPol latest"
+    # discovered training-run checkpoints are demoted to hidden legacy entries
+    # (population-18 nets are the first-class policy models now)
+    assert discovered["label"] == "NewPol latest (legacy)"
+    assert discovered["kind"] == "legacy"
     assert discovered["is_latest"] is True
-    assert discovered["show_by_default"] is True
-    assert all(len(model["label"].split()) <= 3 for model in models)
+    assert discovered["show_by_default"] is False
+    assert all(len(model["label"].split()) <= 4 for model in models)
 
 
 def test_viewer_server_exposes_team_policy_states_as_assignable_models(tmp_path: Path, monkeypatch):
@@ -142,6 +145,7 @@ def test_viewer_server_exposes_team_policy_states_as_assignable_models(tmp_path:
     assert policy_models["A1"]["id"].endswith("#A1")
     assert policy_models["A2"]["id"].endswith("#A2")
     assert policy_models["A3"]["id"].endswith("#A3")
-    assert policy_models["A2"]["label"] == "TeaPol latest A2"
-    assert policy_models["A2"]["show_by_default"] is True
-    assert all(len(model["label"].split()) <= 3 for model in policy_models.values())
+    # discovered checkpoints are demoted to hidden legacy entries (see above)
+    assert policy_models["A2"]["label"] == "TeaPol latest A2 (legacy)"
+    assert policy_models["A2"]["show_by_default"] is False
+    assert all(len(model["label"].split()) <= 4 for model in policy_models.values())

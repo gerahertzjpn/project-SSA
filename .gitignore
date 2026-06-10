@@ -16,3 +16,6 @@ replays_*/
 analysis/
 training_runs/
 leagues/
+/regionals/
+/data/regionals/
+viewer_logs/

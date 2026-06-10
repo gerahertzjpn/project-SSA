@@ -8,6 +8,10 @@ const MAX_EXPANDED_UNITS = 260;
 const HANDOFF_BACKFILL_DISTANCE = 135;
 const CORE_HP = 80;
 const ATTACK_PREVIEW_ALPHA = 0.5;
+// Mirror the engine's melee/ranged split (combat2d `_uses_melee_engagement`,
+// combat `_uses_melee_engagement`: range <= 1.25 fights in contact). Units above
+// this threshold shoot from a distance, so their attack lines render as ranged.
+const MELEE_RANGE_THRESHOLD = 1.25;
 const SPRITE_EASE = {
   moving: 7.0,
   battle: 8.5,
@@ -412,13 +416,18 @@ function populatePlayerConfigGrid() {
       model.dataset.playerModel = playerId;
       model.setAttribute("aria-label", `${playerId} model`);
       populateModelOptions(model, selectedModels[playerId] || defaultModel);
-      model.addEventListener("change", validateGeneratorControls);
 
       const faction = document.createElement("select");
       faction.dataset.playerFaction = playerId;
       faction.setAttribute("aria-label", `${playerId} faction`);
       populateFactionOptions(faction, selectedFactions[playerId] || "humans");
       faction.addEventListener("change", validateGeneratorControls);
+
+      model.addEventListener("change", () => {
+        syncFactionLock(model, faction);
+        validateGeneratorControls();
+      });
+      syncFactionLock(model, faction);
 
       row.append(slot, model, faction);
       rows.appendChild(row);
@@ -452,6 +461,22 @@ function visibleModels() {
     || (model.show_by_default !== false && model.is_latest)
   ));
   return latest.length ? latest : [...models];
+}
+
+function factionForModel(modelId) {
+  return appState.models.find((m) => m.id === modelId)?.faction || null;
+}
+
+function syncFactionLock(modelSelect, factionSelect) {
+  const faction = factionForModel(modelSelect.value);
+  if (faction) {
+    factionSelect.value = faction;
+    factionSelect.disabled = true;
+    factionSelect.title = `Locked to ${FACTION_LABELS[faction] || faction} by selected model`;
+  } else {
+    factionSelect.disabled = false;
+    factionSelect.title = "";
+  }
 }
 
 function populateFactionOptions(select, selectedFaction) {
@@ -509,6 +534,9 @@ function applyTeamConfig(teamId) {
     }
     if (factionSelect && faction) {
       factionSelect.value = faction;
+    }
+    if (modelSelect && factionSelect) {
+      syncFactionLock(modelSelect, factionSelect);
     }
   }
   validateGeneratorControls();
@@ -775,7 +803,7 @@ function visualTrackDesired(ticks, tickIndex, tick, nextTick, alpha) {
   const previousById = new Map(normalizeVisualUnits(ticks?.[tickIndex - 1]?.visual_units || []).map((unit) => [unit.id, unit]));
   const nextById = new Map(normalizeVisualUnits(nextTick?.visual_units || []).map((unit) => [unit.id, unit]));
   const deathIds = deathUnitIds(tick);
-  return current.map((unit) => {
+  const mapped = current.map((unit) => {
     if (deathIds.has(unit.id)) {
       return {
         ...unit,
@@ -813,6 +841,7 @@ function visualTrackDesired(ticks, tickIndex, tick, nextTick, alpha) {
     };
     return interpolated;
   });
+  return arrangeCoreBattlePlates(mapped);
 }
 
 function deathUnitIds(tick) {
@@ -986,6 +1015,8 @@ function battleDesired(tick, nextTick, alpha) {
         layer: "battle",
         battleId: battle.battle_id,
         uid: unit.uid,
+        range: unit.range,
+        rangeMap: unit.rangeMap,
       });
     }
   }
@@ -1192,7 +1223,26 @@ function drawUnitShape(g, type, color, size) {
     drawLordShape(g, color, size);
     return;
   }
+  if (BUILDING_TYPE_CODES.has(type)) {
+    drawPlateShape(g, type, color, size);
+    return;
+  }
   g.circle(0, 0, size).fill(color).stroke({ color: 0x101419, width: 1.2 });
+}
+
+// Buildings fight as defensive "plates" shielding the core (engine gates a core
+// assault through them layer by layer). Draw them as a team-edged plate so the
+// in-battle sprite reads as a structure, not a generic blob; turrets keep a barrel.
+function drawPlateShape(g, type, color, size) {
+  const w = size * 1.7;
+  const h = size * 1.05;
+  g.roundRect(-w, -h, w * 2, h * 2, 3).fill(COLORS.buildingBg).stroke({ color, width: 1.8 });
+  if (type === "T") {
+    g.moveTo(0, 0).lineTo(w * 1.15, 0).stroke({ color, width: 2.4 });
+    g.circle(0, 0, size * 0.5).fill(color);
+    return;
+  }
+  g.circle(0, 0, size * 0.42).fill(color);
 }
 
 function drawLordShape(g, color, size) {
@@ -1241,19 +1291,128 @@ function drawAttackLines(tick, battle, nextTick, alpha) {
     }
   }
   const lines = new Graphics();
-  for (const attack of attacks.slice(0, 64)) {
+  for (const attack of attacks.slice(0, 96)) {
     const from = byUid.get(Number(attack[0]));
     const to = byUid.get(Number(attack[1]));
     if (!from || !to) {
       continue;
     }
+    const ranged = isRangedAttacker(from, attack[4]);
+    // Heavier hits read heavier: scale toward a full-weight line around ~12 dmg
+    // (a single ranger volley), the same per-shot damage the engine queues.
+    const weight = Math.min(1, Math.max(0, Number(attack[2]) || 0) / 12);
+    const baseWidth = ranged ? 1.0 : 1.5;
+    const baseAlpha = ranged ? 0.5 : 0.7;
     lines.moveTo(from.x, from.y).lineTo(to.x, to.y).stroke({
       color: teamColor(from.target.team),
-      width: displayUnitCode(attack[4]) === "R" ? 1.1 : 1.6,
-      alpha: (displayUnitCode(attack[4]) === "R" ? 0.52 : 0.72) * visualEvent.alpha,
+      width: baseWidth + weight * (ranged ? 1.3 : 1.7),
+      alpha: Math.min(0.95, baseAlpha + weight * 0.22) * visualEvent.alpha,
     });
   }
   layers.effects.addChild(lines);
+}
+
+// Fallback when a sprite has no formation range yet (e.g. mid-handoff): codes the
+// engine resolves as melee (combat range <= 1.25). Everything else shoots.
+const MELEE_TYPE_CODES = new Set(["V", "S", "SW", "BR", "WK", "DR"]);
+
+// Building unit-type codes (see _unit_type_code in engine.py). In an active
+// battle these are emitted as combatants stacked on the node centre; the viewer
+// fans them out as shield plates in front of the core so the layering reads.
+const BUILDING_TYPE_CODES = new Set(["T", "BO", "PW", "LF", "EC", "T1", "T2"]);
+const PLATE_FRONT_GAP = 11;      // core -> first plate, world units
+const PLATE_LAYER_SPACING = 9;   // between successive plate layers
+const PLATE_CORE_BACKSET = 5;    // nudge the core away from the attackers
+
+function buildingSlotIndexFromId(id) {
+  // visual_id format: building:<node>:<slot>:<TYPE>
+  const parts = String(id || "").split(":");
+  if (parts[0] === "building" && parts.length >= 4) {
+    const slot = Number(parts[2]);
+    return Number.isFinite(slot) ? slot : 0;
+  }
+  return 0;
+}
+
+// Direction the assault comes from: cores sit on the map edges, attackers push
+// in from the middle, so plates face the map centre. Stable per node (no jitter).
+function plateThreatDir(anchor) {
+  const dx = WORLD_W / 2 - anchor[0];
+  const dy = WORLD_H / 2 - anchor[1];
+  const len = Math.hypot(dx, dy);
+  if (len < 1e-3) {
+    return [1, 0];
+  }
+  return [dx / len, dy / len];
+}
+
+// Pure presentation: re-place building/core battle sprites (all stacked on the
+// node centre by the engine) as a layered shield — outermost slot nearest the
+// attackers (it dies first), core behind. Combat math is untouched; attack lines
+// follow these sprites, so hits visibly land on the front plate.
+function arrangeCoreBattlePlates(items) {
+  const groups = new Map();
+  for (const item of items) {
+    if (!item.battleId || !isBattleLayer(item.layer)) {
+      continue;
+    }
+    const isCore = item.type === "C";
+    const isBuilding = BUILDING_TYPE_CODES.has(item.type);
+    if (!isCore && !isBuilding) {
+      continue;
+    }
+    const key = `${item.battleId}|${item.team}`;
+    let group = groups.get(key);
+    if (!group) {
+      group = { core: null, plates: [] };
+      groups.set(key, group);
+    }
+    if (isCore) {
+      group.core = item;
+    } else {
+      group.plates.push(item);
+    }
+  }
+
+  for (const group of groups.values()) {
+    if (!group.plates.length) {
+      continue;
+    }
+    const anchor = group.core
+      ? [group.core.x, group.core.y]
+      : (nodePoint(group.plates[0].locationId) || [group.plates[0].x, group.plates[0].y]);
+    const dir = plateThreatDir(anchor);
+    const perp = [-dir[1], dir[0]];
+    group.plates.sort((a, b) => buildingSlotIndexFromId(b.id) - buildingSlotIndexFromId(a.id));
+    const bySlot = new Map();
+    for (const plate of group.plates) {
+      const slot = buildingSlotIndexFromId(plate.id);
+      bySlot.set(slot, (bySlot.get(slot) || 0) + 1);
+    }
+    const placedPerSlot = new Map();
+    group.plates.forEach((plate, layer) => {
+      const slot = buildingSlotIndexFromId(plate.id);
+      const lateralIndex = placedPerSlot.get(slot) || 0;
+      placedPerSlot.set(slot, lateralIndex + 1);
+      const lateral = (lateralIndex - (bySlot.get(slot) - 1) / 2) * PLATE_LAYER_SPACING * 1.4;
+      const along = PLATE_FRONT_GAP + layer * PLATE_LAYER_SPACING;
+      plate.x = anchor[0] + dir[0] * along + perp[0] * lateral;
+      plate.y = anchor[1] + dir[1] * along + perp[1] * lateral;
+    });
+    if (group.core) {
+      group.core.x = anchor[0] - dir[0] * PLATE_CORE_BACKSET;
+      group.core.y = anchor[1] - dir[1] * PLATE_CORE_BACKSET;
+    }
+  }
+  return items;
+}
+
+function isRangedAttacker(sprite, typeCode) {
+  const range = Number(sprite?.target?.range);
+  if (Number.isFinite(range) && range > 0) {
+    return range > MELEE_RANGE_THRESHOLD;
+  }
+  return !MELEE_TYPE_CODES.has(displayUnitCode(typeCode));
 }
 
 function battleTickEventForVisual(tick, nextTick, battle, alpha) {
@@ -1334,6 +1493,9 @@ function drawStaticMap() {
 function drawNodeBuildings(nodeId, node, tick, x, y, radius) {
   const buildings = (node?.buildings || [])
     .filter((building) => Number(building?.max_hp ?? building?.hp ?? 0) > 0)
+    // A complete building that is fighting renders as a battle plate at the core
+    // (see arrangeCoreBattlePlates); skip its corner marker so it is not duplicated.
+    .filter((building) => !buildingFightingInBattle(tick, nodeId, building))
     .slice(0, 3);
   if (!buildings.length) {
     return;
@@ -1343,6 +1505,26 @@ function drawNodeBuildings(nodeId, node, tick, x, y, radius) {
     const [ox, oy] = buildingSlotOffset(index, buildings.length, radius, nodeId);
     drawBuildingMarker(building, x + ox, y + oy, index);
   }
+}
+
+function buildingFightingInBattle(tick, nodeId, building) {
+  if (!building?.complete) {
+    return false;
+  }
+  const owner = building.owner;
+  const typeCode = displayUnitCode(building.building_type);
+  return (tick?.visual_units || []).some((unit) => {
+    if (!isBattleLayer(unit.layer || unit.state || "")) {
+      return false;
+    }
+    if ((unit.location_id || unit.locationId) !== nodeId) {
+      return false;
+    }
+    if ((unit.owner || unit.team) !== owner) {
+      return false;
+    }
+    return displayUnitCode(unit.unit_type || unit.type) === typeCode;
+  });
 }
 
 function buildingSlotOffset(index, count, radius, nodeId) {
@@ -1831,7 +2013,14 @@ function displayUnitCode(type) {
   if (value === "NEUTRAL" || value === "N") return "N";
   if (value === "CORE" || value === "C") return "C";
   if (value === "BARON" || value === "LORD" || value === "B" || value === "L") return "L";
-  return value.slice(0, 1) || "?";
+  if (value === "TURRET" || value === "T") return "T";
+  if (value === "BOOSTER" || value === "BO") return "BO";
+  if (value === "POWER" || value === "PW") return "PW";
+  if (value === "LIFE" || value === "LF") return "LF";
+  if (value === "ECONOMY_COLLECTOR" || value === "EC") return "EC";
+  if (value === "TECH_1" || value === "T1") return "T1";
+  if (value === "TECH_2" || value === "T2") return "T2";
+  return value || "?";
 }
 
 function teamColor(team) {

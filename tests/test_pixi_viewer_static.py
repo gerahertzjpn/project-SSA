@@ -119,3 +119,26 @@ def test_pixi_viewer_layout_is_fullscreen_hud():
     assert ".inspect-panel" in styles
     assert "position: absolute" in styles
     assert "overflow: hidden" in styles
+
+
+def test_regionals_page_assets_exist_and_are_wired():
+    page = (VIEWER_PIXI / "regionals.html").read_text(encoding="utf-8")
+    assert '<link rel="stylesheet" href="./league.css' in page
+    assert '<link rel="stylesheet" href="./regionals.css' in page
+    assert '<script type="module" src="./regionals.js' in page
+    assert (VIEWER_PIXI / "regionals.css").exists()
+
+    script = (VIEWER_PIXI / "regionals.js").read_text(encoding="utf-8")
+    for endpoint in (
+        "/api/regionals/templates",
+        "/api/regionals/list",
+        "/api/regionals/create",
+        "/api/regionals/players",
+        "/api/regionals/franchises",
+    ):
+        assert endpoint in script, endpoint
+    assert "commentary" in script
+    assert "bracket" in script
+
+    home = (VIEWER_PIXI / "home.html").read_text(encoding="utf-8")
+    assert './regionals.html' in home

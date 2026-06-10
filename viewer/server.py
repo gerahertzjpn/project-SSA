@@ -38,6 +38,22 @@ from src.league import (
     encounter_detail,
     list_templates,
 )
+from src.regionals import (
+    RegionalsError,
+    add_commentary as regionals_add_commentary,
+    advance_day as regionals_advance_day,
+    create_regionals,
+    default_llm as regionals_default_llm,
+    encounter_detail as regionals_encounter_detail,
+    ensure_franchise_store,
+    ensure_player_store,
+    list_regionals,
+    list_templates as regionals_list_templates,
+    llm_unavailable_reason,
+    load_regionals,
+    player_cards,
+    regionals_public_view,
+)
 
 
 REPLAY_DIR = ROOT / "replays_viewer_debug_smoke"
@@ -45,6 +61,21 @@ MAX_UI_RUNS = 100
 MAX_POLICY_CHECKPOINT_SCAN = 120
 MAX_DISCOVERED_POLICY_MODELS = 30
 REPLAY_NAME = re.compile(r"^replay_\d+\.json$")
+POPULATION_18_REGISTRY = ROOT / "training_runs/population_18_v1/registry.json"
+
+_RECIPE_LABEL = {
+    "baseline": "Baseline",
+    "low_entropy": "LowEnt",
+    "high_entropy": "HighEnt",
+    "fast_lr": "FastLR",
+    "slow_explore": "SlowExp",
+    "alt_mix": "AltMix",
+}
+_FACTION_LABEL = {
+    "humans": "Humans",
+    "infected": "Infected",
+    "robots": "Robots",
+}
 SERVER_STARTED_AT = int(time.time())
 SERVER_COMMIT = current_code_commit()
 SERVER_SOURCE_FINGERPRINT = ""
@@ -72,51 +103,97 @@ def available_models() -> list[dict]:
     models = [
         baseline_model("random", "Random Bot"),
         baseline_model("scripted", "Scripted Bot"),
-        baseline_model("scripted_core", "Core Bot"),
-        baseline_model("scripted_core_raider", "Raider Core"),
-        baseline_model("scripted_core_bmp", "BMP Core"),
+    ]
+    models.extend(population18_models())
+    models.extend(legacy_models())
+    return models
+
+
+def population18_models() -> list[dict]:
+    if not POPULATION_18_REGISTRY.exists():
+        return []
+    try:
+        data = json.loads(POPULATION_18_REGISTRY.read_text(encoding="utf-8"))
+        entries = data.get("entries", [])
+    except Exception:
+        return []
+    result = []
+    for entry in entries:
+        if entry.get("status") != "trained":
+            continue
+        checkpoint_path = ROOT / entry["checkpoint"]
+        if not checkpoint_path.exists():
+            continue
+        net_id = entry["net_id"]
+        faction = entry.get("faction", "")
+        recipe = entry.get("recipe", "")
+        num = net_id.rsplit("_", 1)[-1] if "_" in net_id else net_id
+        faction_label = _FACTION_LABEL.get(faction, faction.title())
+        recipe_label = _RECIPE_LABEL.get(recipe, recipe)
+        result.append({
+            "id": policy_model_id_for_checkpoint(checkpoint_path),
+            "label": f"{faction_label} {num} · {recipe_label}",
+            "kind": "policy",
+            "checkpoint": entry["checkpoint"],
+            "updated_at": int(checkpoint_path.stat().st_mtime),
+            "is_latest": True,
+            "show_by_default": True,
+            "faction": faction,
+        })
+    return result
+
+
+def legacy_models() -> list[dict]:
+    models: list[dict] = [
+        legacy_baseline("scripted_core", "Core Bot (legacy)"),
+        legacy_baseline("scripted_core_raider", "Raider Core (legacy)"),
+        legacy_baseline("scripted_core_bmp", "BMP Core (legacy)"),
     ]
     seen_checkpoints: set[Path] = set()
     team_checkpoint = default_team_policy_checkpoint()
     if team_checkpoint is not None:
+        seen_checkpoints.add(team_checkpoint.resolve())
         models.append({
             "id": "ppo_team_scripted_v1",
-            "label": "Team Best",
-            "kind": "policy",
+            "label": "Team Best (legacy)",
+            "kind": "legacy",
             "checkpoint": checkpoint_display_path(team_checkpoint),
             "is_latest": False,
             "show_by_default": False,
         })
     latest_team_checkpoint = ROOT / "training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt"
     if latest_team_checkpoint.exists() and checkpoint_is_compatible(latest_team_checkpoint):
+        seen_checkpoints.add(latest_team_checkpoint.resolve())
         models.append({
             "id": "ppo_team_scripted_v1_latest",
-            "label": "Team Latest",
-            "kind": "policy",
+            "label": "Team Latest (legacy)",
+            "kind": "legacy",
             "checkpoint": checkpoint_display_path(latest_team_checkpoint),
             "updated_at": int(latest_team_checkpoint.stat().st_mtime),
-            "is_latest": True,
+            "is_latest": False,
             "show_by_default": False,
         })
     best_checkpoint = default_policy_checkpoint()
     if best_checkpoint is not None:
+        seen_checkpoints.add(best_checkpoint.resolve())
         models.append({
             "id": "ppo_random_v1",
-            "label": "Random Best",
-            "kind": "policy",
+            "label": "Random Best (legacy)",
+            "kind": "legacy",
             "checkpoint": checkpoint_display_path(best_checkpoint),
             "is_latest": False,
             "show_by_default": False,
         })
     latest_checkpoint = ROOT / "training_runs/sprint2_random_first_real_v1/checkpoints/latest.pt"
     if latest_checkpoint.exists() and checkpoint_is_compatible(latest_checkpoint):
+        seen_checkpoints.add(latest_checkpoint.resolve())
         models.append({
             "id": "ppo_random_v1_latest",
-            "label": "Random Latest",
-            "kind": "policy",
+            "label": "Random Latest (legacy)",
+            "kind": "legacy",
             "checkpoint": checkpoint_display_path(latest_checkpoint),
             "updated_at": int(latest_checkpoint.stat().st_mtime),
-            "is_latest": True,
+            "is_latest": False,
             "show_by_default": False,
         })
     for checkpoint in discover_policy_checkpoints():
@@ -124,7 +201,11 @@ def available_models() -> list[dict]:
         if resolved in seen_checkpoints:
             continue
         seen_checkpoints.add(resolved)
-        models.extend(policy_models_for_checkpoint(checkpoint))
+        for m in policy_models_for_checkpoint(checkpoint):
+            m["kind"] = "legacy"
+            m["show_by_default"] = False
+            m["label"] = m["label"] + " (legacy)"
+            models.append(m)
     return models
 
 
@@ -135,6 +216,16 @@ def baseline_model(model_id: str, label: str) -> dict:
         "kind": "baseline",
         "is_latest": True,
         "show_by_default": True,
+    }
+
+
+def legacy_baseline(model_id: str, label: str) -> dict:
+    return {
+        "id": model_id,
+        "label": label,
+        "kind": "legacy",
+        "is_latest": False,
+        "show_by_default": False,
     }
 
 
@@ -407,6 +498,65 @@ def league_job_status(job_id: str) -> dict:
         return dict(job, job_id=job_id)
 
 
+# --------------------------------------------------------------------------- #
+# Regionals endpoints
+# --------------------------------------------------------------------------- #
+
+REGIONALS_JOBS: dict[str, dict] = {}
+REGIONALS_JOBS_LOCK = threading.Lock()
+REGIONALS_ENDPOINT = re.compile(
+    r"^/api/regionals/(?P<rid>[^/]+)(?:/(?P<action>encounter|advance|commentary))?(?:/(?P<arg>\d+))?$")
+
+
+def start_regionals_job(payload: dict) -> dict:
+    info = server_info()
+    if info["stale"]:
+        raise RuntimeError(
+            f"Viewer API is running old code ({info['commit']}); restart viewer for {info['current_commit']}"
+        )
+    name = str(payload.get("name") or "Regionals").strip() or "Regionals"
+    template_id = str(payload.get("template") or "regionals_v1")
+    seed = int(payload.get("seed", 0) or 0)
+
+    job_id = uuid.uuid4().hex
+    with REGIONALS_JOBS_LOCK:
+        REGIONALS_JOBS[job_id] = {"status": "running", "done": 0, "total": 0,
+                                  "phase": "draft", "regionals_id": None, "error": None}
+
+    def progress(done: int, total: int, phase: str) -> None:
+        with REGIONALS_JOBS_LOCK:
+            job = REGIONALS_JOBS.get(job_id)
+            if job is not None:
+                job["done"] = done
+                job["total"] = total
+                job["phase"] = phase
+
+    def worker() -> None:
+        try:
+            llm = regionals_default_llm()
+            data = create_regionals(
+                name=name, template_id=template_id, seed=seed,
+                llm=llm, progress_cb=progress,
+            )
+            with REGIONALS_JOBS_LOCK:
+                REGIONALS_JOBS[job_id].update(status="done", regionals_id=data["id"])
+        except Exception as error:  # noqa: BLE001 - surfaced to the client
+            traceback.print_exc()
+            with REGIONALS_JOBS_LOCK:
+                REGIONALS_JOBS[job_id].update(status="error", error=str(error))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {"job_id": job_id, "status": "running", "llm": llm_unavailable_reason() is None}
+
+
+def regionals_job_status(job_id: str) -> dict:
+    with REGIONALS_JOBS_LOCK:
+        job = REGIONALS_JOBS.get(job_id)
+        if job is None:
+            raise RegionalsError(f"Unknown regionals job: {job_id}")
+        return dict(job, job_id=job_id)
+
+
 class ViewerRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT), **kwargs)
@@ -452,7 +602,61 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/league/"):
             self._handle_league_get(path)
             return
+        if path == "/api/regionals/templates":
+            self._send_json({
+                "templates": regionals_list_templates(),
+                "llm_unavailable": llm_unavailable_reason(),
+                "server": server_info(),
+            })
+            return
+        if path == "/api/regionals/list":
+            self._send_json({"regionals": list_regionals(), "server": server_info()})
+            return
+        if path == "/api/regionals/players":
+            try:
+                store = ensure_player_store()
+                self._send_json({"players": player_cards(store)})
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error)}, status=400)
+            return
+        if path == "/api/regionals/franchises":
+            try:
+                store = ensure_franchise_store()
+                self._send_json({"franchises": list(store["franchises"].values())})
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error)}, status=400)
+            return
+        if path.startswith("/api/regionals/"):
+            self._handle_regionals_get(path)
+            return
         super().do_GET()
+
+    def _handle_regionals_get(self, path: str) -> None:
+        if path.startswith("/api/regionals/job/"):
+            job_id = path[len("/api/regionals/job/"):]
+            try:
+                self._send_json(regionals_job_status(job_id))
+            except RegionalsError as error:
+                self._send_json({"error": str(error)}, status=404)
+            return
+        match = REGIONALS_ENDPOINT.match(path)
+        if not match:
+            self.send_error(404, "Unknown regionals endpoint")
+            return
+        rid = match.group("rid")
+        action = match.group("action")
+        arg = match.group("arg")
+        try:
+            if action == "encounter" and arg is not None:
+                self._send_json({"encounter": regionals_encounter_detail(rid, int(arg))})
+            elif action is None:
+                self._send_json({"regionals": regionals_public_view(load_regionals(rid))})
+            else:
+                self.send_error(404, "Unknown regionals endpoint")
+        except RegionalsError as error:
+            self._send_json({"error": str(error)}, status=404)
+        except Exception as error:  # noqa: BLE001
+            self._send_json({"error": str(error)}, status=400)
 
     def _handle_league_get(self, path: str) -> None:
         if path.startswith("/api/league/job/"):
@@ -507,6 +711,32 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"league": advance_day(league_advance.group("league_id"))})
             except LeagueError as error:
                 self._send_json({"error": str(error)}, status=404)
+            except Exception as error:
+                self._send_json({"error": str(error)}, status=400)
+            return
+        if path == "/api/regionals/create":
+            try:
+                payload = self._read_json()
+                self._send_json(start_regionals_job(payload))
+            except RuntimeError as error:
+                self._send_json({"error": str(error), "server": server_info()}, status=409)
+            except Exception as error:
+                self._send_json({"error": str(error), "server": server_info()}, status=400)
+            return
+        regionals_post = re.match(r"^/api/regionals/(?P<rid>[^/]+)/(?P<action>advance|commentary)$", path)
+        if regionals_post:
+            rid = regionals_post.group("rid")
+            action = regionals_post.group("action")
+            try:
+                if action == "advance":
+                    self._send_json({"regionals": regionals_advance_day(rid)})
+                else:
+                    payload = self._read_json()
+                    llm = regionals_default_llm()
+                    entry = regionals_add_commentary(rid, payload, llm)
+                    self._send_json({"commentary": entry})
+            except RegionalsError as error:
+                self._send_json({"error": str(error)}, status=400)
             except Exception as error:
                 self._send_json({"error": str(error)}, status=400)
             return

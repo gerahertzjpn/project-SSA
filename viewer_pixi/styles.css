@@ -159,6 +159,12 @@ button:disabled {
   opacity: 0.46;
 }
 
+select:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  color: #8a9cb0;
+}
+
 .mini-field {
   display: grid;
   grid-template-columns: auto minmax(52px, 70px);

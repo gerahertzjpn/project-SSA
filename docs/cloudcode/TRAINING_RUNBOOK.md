@@ -1,5 +1,10 @@
 # TRAINING_RUNBOOK.md
 
+> Population-18 (текущая основная задача): подробный runbook запуска и
+> мониторинга — `docs/cloudcode/POPULATION_18_RUNBOOK.md`.
+> Запуск: `python scripts/train_population.py --run-dir training_runs/population_18_v1
+> --updates 400 --episodes-per-net 3 --workers 16 --checkpoint-interval 20`.
+
 ## Перед долгим обучением
 
 - [ ] data checks
