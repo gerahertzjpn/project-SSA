@@ -47,9 +47,20 @@ class TeamTrainingEnvConfig:
     death_time_win_reward_multiplier: float = 0.5
     shaping_weight: float = 0.02
     per_player_shaping: bool = False
+    # Per-player faction map {player_id: "humans"|"infected"|"robots"}. When None,
+    # make_initial_state defaults every player to "humans" (legacy behavior).
+    player_factions: Optional[dict] = None
+    # For opponent_bot="policy": map each opponent slot to a named policy_state
+    # inside the opponent checkpoint, e.g. {"B1": "humans_3"}. When a slot is not
+    # listed, PolicyBot falls back to its mirrored-slot lookup (legacy behavior).
+    opponent_policy_state_ids: Optional[dict] = None
 
     def __post_init__(self) -> None:
         self.controlled_players = tuple(self.controlled_players)
+        if self.player_factions is not None:
+            self.player_factions = dict(self.player_factions)
+        if self.opponent_policy_state_ids is not None:
+            self.opponent_policy_state_ids = dict(self.opponent_policy_state_ids)
         if not self.controlled_players:
             raise ValueError("TeamTrainingEnv requires at least one controlled player")
         teams = {team_of(player_id) for player_id in self.controlled_players}
@@ -98,12 +109,21 @@ class TeamTrainingEnv:
     def controlled_team(self) -> str:
         return team_of(self.controlled_players[0])
 
-    def reset(self, seed: Optional[int] = None) -> tuple[dict[str, np.ndarray], dict]:
+    def reset(
+        self,
+        seed: Optional[int] = None,
+        player_factions: Optional[dict] = None,
+    ) -> tuple[dict[str, np.ndarray], dict]:
         if seed is not None:
             self.config.seed = int(seed)
             self.rng = np.random.default_rng(self.config.seed)
+        if player_factions is not None:
+            self.config.player_factions = dict(player_factions)
 
-        self.state = make_initial_state(seed=self.config.seed)
+        self.state = make_initial_state(
+            seed=self.config.seed,
+            player_factions=self.config.player_factions,
+        )
         self.control_bots = {}
         bots = self._make_bots()
         self.engine = GameEngine(
@@ -299,12 +319,12 @@ class TeamTrainingEnv:
                 self.control_bots[player_id] = bot
                 bots[player_id] = bot
             elif team == self.controlled_team:
-                bots[player_id] = self._make_baseline_bot(player_id, team, self.config.ally_bot, index)
+                bots[player_id] = self._make_baseline_bot(player_id, team, self.config.ally_bot, index, is_opponent=False)
             else:
-                bots[player_id] = self._make_baseline_bot(player_id, team, self.config.opponent_bot, index)
+                bots[player_id] = self._make_baseline_bot(player_id, team, self.config.opponent_bot, index, is_opponent=True)
         return bots
 
-    def _make_baseline_bot(self, player_id: str, team: str, bot_type: str, index: int) -> Bot:
+    def _make_baseline_bot(self, player_id: str, team: str, bot_type: str, index: int, is_opponent: bool = False) -> Bot:
         if bot_type == "random":
             return RandomBot(player_id, team, seed=self.config.seed * 10 + index)
         scripted_variant = make_scripted_bot_variant(bot_type, player_id, team)
@@ -315,12 +335,16 @@ class TeamTrainingEnv:
                 raise ValueError("opponent_policy_checkpoint is required when opponent_bot='policy'")
             from src.bots.policy_bot import PolicyBot
 
+            policy_state_id = None
+            if is_opponent and self.config.opponent_policy_state_ids:
+                policy_state_id = self.config.opponent_policy_state_ids.get(player_id)
             return PolicyBot(
                 player_id,
                 team,
                 checkpoint_path=self.config.opponent_policy_checkpoint,
                 deterministic=self.config.opponent_policy_deterministic,
                 device="cpu",
+                policy_state_id=policy_state_id,
             )
         raise ValueError(f"Unknown baseline bot type: {bot_type}")
 
