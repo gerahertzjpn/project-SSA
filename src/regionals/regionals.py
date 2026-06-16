@@ -167,10 +167,14 @@ def create_regionals(
     player_store = ensure_player_store(players_store_path, registry_path, analysis_path)
     franchise_store = ensure_franchise_store(franchises_store_path)
     cards = player_cards(player_store)
-    specs = franchise_specs()
 
     seed = int(seed) if seed else int(time.time())
     rng = random.Random(seed)
+    # Draw this tournament's teams from the franchise pool (25). team_count<pool
+    # → a varying lineup each tournament; otherwise use the whole pool.
+    pool = franchise_specs()
+    team_count = int(template.get("team_count", len(pool)))
+    specs = rng.sample(pool, team_count) if 0 < team_count < len(pool) else pool
 
     def report(done: int, total: int, phase: str) -> None:
         if progress_cb:

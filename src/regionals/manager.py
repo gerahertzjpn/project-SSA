@@ -23,20 +23,6 @@ from src.training.spaces import (
     ORDER_WIN_PATH_DEFAULT,
 )
 
-# Persona-flavoured defaults — used as the no-LLM fallback AND as a strong prior
-# the LLM can override. Each franchise plays to its drafting philosophy.
-# (tempo, win_path, [role per position])
-PERSONA_DEFAULT_PLANS: dict[str, tuple[str, str, list[str]]] = {
-    "iron-falcons": ("aggressive", "core_rush", ["carry_push", "carry_push", "roam_objective"]),
-    "quantum-owls": ("balanced", "economy", ["tech_eco", "carry_push", "anchor_defend"]),
-    "crimson-pact": ("all_in", "baron_lord", ["carry_push", "roam_objective", "carry_push"]),
-    "northwind": ("turtle", "economy", ["anchor_defend", "tech_eco", "support_flex"]),
-    "solar-drift": ("balanced", "outlast", ["support_flex", "anchor_defend", "carry_push"]),
-    "black-lotus": ("aggressive", "economy", ["carry_push", "tech_eco", "roam_objective"]),
-}
-_GENERIC_DEFAULT = (ORDER_TEMPO_DEFAULT, ORDER_WIN_PATH_DEFAULT,
-                    [ORDER_ROLE_DEFAULT, ORDER_ROLE_DEFAULT, ORDER_ROLE_DEFAULT])
-
 MANAGER_SYSTEM_RULES = (
     "\n\nТы ставишь план на ОДИН матч для своей тройки. Главное правило: команда "
     "ВСЕГДА играет на победу — план это КАК играть, а не «проиграй ради стиля». "
@@ -48,12 +34,26 @@ MANAGER_SYSTEM_RULES = (
 )
 
 
-def persona_default_plan(franchise_id: str, player_ids: list[str]) -> dict:
-    tempo, win_path, roles = PERSONA_DEFAULT_PLANS.get(franchise_id, _GENERIC_DEFAULT)
+def _franchise_by_id() -> dict:
+    from src.regionals.franchises import FRANCHISES  # local import avoids cycles
+    return {f["franchise_id"]: f for f in FRANCHISES}
+
+
+def persona_default_plan(franchise, player_ids: list[str]) -> dict:
+    """In-character default plan from the franchise's own ``default_plan``.
+
+    ``franchise`` may be the franchise dict or its id. Scales to any pool size —
+    each franchise carries its plan (no hardcoded per-franchise table).
+    """
+    fr = franchise if isinstance(franchise, dict) else _franchise_by_id().get(franchise, {})
+    dp = fr.get("default_plan") or {}
+    tempo = dp.get("tempo", ORDER_TEMPO_DEFAULT)
+    win_path = dp.get("win_path", ORDER_WIN_PATH_DEFAULT)
+    roles = dp.get("roles") or []
     return {
         "tempo": tempo,
         "win_path": win_path,
-        "roles": {pid: roles[i] if i < len(roles) else ORDER_ROLE_DEFAULT
+        "roles": {pid: (roles[i] if i < len(roles) else ORDER_ROLE_DEFAULT)
                   for i, pid in enumerate(player_ids)},
         "rationale": "default-by-persona",
     }
@@ -82,8 +82,7 @@ def match_plan(
     compact, caller-rendered summary (own roster, opponent, series score, recent
     results). Falls back to the persona default on any LLM failure or absence.
     """
-    fid = franchise.get("franchise_id", "")
-    fallback = persona_default_plan(fid, player_ids)
+    fallback = persona_default_plan(franchise, player_ids)
     if llm is None:
         return fallback
     try:

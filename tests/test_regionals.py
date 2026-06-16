@@ -230,7 +230,10 @@ def test_elo_impact_is_bounded_and_directional():
 def _draft_setup(paths):
     store = ensure_player_store(paths["players_store_path"], paths["registry_path"],
                                 paths["analysis_path"])
-    return get_template("regionals_v1"), franchise_specs(), player_cards(store)
+    template = get_template("regionals_v1")
+    # Franchises are a pool (25); a tournament drafts team_count of them.
+    specs = franchise_specs()[: template["team_count"]]
+    return template, specs, player_cards(store)
 
 
 def test_draft_structure_and_balance(paths):
@@ -493,4 +496,7 @@ def test_second_tournament_accumulates_career(paths):
                                 paths["analysis_path"])
     assert all(p["tournaments"] == 2 for p in store["players"].values())
     franchises = ensure_franchise_store(paths["franchises_store_path"])["franchises"]
-    assert all(f["seasons"] == 2 for f in franchises.values())
+    # Franchises are a 25-pool; 6 play per tournament → 2 tournaments = 12 seasons,
+    # spread across whichever franchises were drawn (each played one accrues a season).
+    assert sum(f["seasons"] for f in franchises.values()) == 2 * 6
+    assert all(f["seasons"] <= 2 for f in franchises.values())
