@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 FORK_MIN_STEPS = 4_000_000
+# Absolute floor for ANY single training run, regardless of op (owner rule).
+MIN_TRAINING_STEPS = 800_000
 
 # --------------------------------------------------------------------------- #
 # Cards — the manager-facing definition of each training operation
@@ -35,7 +37,7 @@ TRAINING_CARDS: dict[str, dict] = {
         "efficiency": "Высокая на первых шагах, затухает при насыщении.",
         "requires": "1 цель + шаги.",
         "who_can_be_chosen": ["player", "coach"],
-        "min_steps": 250_000,
+        "min_steps": 800_000,
         "recommended_steps": 1_000_000,
         "validation": "Δ винрейт/netElo против фикс. гонтлета; нет переобучения под одного.",
     },
@@ -46,7 +48,7 @@ TRAINING_CARDS: dict[str, dict] = {
         "efficiency": "Средняя; точечно поднимает матчапы против меты.",
         "requires": "1 цель + список мета-оппонентов (берём топ сезона автоматически).",
         "who_can_be_chosen": ["player", "coach"],
-        "min_steps": 500_000,
+        "min_steps": 800_000,
         "recommended_steps": 1_500_000,
         "validation": "Винрейт против меты ДО/ПОСЛЕ + guard: нет регресса против общего пула.",
     },
@@ -57,7 +59,7 @@ TRAINING_CARDS: dict[str, dict] = {
         "efficiency": "Высокая для слаженности; не растит соло-скилл.",
         "requires": "Ростер из 3 (стартовая тройка).",
         "who_can_be_chosen": ["roster"],
-        "min_steps": 750_000,
+        "min_steps": 800_000,
         "recommended_steps": 2_500_000,
         "validation": "Командный винрейт именно этой тройки против эталонных троек.",
     },
@@ -81,7 +83,7 @@ TRAINING_CARDS: dict[str, dict] = {
         "efficiency": "Средняя; меняет характер игры, не обязательно винрейт.",
         "requires": "1 цель + выбранный стиль (tempo/win_path).",
         "who_can_be_chosen": ["player", "coach"],
-        "min_steps": 500_000,
+        "min_steps": 800_000,
         "recommended_steps": 1_000_000,
         "validation": "Поведенческие метрики сдвинулись как задумано И винрейт не упал.",
     },
@@ -93,8 +95,8 @@ TRAINING_CARDS: dict[str, dict] = {
         "efficiency": "Средняя; меняет управляемость под тактику.",
         "requires": "1 цель + желаемое направление послушания.",
         "who_can_be_chosen": ["player"],
-        "min_steps": 250_000,
-        "recommended_steps": 750_000,
+        "min_steps": 800_000,
+        "recommended_steps": 800_000,
         "validation": "order-alignment Φ растёт в нужную сторону, винрейт стабилен.",
     },
 }
@@ -118,6 +120,9 @@ def card_line(op: str) -> str:
 def validate_request(op: str, target: dict, total_steps: int) -> None:
     """Check an op request against its card before execution."""
     c = card(op)
+    if total_steps < MIN_TRAINING_STEPS:
+        raise ValueError(f"absolute minimum is {MIN_TRAINING_STEPS} steps per training, "
+                         f"got {total_steps}")
     if total_steps < c["min_steps"]:
         raise ValueError(f"{op}: need >= {c['min_steps']} steps, got {total_steps}")
     kind = (target or {}).get("kind")

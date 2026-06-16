@@ -23,7 +23,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from src.world.training_ops import ENABLED_OPS as TRAINING_TYPES  # A–F ops (single source)
+from src.world.training_ops import (  # A–F ops + the absolute step floor (single source)
+    ENABLED_OPS as TRAINING_TYPES,
+    MIN_TRAINING_STEPS,
+)
 
 DEFAULT_SLOT_STEPS = 1_000_000
 FORK_MIN_STEPS = 4_000_000
@@ -134,6 +137,8 @@ def request_spend(world: dict, team_id: str, spend_type: str, cert_ids: list[str
     if not chosen:
         raise ValueError("no certificates selected")
     total_steps = sum(c["steps"] for c in chosen)
+    if total_steps < MIN_TRAINING_STEPS:
+        raise ValueError(f"absolute minimum {MIN_TRAINING_STEPS} steps per training; got {total_steps}")
     if spend_type == "create_player" and total_steps < FORK_MIN_STEPS:
         raise ValueError(f"create_player needs >= {FORK_MIN_STEPS} steps; got {total_steps}")
 
