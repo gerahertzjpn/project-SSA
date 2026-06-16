@@ -235,6 +235,7 @@ def run_match(
     pretty_replay: bool = False,
     player_models: Optional[dict[str, str]] = None,
     player_factions: Optional[dict[str, str]] = None,
+    orders: Optional[dict] = None,
 ) -> MatchResult:
     profile = generation_profile(mode)
     if profile.save_replay and replay_path is None:
@@ -252,6 +253,10 @@ def run_match(
         record_trace=profile.record_trace,
         record_replay=profile.record_replay,
     )
+    # LLM-manager per-match game plan (per-player order overlay). Read by the
+    # policy nets via obs["order"]; harmless for nets trained without the channel.
+    if orders:
+        engine.orders = dict(orders)
     winner = engine.run()
 
     if profile.save_replay and replay_path:
@@ -268,6 +273,7 @@ def run_match(
                 "map2d": map2d_replay_meta(),
                 "player_models": dict(player_models or {}),
                 "player_factions": dict(player_factions or {}),
+                "manager_orders": dict(orders or {}),
                 "winner_type": state.winner_type,
                 "core_combat_damage": round(state.core_combat_damage, 3),
                 "core_damage_by_team": {

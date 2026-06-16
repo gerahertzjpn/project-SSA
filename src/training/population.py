@@ -96,6 +96,11 @@ class NetSpec:
     clip_coef: float
     gae_lambda: float
     hidden_size: int
+    # "Obedience": per-net order-shaping weight (how strongly the manager's order
+    # bends this net). NOT a hand-set dial — drawn as a natural spread per net so
+    # loyalists and mavericks emerge across the population (see spec). Part of the
+    # genotype/uniqueness hash; win-neutral so it isn't selected to fixation.
+    obedience: float = 0.5
 
     def genotype_signature(self) -> dict:
         """Normalized, order-stable description used for the uniqueness hash."""
@@ -110,6 +115,7 @@ class NetSpec:
             "entropy_coef": self.entropy_coef,
             "clip_coef": self.clip_coef,
             "gae_lambda": self.gae_lambda,
+            "obedience": round(float(self.obedience), 3),
             "recipe": self.recipe,
             "seed": self.seed,
         }
@@ -126,20 +132,29 @@ def build_default_population() -> list[NetSpec]:
         base = FACTION_SEED_BASE[faction]
         for index in range(NETS_PER_FACTION):
             recipe = DEFAULT_RECIPES[index % len(DEFAULT_RECIPES)]
+            seed = base + index + 1
             nets.append(
                 NetSpec(
                     net_id=f"{faction}_{index + 1}",
                     faction=faction,
-                    seed=base + index + 1,
+                    seed=seed,
                     recipe=recipe.name,
                     learning_rate=recipe.learning_rate,
                     entropy_coef=recipe.entropy_coef,
                     clip_coef=recipe.clip_coef,
                     gae_lambda=recipe.gae_lambda,
                     hidden_size=recipe.hidden_size,
+                    obedience=_natural_obedience(seed),
                 )
             )
     return nets
+
+
+def _natural_obedience(seed: int) -> float:
+    """Per-net obedience drawn from each net's own seed — a natural spread over
+    the full [0, 1] spectrum, so the population organically holds both loyalists
+    and mavericks (not a hand-painted ladder)."""
+    return float(round(np.random.default_rng(seed * 7919 + 13).uniform(0.0, 1.0), 3))
 
 
 def assert_population_unique(nets: list[NetSpec]) -> None:
@@ -333,6 +348,14 @@ def _run_episode_collect(
     }
     slot_to_net = {slot: net_id for slot, net_id in zip(CONTROLLED_SLOTS, plan.controlled)}
 
+    # Per-net obedience: each controlled net's genotype obedience scales how
+    # strongly the order bends it (× a global weight that can disable the channel).
+    global_order_weight = float(config_view.get("order_shaping_weight", 0.5))
+    obedience_by_slot = {
+        slot: float(spec[net_id].obedience) * global_order_weight
+        for slot, net_id in slot_to_net.items()
+    }
+
     env_config = TeamTrainingEnvConfig(
         controlled_players=CONTROLLED_SLOTS,
         seed=plan.seed,
@@ -347,7 +370,7 @@ def _run_episode_collect(
         record_trace=False,
         core_progress_weight=float(config_view.get("core_progress_weight", 0.5)),
         sample_orders=bool(config_view.get("sample_orders", True)),
-        order_shaping_weight=float(config_view.get("order_shaping_weight", 0.5)),
+        order_shaping_weight=obedience_by_slot,
     )
     env = TeamTrainingEnv(env_config)
     observations, _ = env.reset(seed=plan.seed, player_factions=player_factions)

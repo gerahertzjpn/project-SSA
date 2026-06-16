@@ -148,6 +148,7 @@ def _simulate_encounter(
     best_of: int,
     league_dir: Path,
     run_match_fn: Callable,
+    order_provider: Optional[Callable] = None,
 ) -> None:
     home = teams_by_id[encounter["home"]]
     away = teams_by_id[encounter["away"]]
@@ -170,7 +171,7 @@ def _simulate_encounter(
         seed = base_seed + game_index
         replay_abs = league_dir / "replays" / f"d{encounter['day']:02d}_g{game_index}.json"
         replay_abs.parent.mkdir(parents=True, exist_ok=True)
-        result = run_match_fn(
+        run_kwargs = dict(
             seed=seed,
             bot_type="league",
             replay_path=str(replay_abs),
@@ -178,6 +179,12 @@ def _simulate_encounter(
             player_models=player_models,
             player_factions=player_factions,
         )
+        # Optional LLM-manager game plans: each side's manager sets a per-match
+        # order for its three nets (showcase only; harmless for un-ordered nets).
+        # Only passed when a provider is set, so plain run_match_fn doubles keep working.
+        if order_provider is not None:
+            run_kwargs["orders"] = order_provider(home, away, game_index)
+        result = run_match_fn(**run_kwargs)
         try:
             rel_replay = replay_abs.resolve().relative_to(ROOT).as_posix()
         except ValueError:

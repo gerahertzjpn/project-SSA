@@ -74,7 +74,8 @@ class TeamTrainingEnvConfig:
     # order_shaping_weight — this weight IS the net's "obedience" (per-net knob;
     # v1 uniform). 0.0 disables the order shaping (channel still in obs).
     sample_orders: bool = True
-    order_shaping_weight: float = 0.5
+    # float (uniform) OR {player_id: weight} for per-net obedience (population).
+    order_shaping_weight: float | dict = 0.5
     # Per-player faction map {player_id: "humans"|"infected"|"robots"}. When None,
     # make_initial_state defaults every player to "humans" (legacy behavior).
     player_factions: Optional[dict] = None
@@ -238,7 +239,7 @@ class TeamTrainingEnv:
             order_shaping[player_id] = (
                 (potential - self._previous_order_potentials.get(player_id, 0.0))
                 * self.config.shaping_weight
-                * self.config.order_shaping_weight
+                * self._order_weight_for(player_id)
             )
             self._previous_order_potentials[player_id] = potential
 
@@ -467,6 +468,14 @@ class TeamTrainingEnv:
     # ------------------------------------------------------------------
     # LLM-manager orders
     # ------------------------------------------------------------------
+
+    def _order_weight_for(self, player_id: str) -> float:
+        """Resolve the per-player order-shaping weight ('obedience'): a uniform
+        float, or a {player_id: weight} map for per-net obedience."""
+        weight = self.config.order_shaping_weight
+        if isinstance(weight, dict):
+            return float(weight.get(player_id, 0.0))
+        return float(weight)
 
     def _sample_orders(self) -> dict[str, dict]:
         """Random per-player game plan for one episode (training-side; no LLM)."""

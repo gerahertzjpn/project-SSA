@@ -112,6 +112,19 @@ def plan_to_env_order(plan: dict, player_ids: list[str]) -> dict:
     }
 
 
+def team_match_order(
+    franchise: dict,
+    situation: str,
+    player_ids: list[str],
+    llm=None,
+) -> dict:
+    """One manager's full per-match order for its team, in env/obs format:
+    ``{player_id: {tempo, win_path, role}}``. Convenience wrapper around
+    match_plan + plan_to_env_order."""
+    plan = match_plan(franchise, situation, player_ids, llm=llm)
+    return plan_to_env_order(plan, player_ids)
+
+
 class ManagerMemory:
     """Lets a manager adapt across a series/season (user choice: learns from results).
 

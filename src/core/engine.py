@@ -325,6 +325,11 @@ class GameEngine:
             if not player.alive:
                 continue
             obs = self._observe(player_id) if getattr(bot, "requires_observation", True) else {}
+            # Optional LLM-manager order overlay (set by run_match for showcase);
+            # the policy net reads obs["order"] through encode_observation.
+            orders = getattr(self, "orders", None)
+            if obs and orders:
+                obs["order"] = orders
             actions[player_id] = bot.act(obs)
 
         for player_id, action in actions.items():

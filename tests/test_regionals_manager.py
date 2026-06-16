@@ -87,3 +87,38 @@ def test_build_situation_includes_key_facts():
     s = build_situation("Quantum Owls", "own-cards", "opp-cards", "1-0",
                         ManagerMemory().recent_block("iron-falcons"))
     assert "Quantum Owls" in s and "1-0" in s and "own-cards" in s and "opp-cards" in s
+
+
+# --- match-loop integration: order overlay reaches the nets ---
+from src.core.engine import Action, GameEngine
+from src.core.constants import ActionType
+from src.core.state import make_initial_state
+from src.regionals.manager import team_match_order
+
+
+class _Probe:
+    requires_observation = True
+
+    def __init__(self):
+        self.seen = None
+
+    def act(self, obs):
+        self.seen = obs.get("order")
+        return Action(ActionType.HOLD)
+
+
+def test_engine_injects_order_overlay_into_obs():
+    state = make_initial_state(seed=1)
+    probe = _Probe()
+    bots = {"A1": probe}
+    eng = GameEngine(state, bots, record_trace=False, record_replay=False)
+    eng.orders = {"A1": {"tempo": "aggressive", "win_path": "core_rush", "role": "carry_push"}}
+    eng.tick()
+    assert probe.seen == eng.orders
+
+
+def test_team_match_order_produces_env_format():
+    fr = {"franchise_id": "iron-falcons", "persona": "..."}
+    order = team_match_order(fr, "s", ["A1", "A2", "A3"], llm=None)
+    assert set(order) == {"A1", "A2", "A3"}
+    assert order["A1"]["tempo"] in ORDER_TEMPO and order["A1"]["role"] in ORDER_ROLE
