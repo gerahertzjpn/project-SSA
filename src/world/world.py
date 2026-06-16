@@ -147,6 +147,7 @@ def make_team(world_id: str, franchise: dict) -> dict:
         "titles": 0,
         "trophies": [],                         # [{season, title}]
         "transfer_requests_used": 0,            # per transfer window (reset each window)
+        "training_certificates": [],            # bankable gradeslot certs [{cert_id, steps, season}]
     }
 
 

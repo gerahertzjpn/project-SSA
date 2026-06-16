@@ -1,117 +1,168 @@
-"""Training auction — BETA. STRUCTURE ONLY; real training is a HARD STUB.
+"""Training auction — BETA. Gradeslot certificates; real training is a HARD STUB.
 
-The owner configures, between seasons, how many trainings exist and how big each
-is (in training steps ~ real wall-clock). The N trainings are auctioned one at a
-time; teams bid by choice; the winner spends the training on one of:
+Between seasons the owner sets the **gradeslot** size in TRAINING STEPS
+(``steps_per_slot``, default 1,000,000) and we show the estimated wall-clock per
+slot. N gradeslots are auctioned one at a time; the winning team receives a
+**certificate** worth that many steps. Because slot size can differ between
+seasons, value is tracked in steps, not slot count — so a team can:
 
-  - ``skill_up``      : extra PPO steps for one player's net
-  - ``teamplay``      : joint training for a roster's three nets
-  - ``create_player`` : a lineage fork (costs 4 trainings) -> a brand-new player
-  - ``meta_adapt``    : adapt to the current meta (NEEDS DEFINITION)
+  - **bank** certificates and use them later (defer by choice),
+  - **combine** several certificates (e.g. to reach >= 4,000,000 steps to fork a
+    new player from a chosen parent), or
+  - **spend** one/several on a training run.
 
-``execute_training`` deliberately raises: the owner asked to DISCUSS the exact
-execution model before it is implemented, and "train nobody right now" is in
-force. The lineage fork machinery (src/training/lineage.py) is the intended
-backbone for ``create_player`` / ``meta_adapt``. See WORLD_MODE_SPEC §7, §9 for
-the open questions to resolve before wiring this.
+Spend types: ``skill_up`` / ``teamplay`` / ``meta_adapt`` (any step budget) and
+``create_player`` (a lineage fork; requires >= ``FORK_MIN_STEPS`` combined).
+
+``execute_training`` deliberately raises: WHAT each type optimizes and HOW the
+effect is validated is still being decided with the owner (see
+docs/cloudcode/WORLD_TRAINING_OPTIONS.md). No training right now.
 """
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass, field
 from typing import Optional
 
-# Spend types and their training cost.
-TRAINING_TYPES = {
-    "skill_up": 1,
-    "teamplay": 1,
-    "meta_adapt": 1,
-    "create_player": 4,   # a full lineage fork costs 4 trainings
-}
+DEFAULT_SLOT_STEPS = 1_000_000
+FORK_MIN_STEPS = 4_000_000
+# Step budget is unconstrained for these; create_player is gated by FORK_MIN_STEPS.
+TRAINING_TYPES = ("skill_up", "teamplay", "meta_adapt", "create_player")
 
 
 @dataclass
 class TrainingConfig:
-    """Owner-set, per offseason. ``steps_per_training`` ~ real time; show ETA."""
-    n_trainings: int = 10
-    steps_per_training: int = 200_000
-    est_minutes_per_training: float = 20.0   # TODO: derive from measured throughput
+    """Owner-set per offseason. ``steps_per_slot`` is the gradeslot size; the
+    throughput is used only to show an ETA (calibrate on the real GPU)."""
+    steps_per_slot: int = DEFAULT_SLOT_STEPS
+    # TODO: calibrate on RTX 4070 SUPER (CPU sim is the real bottleneck, not GPU).
+    throughput_steps_per_min: float = 50_000.0
 
-    def total_minutes(self) -> float:
-        return self.n_trainings * self.est_minutes_per_training
+    def est_minutes(self, steps: int) -> float:
+        return steps / max(1.0, self.throughput_steps_per_min)
+
+    def est_minutes_per_slot(self) -> float:
+        return self.est_minutes(self.steps_per_slot)
 
 
 @dataclass
 class TrainingAuctionState:
-    """Tracks the sequential auction so the LLM can see who took/offered what."""
+    """Sequential auction; managers can see who took/offered what (public_state)."""
     config: TrainingConfig
+    season: int = 0
     remaining: int = 0
-    awards: list[dict] = field(default_factory=list)   # [{team_id, price, bids:{...}}]
+    issued: int = 0                                    # cert counter (deterministic ids)
+    awards: list[dict] = field(default_factory=list)
+    n_trainings: int = 10                              # how many slots are auctioned
 
     def __post_init__(self):
         if not self.remaining:
-            self.remaining = self.config.n_trainings
+            self.remaining = self.n_trainings
 
     def public_state(self) -> dict:
-        """Compact view handed to managers: trainings left + award history."""
         return {
             "trainings_left": self.remaining,
+            "steps_per_slot": self.config.steps_per_slot,
+            "est_minutes_per_slot": round(self.config.est_minutes_per_slot(), 1),
             "awards": [{"team_id": a["team_id"], "price": a["price"]} for a in self.awards],
         }
 
 
-def auction_one_training(world: dict, state: TrainingAuctionState,
-                         bids: dict, *, seed: int = 0) -> Optional[dict]:
-    """Run ONE training auction. ``bids``: ``{team_id: amount}`` (teams bid by
-    choice). Highest bidder who can afford it wins and pays. Money moves; the
-    *spend* is requested separately (request_spend). Returns the award or None."""
+# --------------------------------------------------------------------------- #
+# Auction
+# --------------------------------------------------------------------------- #
+def auction_one_training(world: dict, state: TrainingAuctionState, bids: dict, *,
+                         seed: int = 0) -> Optional[dict]:
+    """Run ONE gradeslot auction. ``bids``: ``{team_id: amount}``. Highest
+    affordable bidder wins, pays, and receives a step-valued certificate (banked
+    on the team). Returns the award, or None if nobody bid."""
     if state.remaining <= 0:
         return None
-    rng = random.Random(seed)
     valid = {tid: amt for tid, amt in bids.items() if amt and amt > 0
              and world["teams"].get(tid, {}).get("treasury", 0) >= amt}
     if not valid:
         state.remaining -= 1
         return None
     top = max(valid.values())
-    winners = [tid for tid, amt in valid.items() if amt == top]
-    winner = rng.choice(winners)
+    # deterministic tiebreak: lowest team_id among the top bids
+    winner = min(tid for tid, amt in valid.items() if amt == top)
     world["teams"][winner]["treasury"] -= top
     state.remaining -= 1
-    award = {"team_id": winner, "price": top, "bids": dict(bids)}
+    state.issued += 1
+    cert = {"cert_id": f"cert-s{state.season}-{state.issued}",
+            "steps": int(state.config.steps_per_slot), "season": state.season}
+    world["teams"][winner].setdefault("training_certificates", []).append(cert)
+    award = {"team_id": winner, "price": top, "cert_id": cert["cert_id"],
+             "steps": cert["steps"], "bids": dict(bids)}
     state.awards.append(award)
     return award
 
 
-def request_spend(state: TrainingAuctionState, team_id: str, spend_type: str,
-                  target: Optional[dict] = None) -> dict:
-    """Record how a winning team wants to spend its training credit(s).
+# --------------------------------------------------------------------------- #
+# Certificates wallet
+# --------------------------------------------------------------------------- #
+def team_certificates(world: dict, team_id: str) -> list[dict]:
+    return world["teams"][team_id].get("training_certificates", [])
 
-    Validates the type and (for ``create_player``) that the team has accumulated
-    enough credits. Does NOT execute — see ``execute_training``.
+
+def total_banked_steps(world: dict, team_id: str) -> int:
+    return sum(c["steps"] for c in team_certificates(world, team_id))
+
+
+# --------------------------------------------------------------------------- #
+# Spend (consume certificates) -> a pending training job
+# --------------------------------------------------------------------------- #
+def request_spend(world: dict, team_id: str, spend_type: str, cert_ids: list[str],
+                  *, target: Optional[dict] = None,
+                  config: Optional[TrainingConfig] = None) -> dict:
+    """Spend the chosen certificates on a training run.
+
+    ``cert_ids`` selects which banked certificates to combine. Validates type +
+    ownership; ``create_player`` requires the combined steps to reach
+    ``FORK_MIN_STEPS``. Consumes the certificates (deferral = simply don't call
+    this; certs persist across seasons). Returns a pending job — NOT executed.
     """
     if spend_type not in TRAINING_TYPES:
         raise ValueError(f"unknown training type {spend_type!r}")
-    cost = TRAINING_TYPES[spend_type]
-    won = sum(1 for a in state.awards if a["team_id"] == team_id)
-    if won < cost:
-        raise ValueError(f"{spend_type} costs {cost} trainings; team has {won}")
-    return {"team_id": team_id, "spend_type": spend_type, "cost": cost,
-            "target": target or {}, "status": "pending_execution"}
+    wallet = team_certificates(world, team_id)
+    by_id = {c["cert_id"]: c for c in wallet}
+    chosen = []
+    for cid in cert_ids:
+        if cid not in by_id:
+            raise ValueError(f"certificate {cid!r} not owned by {team_id}")
+        chosen.append(by_id[cid])
+    if not chosen:
+        raise ValueError("no certificates selected")
+    total_steps = sum(c["steps"] for c in chosen)
+    if spend_type == "create_player" and total_steps < FORK_MIN_STEPS:
+        raise ValueError(f"create_player needs >= {FORK_MIN_STEPS} steps; got {total_steps}")
+
+    # consume
+    keep = [c for c in wallet if c["cert_id"] not in set(cert_ids)]
+    world["teams"][team_id]["training_certificates"] = keep
+
+    cfg = config or TrainingConfig()
+    return {
+        "team_id": team_id,
+        "spend_type": spend_type,
+        "total_steps": total_steps,
+        "est_minutes": round(cfg.est_minutes(total_steps), 1),
+        "target": target or {},
+        "status": "pending_execution",
+    }
 
 
-def execute_training(world: dict, request: dict, config: TrainingConfig) -> None:
-    """HARD STUB — do not implement until the owner confirms the execution model.
+def execute_training(world: dict, job: dict, config: TrainingConfig) -> None:
+    """HARD STUB — do not implement until the owner picks the training menu.
 
-    Intended backbone (per WORLD_MODE_SPEC §9):
+    Intended backbone (docs/cloudcode/WORLD_TRAINING_OPTIONS.md):
       - create_player : src/training/lineage.run_branch_select_cycle (fork+mini-train)
-      - skill_up      : extra PPO steps for one net (metric of 'skill' TBD)
-      - teamplay      : joint roster training (target metric TBD)
-      - meta_adapt    : train vs current top snapshots (definition TBD)
-    Open questions: training unit (steps<->minutes), what each type optimizes and
-    how the effect is validated, sequential execution/ETA. NO TRAINING RIGHT NOW.
+      - skill_up      : continued PPO self-play (skill = winrate vs a fixed gauntlet)
+      - teamplay      : joint roster co-training in the team env
+      - meta_adapt    : training weighted toward the current top opponents
+    Validation = held-out gauntlet winrate / net-Elo + behavioral + uniqueness
+    guards. The owner is choosing which operations to support. NO TRAINING NOW.
     """
     raise NotImplementedError(
-        "training execution is a flagged stub — confirm the execution model "
-        "(WORLD_MODE_SPEC §9) before wiring real training. No training right now."
+        "training execution is a flagged stub — choose the training menu "
+        "(WORLD_TRAINING_OPTIONS.md) before wiring real training. No training right now."
     )

@@ -100,30 +100,55 @@ def test_rookie_draft_lower_only_weakest_first():
 
 
 # --------------------------------------------------------- training auction- #
-def test_training_auction_highest_affordable_wins():
+def test_training_auction_awards_a_certificate():
     w = new_world("w-tr", FRANCHISES, seed=4)
     t1, t2 = list(w["teams"])[:2]
     w["teams"][t1]["treasury"] = 1000
     w["teams"][t2]["treasury"] = 1000
-    state = ta.TrainingAuctionState(ta.TrainingConfig(n_trainings=3))
+    state = ta.TrainingAuctionState(ta.TrainingConfig(steps_per_slot=1_000_000), n_trainings=3)
     award = ta.auction_one_training(w, state, {t1: 100, t2: 250}, seed=0)
-    assert award["team_id"] == t2 and award["price"] == 250
+    assert award["team_id"] == t2 and award["price"] == 250 and award["steps"] == 1_000_000
     assert w["teams"][t2]["treasury"] == 750
     assert state.remaining == 2
+    assert ta.total_banked_steps(w, t2) == 1_000_000
 
 
-def test_create_player_requires_four_trainings():
+def test_create_player_requires_four_million_steps():
     w = new_world("w-tr2", FRANCHISES, seed=5)
     t1 = list(w["teams"])[0]
     w["teams"][t1]["treasury"] = 10_000
-    state = ta.TrainingAuctionState(ta.TrainingConfig(n_trainings=5))
+    state = ta.TrainingAuctionState(ta.TrainingConfig(steps_per_slot=1_000_000), n_trainings=5)
     for _ in range(3):
         ta.auction_one_training(w, state, {t1: 10}, seed=0)
-    with pytest.raises(ValueError):
-        ta.request_spend(state, t1, "create_player")
-    ta.auction_one_training(w, state, {t1: 10}, seed=0)  # 4th win
-    req = ta.request_spend(state, t1, "create_player")
-    assert req["cost"] == 4 and req["status"] == "pending_execution"
+    certs = [c["cert_id"] for c in ta.team_certificates(w, t1)]
+    with pytest.raises(ValueError):                       # 3M < 4M
+        ta.request_spend(w, t1, "create_player", certs)
+    ta.auction_one_training(w, state, {t1: 10}, seed=0)   # 4th cert -> 4M
+    certs = [c["cert_id"] for c in ta.team_certificates(w, t1)]
+    job = ta.request_spend(w, t1, "create_player", certs)
+    assert job["total_steps"] == 4_000_000 and job["status"] == "pending_execution"
+    assert ta.team_certificates(w, t1) == []             # certs consumed
+
+
+def test_certificates_are_bankable_and_combinable_for_smaller_slots():
+    # owner sets a smaller slot this season; team needs 8 certs to fork
+    w = new_world("w-tr4", FRANCHISES, seed=8)
+    t1 = list(w["teams"])[0]
+    w["teams"][t1]["treasury"] = 10_000
+    state = ta.TrainingAuctionState(ta.TrainingConfig(steps_per_slot=500_000), n_trainings=10)
+    for _ in range(8):
+        ta.auction_one_training(w, state, {t1: 5}, seed=0)
+    assert ta.total_banked_steps(w, t1) == 4_000_000
+    # spend only 2 certs on a small skill_up; rest stay banked (deferral)
+    certs = [c["cert_id"] for c in ta.team_certificates(w, t1)]
+    job = ta.request_spend(w, t1, "skill_up", certs[:2])
+    assert job["total_steps"] == 1_000_000
+    assert ta.total_banked_steps(w, t1) == 3_000_000     # 6 certs deferred
+
+
+def test_eta_shown_for_slot():
+    cfg = ta.TrainingConfig(steps_per_slot=1_000_000, throughput_steps_per_min=50_000)
+    assert cfg.est_minutes_per_slot() == 20.0
 
 
 def test_execute_training_is_a_hard_stub():
@@ -135,8 +160,9 @@ def test_public_state_shows_awards_for_llm():
     w = new_world("w-tr3", FRANCHISES, seed=6)
     t1 = list(w["teams"])[0]
     w["teams"][t1]["treasury"] = 1000
-    state = ta.TrainingAuctionState(ta.TrainingConfig(n_trainings=2))
+    state = ta.TrainingAuctionState(ta.TrainingConfig(steps_per_slot=1_000_000), n_trainings=2)
     ta.auction_one_training(w, state, {t1: 100}, seed=0)
     pub = state.public_state()
     assert pub["trainings_left"] == 1
     assert pub["awards"] == [{"team_id": t1, "price": 100}]
+    assert pub["steps_per_slot"] == 1_000_000
