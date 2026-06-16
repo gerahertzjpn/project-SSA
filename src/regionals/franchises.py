@@ -375,11 +375,9 @@ def emblem_svg(franchise: dict) -> str:
             f'{_shape_el(shape, f"fill=\"none\" stroke=\"{accent}\" stroke-width=\"5\"")}</g>'
         )
     parts.append(motif)
-    # Abbreviation, fitted so 2-3 chars never overflow the badge.
-    if len(abbrev) >= 3:
-        text_attrs = 'font-size="20" textLength="50" lengthAdjust="spacingAndGlyphs"'
-    else:
-        text_attrs = 'font-size="24"'
+    # Abbreviation: natural glyphs (no textLength stretching — it distorts narrow
+    # combos like "CRI"). A smaller size for 3 chars still fits every badge shape.
+    text_attrs = 'font-size="19"' if len(abbrev) >= 3 else 'font-size="24"'
     parts.append(
         f'<text x="60" y="70" text-anchor="middle" dominant-baseline="central" '
         f'font-family="Arial, sans-serif" font-weight="800" {text_attrs} '
