@@ -2,8 +2,8 @@
 import pytest
 
 from src.world import (
-    backends, feature_flags, offseason, rookies, season, training_auction,
-    training_ops,
+    backends, feature_flags, freeagents, offseason, rookies, season,
+    training_auction, training_ops,
 )
 from src.world.world import new_world
 
@@ -82,7 +82,32 @@ def test_run_offseason_sequences_stages_and_advances():
     assert w["season"] == before_season + 1         # advanced
     assert w["month"] == before_month + 1           # off-season month skipped
     # training previewed but NOT executed (no backend supplied)
-    assert rep["stages"]["training_auction"]["execution"]["executed"] is False
+    assert rep["stages"]["training"]["execution"]["executed"] is False
+
+
+def test_combined_launch_merges_team_rookies_and_free_agents():
+    w = _bootstrapped()
+    team_jobs = [{"team_id": list(w["teams"])[0], "spend_type": "skill_up",
+                  "target": {"kind": "player", "player_id": "p"}, "total_steps": 1_000_000}]
+    rep = offseason.run_offseason(
+        w, training_jobs=team_jobs,
+        rookie_budget=rookies.RookieBudget(n_rookies=2, steps_per_rookie=1_000_000),
+        fa_budget=freeagents.FreeAgentBudget(steps_per_agent=800_000, max_agents=3),
+        seed=5)
+    by_kind = rep["stages"]["training"]["preview"]["by_kind"]
+    assert by_kind["team"]["n"] == 1
+    assert by_kind["rookie"]["n"] == 2
+    assert by_kind["free_agent"]["n"] == 3            # all three sources in ONE launch
+    assert rep["stages"]["free_agents"]["n"] == 3
+
+
+def test_free_agent_budget_smaller_than_rookies():
+    # owner estimate: total free-agent compute < total rookie compute
+    w = _bootstrapped()
+    rk = rookies.RookieBudget(n_rookies=8, steps_per_rookie=1_000_000)
+    fa = freeagents.FreeAgentBudget(steps_per_agent=800_000, max_agents=3)
+    fa_jobs = freeagents.maintenance_jobs(w, fa)
+    assert freeagents.total_steps(fa_jobs) < rk.total_steps()
 
 
 def test_run_offseason_with_locked_backend_records_locked():
@@ -90,6 +115,6 @@ def test_run_offseason_with_locked_backend_records_locked():
     jobs = [{"team_id": list(w["teams"])[0], "spend_type": "skill_up",
              "target": {"kind": "player", "player_id": "p"}, "total_steps": 1_000_000}]
     rep = offseason.run_offseason(w, training_jobs=jobs, backend=backends.get_backend(), seed=1)
-    exe = rep["stages"]["training_auction"]["execution"]
+    exe = rep["stages"]["training"]["execution"]
     assert exe["executed"] is False
     assert exe["results"][0]["status"] == "locked"   # FeatureLocked caught, reported honestly

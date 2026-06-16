@@ -29,7 +29,7 @@ def _table(world, teams, title):
     rows = sorted(teams, key=lambda t: -t["elo"])
     for t in rows:
         grp = f" [{t['group']}]" if t["group"] else ""
-        print(f"  {t['abbrev']:>4}{grp}  Elo {t['elo']:7.1f}  "
+        print(f"  {t['abbrev']:>4}{grp}  Power {t['elo']:7.1f}  "
               f"money {t['treasury']:>8}  titles {t['titles']}  {t['name']}")
 
 

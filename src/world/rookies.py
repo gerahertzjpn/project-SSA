@@ -120,6 +120,23 @@ def generate_rookies(world: dict, budget: RookieBudget, *, seed: int = 0) -> dic
     }
 
 
+def rookie_training_jobs(report: dict) -> list[dict]:
+    """Convert a generate_rookies report's fork plan into training jobs for the
+    SAME combined launch as team trainings + free-agent upkeep (so the owner
+    starts everything once). Each is a lineage fork from the chosen non-top parent."""
+    jobs = []
+    for item in report.get("fork_plan", []):
+        jobs.append({
+            "kind": "rookie",
+            "op": "rookie_fork",
+            "team_id": None,
+            "target": {"kind": "parent", "parent_id": item["parent_id"],
+                       "rookie_id": item["rookie_id"], "seed": item["seed"]},
+            "total_steps": int(item["steps"]),
+        })
+    return jobs
+
+
 def top_prospects(world: dict, k: int = 5) -> list[str]:
     """The best available rookies (by upside) — the ones offered for signing."""
     pool = world.get("rookies_pool", [])
