@@ -69,6 +69,39 @@ class AnthropicLLM:
         text = next(b.text for b in response.content if b.type == "text")
         return json.loads(text)
 
+    def plan(self, system: str, prompt: str, player_ids: list[str],
+             tempo: list[str], win_path: list[str], role: list[str]) -> dict:
+        """Return a per-match game plan constrained to the order vocabulary:
+
+        ``{"tempo", "win_path", "roles": {player_id: role}, "rationale"}``.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "tempo": {"type": "string", "enum": list(tempo)},
+                "win_path": {"type": "string", "enum": list(win_path)},
+                "roles": {
+                    "type": "object",
+                    "properties": {pid: {"type": "string", "enum": list(role)} for pid in player_ids},
+                    "required": list(player_ids),
+                    "additionalProperties": False,
+                },
+                "rationale": {"type": "string", "description": "1 короткая фраза, до 15 слов"},
+            },
+            "required": ["tempo", "win_path", "roles", "rationale"],
+            "additionalProperties": False,
+        }
+        response = self._client.messages.create(
+            model=self.model,
+            max_tokens=300,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"format": {"type": "json_schema", "schema": schema}},
+        )
+        self._track(response)
+        text = next(b.text for b in response.content if b.type == "text")
+        return json.loads(text)
+
     def say(self, system: str, prompt: str, max_tokens: int = 400) -> str:
         response = self._client.messages.create(
             model=self.model,
