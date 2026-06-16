@@ -110,3 +110,53 @@ def plan_to_env_order(plan: dict, player_ids: list[str]) -> dict:
         pid: {"tempo": tempo, "win_path": win_path, "role": roles.get(pid, ORDER_ROLE_DEFAULT)}
         for pid in player_ids
     }
+
+
+class ManagerMemory:
+    """Lets a manager adapt across a series/season (user choice: learns from results).
+
+    Tracks, per franchise, its recent plan→outcome so the next plan prompt can show
+    what it tried and whether it worked. Kept compact for token cost.
+    """
+
+    def __init__(self, keep: int = 4):
+        self.keep = int(keep)
+        self._log: dict[str, list[dict]] = {}
+
+    def record(self, franchise_id: str, opponent: str, plan: dict, result: str) -> None:
+        entries = self._log.setdefault(franchise_id, [])
+        entries.append({
+            "opponent": opponent,
+            "tempo": plan.get("tempo"),
+            "win_path": plan.get("win_path"),
+            "result": result,  # "W" / "L" / "D"
+        })
+        del entries[: -self.keep]
+
+    def recent_block(self, franchise_id: str) -> str:
+        entries = self._log.get(franchise_id, [])
+        if not entries:
+            return "Прошлых планов нет — это первый матч."
+        parts = [f"vs {e['opponent']} ({e['tempo']}/{e['win_path']})→{e['result']}" for e in entries]
+        return "Твои последние планы: " + "; ".join(parts) + "."
+
+
+def build_situation(
+    opponent_name: str,
+    own_roster: str,
+    opponent_roster: str,
+    series_score: str,
+    recent_results: str,
+) -> str:
+    """Assemble the compact situation prompt a manager sees before a match.
+
+    Callers (the regionals match loop) render the roster/score strings from real
+    card stats; this keeps manager.py decoupled and cheap on tokens.
+    """
+    return (
+        f"Матч против {opponent_name}. Счёт серии: {series_score}.\n"
+        f"Твоя тройка: {own_roster}\n"
+        f"Состав соперника: {opponent_roster}\n"
+        f"{recent_results}\n"
+        "Поставь план на этот матч в своём стиле, но цель — победа."
+    )

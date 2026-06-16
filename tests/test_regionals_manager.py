@@ -64,3 +64,26 @@ def test_plan_to_env_order_shape():
         assert order[pid]["tempo"] == plan["tempo"]
         assert order[pid]["win_path"] == plan["win_path"]
         assert order[pid]["role"] == plan["roles"][pid]
+
+
+# --- adaptation: manager memory + situation builder ---
+from src.regionals.manager import ManagerMemory, build_situation
+
+
+def test_manager_memory_records_and_renders_recent():
+    mem = ManagerMemory(keep=3)
+    assert "первый матч" in mem.recent_block("iron-falcons")
+    mem.record("iron-falcons", "Quantum Owls", {"tempo": "aggressive", "win_path": "core_rush"}, "W")
+    mem.record("iron-falcons", "Northwind", {"tempo": "all_in", "win_path": "baron_lord"}, "L")
+    block = mem.recent_block("iron-falcons")
+    assert "Quantum Owls" in block and "→W" in block and "→L" in block
+    # keep-window trims oldest
+    for i in range(5):
+        mem.record("iron-falcons", f"T{i}", {"tempo": "balanced", "win_path": "economy"}, "W")
+    assert mem.recent_block("iron-falcons").count("→") == 3
+
+
+def test_build_situation_includes_key_facts():
+    s = build_situation("Quantum Owls", "own-cards", "opp-cards", "1-0",
+                        ManagerMemory().recent_block("iron-falcons"))
+    assert "Quantum Owls" in s and "1-0" in s and "own-cards" in s and "opp-cards" in s
