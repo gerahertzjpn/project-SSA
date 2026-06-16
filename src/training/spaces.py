@@ -46,7 +46,7 @@ from src.core.map2d import (
 from src.core.units import UNIT_STATS
 
 
-OBSERVATION_VERSION = "train_obs_v3.1"
+OBSERVATION_VERSION = "train_obs_v4_orders"
 
 UNIT_ORDER = (
     UnitType.VANGUARD,
@@ -80,7 +80,25 @@ RELATIONS = ("self", "ally", "enemy", "neutral")
 COMBAT_RELATIONS = ("self", "ally", "enemy")
 MOVEMENT_BUCKETS = ("inside", "outgoing", "incoming")
 MOVE_INTENTS = ("CAPTURE", "TRANSIT")
-GLOBAL_FEATURES = 22 + len(UNIT_ORDER) + len(FACTIONS)
+
+# --- LLM-manager order channel (see docs/cloudcode/LLM_MANAGER_ORDERS_SPEC.md) ---
+# A per-match "game plan" the manager sets: team-level tempo + win_path, plus a
+# per-position role. Only the order LABELS live in the observation. "Obedience"
+# is NOT an obs input — it is baked into each net's weights via a per-net
+# order-shaping weight during training (a recipe/genotype knob; see spec). So a
+# loyal net and a maverick net are different trained policies, not the same net
+# with a dial.
+ORDER_TEMPO = ("turtle", "balanced", "aggressive", "all_in")
+ORDER_WIN_PATH = ("economy", "core_rush", "baron_lord", "outlast")
+ORDER_ROLE = ("carry_push", "anchor_defend", "tech_eco", "roam_objective", "support_flex")
+# Neutral defaults: when no order is present the channel reads as "balanced /
+# economy / support_flex", so an un-ordered episode is a well-defined baseline.
+ORDER_TEMPO_DEFAULT = "balanced"
+ORDER_WIN_PATH_DEFAULT = "economy"
+ORDER_ROLE_DEFAULT = "support_flex"
+ORDER_FEATURES = len(ORDER_TEMPO) + len(ORDER_WIN_PATH) + len(ORDER_ROLE)
+
+GLOBAL_FEATURES = 22 + len(UNIT_ORDER) + len(FACTIONS) + ORDER_FEATURES
 NODE_TYPE_FEATURES = 3
 CORE_TYPE_FEATURES = len(CORE_TYPES)
 OWNER_RELATION_FEATURES = len(RELATIONS)
@@ -367,6 +385,13 @@ def mirror_observation(obs: dict) -> dict:
         mirrored["players"] = {
             mirrored_player_id(player_id): _mirror_player_state(player)
             for player_id, player in obs["players"].items()
+        }
+    if isinstance(obs.get("order"), dict):
+        # Order values are board-agnostic labels (tempo/win_path/role/obedience) —
+        # only the per-player keys need remapping under the mirror.
+        mirrored["order"] = {
+            mirrored_player_id(player_id): dict(entry)
+            for player_id, entry in obs["order"].items()
         }
 
     mirrored["moving_groups"] = [
@@ -1286,6 +1311,30 @@ def _building_features(node: dict, player_id: str) -> list[float]:
     return features
 
 
+def _player_order(obs: dict, player_id: str) -> dict:
+    """The manager order for one position, with neutral defaults.
+
+    obs["order"] is keyed by player_id: {pid: {tempo, win_path, role, obedience}}.
+    Missing entries / fields fall back to the neutral baseline so an un-ordered
+    episode is well-defined (channel reads balanced/economy/support_flex).
+    """
+    order = obs.get("order") or {}
+    entry = order.get(player_id, {}) if isinstance(order, dict) else {}
+    return entry if isinstance(entry, dict) else {}
+
+
+def _order_features(obs: dict, player_id: str) -> list[float]:
+    entry = _player_order(obs, player_id)
+    tempo = entry.get("tempo", ORDER_TEMPO_DEFAULT)
+    win_path = entry.get("win_path", ORDER_WIN_PATH_DEFAULT)
+    role = entry.get("role", ORDER_ROLE_DEFAULT)
+    feats: list[float] = []
+    feats.extend(1.0 if tempo == v else 0.0 for v in ORDER_TEMPO)
+    feats.extend(1.0 if win_path == v else 0.0 for v in ORDER_WIN_PATH)
+    feats.extend(1.0 if role == v else 0.0 for v in ORDER_ROLE)
+    return feats
+
+
 def encode_observation(obs: dict, player_id: str) -> np.ndarray:
     policy_obs, policy_player = policy_observation(obs, player_id)
     return _encode_observation_absolute(policy_obs, policy_player)
@@ -1324,6 +1373,7 @@ def _encode_observation_absolute(obs: dict, player_id: str) -> np.ndarray:
         *_lord_relation_features(obs, player_id),
         *_normal_unit_counts(allied_lord_support_units),
         *(1.0 if obs.get("faction", "humans") == faction else 0.0 for faction in FACTIONS),
+        *_order_features(obs, player_id),
     ]
 
     moving_totals = _moving_node_totals(obs, player_id)

@@ -371,6 +371,86 @@ def test_reinforcement_joins_node_battle():
     )
 
 
+def test_stationed_units_are_absorbed_into_active_core_battle():
+    # A core under siege: units produced/parked at the core after the battle
+    # started must join the fight instead of idling in node.units next to it.
+    state = make_initial_state(seed=77)
+    state.nodes["B1"].units = {UnitType.VANGUARD.value: 2}
+    engine = GameEngine(state, make_bots(), record_trace=False, record_replay=False)
+
+    attacker = MovingGroup(
+        player_id="A1",
+        team="TEAM_A",
+        units={UnitType.VANGUARD.value: 4},
+        src="CP5",
+        dst="B1",
+        arrival_tick=state.tick,
+        started_tick=state.tick,
+        intent="ATTACK",
+        path=["CP5", "B1"],
+        final_dst="B1",
+    )
+    engine._start_node_battle(
+        group=attacker,
+        node_id="B1",
+        objective="core",
+        core_owner="B1",
+        include_owner_units=True,
+        include_visitors=True,
+        include_core=True,
+        include_buildings=True,
+    )
+    # Garrison was pulled in at battle start; the node is now empty.
+    assert state.nodes["B1"].units == {}
+
+    # Simulate a unit produced at the besieged core after the battle began.
+    state.nodes["B1"].units = {UnitType.VANGUARD.value: 5}
+
+    engine.tick()
+
+    # The freshly produced reserve is now fighting, not idling in node.units.
+    assert state.nodes["B1"].units == {}
+    battle = state.active_battles["node:B1"]
+    assert sum(1 for u in battle.units if u.team == "B1" and u.unit_type == UnitType.VANGUARD.value) >= 5
+
+
+def test_token_drip_cannot_hold_a_superior_army_at_the_core():
+    # A near-empty defender that only produces one unit per tick must not be able
+    # to stall an overwhelming assault forever: damage overflows past the token
+    # troop into the core. A small assault, by contrast, is still repelled.
+    def besiege(attacker_count, drip, max_ticks=120):
+        state = make_initial_state(seed=5)
+        state.nodes["B1"].units = {UnitType.VANGUARD.value: 2}
+        engine = GameEngine(state, make_bots(), record_trace=False, record_replay=False)
+        attacker = MovingGroup(
+            player_id="A1",
+            team="TEAM_A",
+            units={UnitType.VANGUARD.value: attacker_count},
+            src="CP5",
+            dst="B1",
+            arrival_tick=state.tick,
+            started_tick=state.tick,
+            intent="ATTACK",
+            path=["CP5", "B1"],
+            final_dst="B1",
+        )
+        engine._start_node_battle(
+            group=attacker, node_id="B1", objective="core", core_owner="B1",
+            include_owner_units=True, include_visitors=True, include_core=True,
+            include_buildings=True,
+        )
+        for _ in range(max_ticks):
+            node_units = state.nodes["B1"].units
+            node_units[UnitType.VANGUARD.value] = node_units.get(UnitType.VANGUARD.value, 0) + drip
+            if not any(b.location_id == "B1" for b in state.active_battles.values()):
+                break
+            engine.tick()
+        return state.players["B1"].alive
+
+    assert besiege(attacker_count=60, drip=1) is False   # huge army breaks through
+    assert besiege(attacker_count=6, drip=1) is True      # token assault still repelled
+
+
 def test_neutrals_passive_until_attacked():
     state = make_initial_state(seed=4)
     state.nodes["A1"].units = {UnitType.VANGUARD.value: 7}

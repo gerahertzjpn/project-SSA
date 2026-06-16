@@ -226,3 +226,42 @@ def test_external_action_observation_skip_preserves_engine_state():
         if isinstance(bot, ObservationSkippingExternalBot)
     ) == 0
     assert json.dumps(hungry.observe("A1"), sort_keys=True) == json.dumps(skipping.observe("A1"), sort_keys=True)
+
+
+def test_core_progress_shaping_is_dense_symmetric_and_disableable():
+    from src.core.constants import CORE_HP
+
+    env = TeamTrainingEnv(
+        TeamTrainingEnvConfig(controlled_players=("A1", "A2", "A3"), core_progress_weight=0.5)
+    )
+
+    def obs(cores):
+        return {
+            "players": {
+                p: {"alive": cores[p] > 0, "resources": 0.0, "core_hp": cores[p]}
+                for p in ("A1", "A2", "A3", "B1", "B2", "B3")
+            },
+            "nodes": {},
+        }
+
+    full = {p: float(CORE_HP) for p in ("A1", "A2", "A3", "B1", "B2", "B3")}
+    base = env._team_score(obs(full))
+
+    chip_enemy = env._team_score(obs({**full, "B1": 40.0}))
+    chip_own = env._team_score(obs({**full, "A1": 40.0}))
+
+    # Dense: partial enemy core damage already moves the score (not only on death).
+    assert chip_enemy - base > 0.0
+    # Symmetric: taking the same damage to our own core costs exactly as much.
+    assert abs((chip_enemy - base) + (chip_own - base)) < 1e-9
+
+    # Stays a guiding signal, not a jackpot: a full enemy-core kill (with the
+    # alive flip) is worth a small per-tick shaping vs the +-1 terminal reward.
+    killed = env._team_score(obs({**full, "B1": 0.0}))
+    assert (killed - base) * env.config.shaping_weight < 0.05
+
+    # Fully disableable for ablations.
+    off = TeamTrainingEnv(
+        TeamTrainingEnvConfig(controlled_players=("A1", "A2", "A3"), core_progress_weight=0.0)
+    )
+    assert off._team_score(obs({**full, "B1": 40.0})) == off._team_score(obs(full))

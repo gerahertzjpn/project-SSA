@@ -8,7 +8,7 @@ import numpy as np
 from src.bots.base import Bot
 from src.bots.random_bot import RandomBot
 from src.bots.scripted_bot import ScriptedBot, make_scripted_bot_variant
-from src.core.constants import PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS, TICK_LIMIT, ActionType
+from src.core.constants import CORE_HP, PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS, TICK_LIMIT, ActionType
 from src.core.engine import Action, GameEngine
 from src.core.state import make_initial_state
 from src.training.env import ExternalActionBot
@@ -47,6 +47,14 @@ class TeamTrainingEnvConfig:
     death_time_win_reward_multiplier: float = 0.5
     shaping_weight: float = 0.02
     per_player_shaping: bool = False
+    # Dense, symmetric incentive to finish cores. Folded into the telescoping
+    # team-score shaping (so it stays potential-based: it densifies the existing
+    # signal without changing the optimal policy or overriding "win the game").
+    # Rewards chipping enemy core HP and equally penalizes losing own core HP, so
+    # it makes "commit and close out a core" learnable WITHOUT pushing every net
+    # all-in — over-extending and exposing your own core is punished just as much.
+    # Tune down (e.g. 0.25) for a gentler finishing nudge; 0.0 disables it.
+    core_progress_weight: float = 0.5
     # Per-player faction map {player_id: "humans"|"infected"|"robots"}. When None,
     # make_initial_state defaults every player to "humans" (legacy behavior).
     player_factions: Optional[dict] = None
@@ -378,14 +386,28 @@ class TeamTrainingEnv:
 
         resources = 0.0
         alive = 0.0
+        core_progress = 0.0
+        team_size = max(1, len(self.controlled_players))
         for player_id, player in (obs.get("players", {}) or {}).items():
+            is_enemy = team_of(player_id) != own_team
+            # Dense core-race term: fraction of each core destroyed, enemy cores
+            # count for us, our cores against us. Telescopes with the rest of the
+            # score, so the net banks reward for *progress* toward a kill (80->0),
+            # not just the instant a core finally dies.
+            core_removed = max(0.0, float(CORE_HP) - float(player.get("core_hp", 0.0) or 0.0)) / float(CORE_HP)
+            core_progress += core_removed if is_enemy else -core_removed
             if not player.get("alive", True):
-                alive += 1.0 if team_of(player_id) != own_team else -1.0
+                alive += 1.0 if is_enemy else -1.0
                 continue
-            sign = 1.0 if team_of(player_id) == own_team else -1.0
+            sign = -1.0 if is_enemy else 1.0
             resources += sign * float(player.get("resources", 0.0) or 0.0) / 100.0
 
-        return control / 13.0 + resources / 6.0 + alive / 3.0
+        return (
+            control / 13.0
+            + resources / 6.0
+            + alive / 3.0
+            + self.config.core_progress_weight * core_progress / team_size
+        )
 
     def _player_score(self, obs: dict) -> float:
         player_id = obs.get("player_id", "")

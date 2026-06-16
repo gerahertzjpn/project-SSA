@@ -116,7 +116,7 @@ def test_frozen_pool_round_trips_each_net(tmp_path: Path):
     for spec in nets:
         state, hidden = cached_policy_state(pool_path, "B1", policy_state_id=spec.net_id)
         assert hidden == spec.hidden_size
-        assert state["body.0.weight"].shape[1] == 5188  # OBSERVATION_DIM (v3.1)
+        assert state["body.0.weight"].shape[1] == 5201  # OBSERVATION_DIM (v4 orders)
 
 
 # --------------------------------------------------------------------------- #

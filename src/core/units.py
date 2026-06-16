@@ -26,7 +26,7 @@ UNIT_STATS: dict[UnitType, dict] = {
     },
     UnitType.RANGER: {
         "hp": 4,
-        "atk": 10,
+        "atk": 9,  # light rebalance 2026-06-16: 10->9, gentle humans nerf
         "range": 3.5,
         "speed": 1.5,
         "slot": "back",

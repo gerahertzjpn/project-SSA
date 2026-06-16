@@ -91,6 +91,13 @@ def parse_args() -> argparse.Namespace:
         default="fixed",
         help="Use shuffle to train each policy on randomly assigned A1/A2/A3 slots per episode.",
     )
+    parser.add_argument(
+        "--core-progress-weight",
+        type=float,
+        default=0.5,
+        help="Dense symmetric shaping for core damage (reward chipping enemy cores, "
+             "penalize losing own). 0 disables; lower (e.g. 0.25) is a gentler finishing nudge.",
+    )
     return parser.parse_args()
 
 
@@ -122,6 +129,7 @@ def config_from_args(args: argparse.Namespace) -> TeamPPOConfig:
         torch_threads=max(1, args.torch_threads),
         device=args.device,
         role_assignment_mode=args.role_assignment_mode,
+        core_progress_weight=args.core_progress_weight,
     )
 
 

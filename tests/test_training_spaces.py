@@ -92,7 +92,7 @@ def test_training_observation_vector_is_fixed_and_finite():
     obs = observe_state(make_initial_state(seed=1))
     vector = encode_observation(obs, "A1")
 
-    assert OBSERVATION_VERSION == "train_obs_v3.1"
+    assert OBSERVATION_VERSION == "train_obs_v4_orders"
     assert ACTION_DIM == 447
     assert vector.shape == (OBSERVATION_DIM,)
     assert vector.dtype == np.float32

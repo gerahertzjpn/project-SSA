@@ -86,7 +86,7 @@ UNIT_COST = {
     UnitType.BEHEMOTH: 30,
     UnitType.WALKER: 9,
     UnitType.LASER: 11,
-    UnitType.DRONE: 6,
+    UnitType.DRONE: 4,  # light rebalance 2026-06-16: 6->4, robots' spam body
     UnitType.GUARDIAN_MECH: 16,
     UnitType.SIEGE_PLATFORM: 36,
 }

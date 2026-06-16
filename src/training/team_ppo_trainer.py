@@ -57,6 +57,7 @@ class TeamPPOConfig:
     torch_threads: int = 1
     device: str = "auto"
     role_assignment_mode: str = "fixed"
+    core_progress_weight: float = 0.5
 
     def __post_init__(self) -> None:
         self.controlled_players = tuple(self.controlled_players)
@@ -79,6 +80,7 @@ def _env_config(config: TeamPPOConfig, seed: int) -> TeamTrainingEnvConfig:
         max_ticks=config.max_ticks,
         record_replay=False,
         record_trace=False,
+        core_progress_weight=config.core_progress_weight,
     )
 
 

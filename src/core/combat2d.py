@@ -201,11 +201,88 @@ def tick_battle_units_2d(
                 unit_targeting_pending.get(target.uid, 0.0) + damage
             )
 
+    _apply_core_defense_overflow(units, pending, battle)
+
     for unit in units:
         if unit.uid in pending:
             unit.hp -= pending[unit.uid]
 
     return _frame_snapshot(units, damage_log, target_log, attack_log) if record_trace else []
+
+
+def _apply_core_defense_overflow(
+    units: list[UnitInstance],
+    pending: dict[int, float],
+    battle,
+) -> None:
+    """Spill excess damage dealt to a besieged core's stack down its layers.
+
+    Without this, damage committed to the defending side is capped at whatever
+    single layer the attackers could reach, so one cheap unit produced each tick
+    can soak an entire enemy army indefinitely. Here the total damage aimed at
+    the core owner's units this tick is re-poured by priority — troops first,
+    then the buildings, then the core:
+
+      * Troops overflow freely: surplus beyond a defender's HP spills to the next
+        troop and then onto the building layer, so a token defender can no longer
+        hold off a superior army.
+      * Buildings stay "plates": only the current outermost building absorbs in a
+        tick (up to its HP); any surplus past it is dropped rather than spilling
+        into the next building or the core. A core fronted by N buildings still
+        survives at least N ticks of assault.
+      * The core is only reached once no buildings remain.
+    """
+
+    core_owner = _battle_core_owner(battle)
+    if not core_owner:
+        return
+
+    defenders = [unit for unit in units if unit.team == core_owner and unit.is_alive()]
+    if not defenders:
+        return
+
+    total = 0.0
+    for unit in defenders:
+        committed = pending.pop(unit.uid, 0.0)
+        if committed > 0:
+            total += committed
+    if total <= RANGE_EPSILON_MAP:
+        return
+
+    troops = [
+        unit for unit in defenders
+        if not _is_building_unit(unit) and unit.unit_type != "CORE"
+    ]
+    buildings = sorted(
+        (unit for unit in defenders if _is_building_unit(unit)),
+        key=_building_slot_index,
+        reverse=True,
+    )
+
+    def _absorb(unit, amount: float) -> float:
+        absorbed = min(float(unit.hp), amount)
+        if absorbed <= 0:
+            return 0.0
+        pending[unit.uid] = pending.get(unit.uid, 0.0) + absorbed
+        return absorbed
+
+    remaining = total
+    # 1) Troops soak first, overflowing into one another.
+    for unit in troops:
+        if remaining <= RANGE_EPSILON_MAP:
+            return
+        remaining -= _absorb(unit, remaining)
+
+    # 2) One building plate per tick: only the outermost building takes damage,
+    #    surplus past it is dropped (keeps the core from falling in one tick).
+    if buildings:
+        _absorb(buildings[0], remaining)
+        return
+
+    # 3) No buildings left — the surplus finally reaches the core.
+    cores = [unit for unit in defenders if unit.unit_type == "CORE"]
+    if cores:
+        _absorb(cores[0], remaining)
 
 
 def has_hostile_units_2d(
@@ -562,7 +639,7 @@ def _find_target(
             continue
         if ahead_only and not _is_ahead(unit, other, positions):
             continue
-        if structure_role != "active_building" and other.hp - pending.get(other.uid, 0.0) <= 0:
+        if structure_role not in {"active_building", "active_layer"} and other.hp - pending.get(other.uid, 0.0) <= 0:
             continue
         pending_damage = pending.get(other.uid, 0.0)
         distance = _distance(_unit_point(unit, positions), _unit_point(other, positions))
@@ -604,6 +681,13 @@ def _core_structure_target_role(
         return "normal"
     if other.team != core_owner:
         return "normal"
+
+    # Troops are the outermost layer and stay engageable even once lethally
+    # committed, so the whole assaulting front commits its damage to them. The
+    # overflow pass then spills the surplus down through the buildings to the
+    # core instead of letting one token defender soak the entire army.
+    if not _is_building_unit(other) and other.unit_type != "CORE":
+        return "active_layer"
 
     live_buildings = [
         candidate

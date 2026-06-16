@@ -2720,6 +2720,101 @@ class GameEngine:
             "intent": group.intent,
         }
 
+    def _absorb_stationed_units_into_battle(self, battle: Battle) -> list[dict]:
+        """Pull units that became stationed at a battle's node after the battle
+        started into the ongoing fight.
+
+        Without this, units produced at (or parked on) a besieged node sit idle
+        in ``node.units``/``visiting_units`` next to the battle — the engine only
+        intakes a node's stationed units once, at battle creation. This mirrors
+        that battle-start intake and runs every tick, so a defensive reserve
+        produced during a core siege actually defends instead of watching.
+        """
+        if battle.location_kind not in {"node", "approach"}:
+            return []
+        node = self.state.nodes.get(battle.location_id)
+        if node is None:
+            return []
+
+        node_id = battle.location_id
+        enemy_teams = {
+            get_team(unit.team)
+            for unit in battle.units
+            if unit.is_alive() and unit.team in self.state.players
+        }
+
+        def _has_enemy_in_battle(player_id: str) -> bool:
+            player_team = get_team(player_id)
+            return any(team != player_team for team in enemy_teams)
+
+        events: list[dict] = []
+
+        if (
+            node.owner in self.state.players
+            and node.units
+            and _has_enemy_in_battle(node.owner)
+        ):
+            owner = node.owner
+            payload = dict(node.units)
+            entry_side = node.unit_entry_side.get(owner)
+            visual_units = self._take_node_visual_units(node, owner, node.units)
+            self._add_player_units_to_battle(
+                battle,
+                player_id=owner,
+                units=node.units,
+                src=node_id,
+                dst=node_id,
+                intent="DEFEND",
+                entry_side=entry_side,
+                visual_units=visual_units,
+            )
+            node.units = {}
+            node.unit_entry_side.pop(owner, None)
+            events.append(self._stationed_reinforcement_event(battle, owner, payload))
+
+        if node.visiting_units:
+            for visitor_id, units in list(node.visiting_units.items()):
+                if (
+                    visitor_id not in self.state.players
+                    or not units
+                    or not _has_enemy_in_battle(visitor_id)
+                ):
+                    continue
+                payload = dict(units)
+                entry_side = node.unit_entry_side.get(visitor_id)
+                visual_units = self._take_node_visual_units(node, visitor_id, units, visiting=True)
+                self._add_player_units_to_battle(
+                    battle,
+                    player_id=visitor_id,
+                    units=units,
+                    src=node_id,
+                    dst=node_id,
+                    intent="VISIT",
+                    entry_side=entry_side,
+                    visual_units=visual_units,
+                )
+                node.unit_entry_side.pop(visitor_id, None)
+                node.visiting_units.pop(visitor_id, None)
+                node.visiting_visual_units.pop(visitor_id, None)
+                events.append(self._stationed_reinforcement_event(battle, visitor_id, payload))
+
+        return events
+
+    def _stationed_reinforcement_event(self, battle: Battle, player_id: str, units: dict) -> dict:
+        return {
+            "type": "BATTLE_REINFORCEMENT",
+            "battle_type": f"{battle.location_kind}_battle",
+            "location_kind": battle.location_kind,
+            "location_id": battle.location_id,
+            "battle_id": battle.battle_id,
+            "approach_id": battle.approach_id,
+            "threat_zone_ids": list(battle.threat_zone_ids),
+            "player": player_id,
+            "units": dict(units),
+            "intent": "DEFEND",
+            "reason": "stationed_reserve_absorbed",
+        }
+
     def _battle_join_route_for_group(self, battle: Battle, group: MovingGroup) -> tuple[str, str]:
         if battle.location_kind in {"edge", "approach"}:
             segment_src, segment_dst = self._moving_group_segment_nodes(group)
@@ -3134,6 +3229,7 @@ class GameEngine:
 
     def _tick_active_battles(self, tick_events: list) -> None:
         for key, battle in list(self.state.active_battles.items()):
+            tick_events.extend(self._absorb_stationed_units_into_battle(battle))
             lord_event = self._refresh_active_lord_target(battle)
             if lord_event:
                 tick_events.append(lord_event)

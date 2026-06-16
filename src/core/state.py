@@ -150,7 +150,8 @@ def _starting_units_for_faction(faction: str) -> dict:
     if faction == "infected":
         return {UnitType.SWARMLING.value: 6}
     if faction == "robots":
-        return {UnitType.WALKER.value: 1}
+        # light rebalance 2026-06-16: 1->2 WALKER, fix robots' weak slow opening
+        return {UnitType.WALKER.value: 2}
     return {UnitType.VANGUARD.value: 2}
 
 

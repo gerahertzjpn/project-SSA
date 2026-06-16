@@ -175,6 +175,8 @@ def rules_meta() -> dict:
         "map_distance_movement": True,
         "combat_2d_map": True,
         "combat_range_to_map_units": COMBAT_RANGE_TO_MAP_UNITS,
+        "stationed_reserves_join_active_battle": True,
+        "core_defense_damage_overflow": True,
         "allied_lord_can_move_and_shoot": True,
         "allied_lord_stops_for_attackable_targets": True,
         "allied_lord_returns_fire_when_attacked_from_behind": True,

@@ -50,7 +50,7 @@ def test_initial_state_can_seed_faction_starting_units():
     assert state.players["A1"].faction == "infected"
     assert state.nodes["A1"].units == {UnitType.SWARMLING.value: 6}
     assert state.players["B1"].faction == "robots"
-    assert state.nodes["B1"].units == {UnitType.WALKER.value: 1}
+    assert state.nodes["B1"].units == {UnitType.WALKER.value: 2}
 
 
 def test_tech_buildings_unlock_human_tech_units_only_after_completion():
