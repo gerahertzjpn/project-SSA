@@ -8,15 +8,27 @@ import numpy as np
 from src.bots.base import Bot
 from src.bots.random_bot import RandomBot
 from src.bots.scripted_bot import ScriptedBot, make_scripted_bot_variant
-from src.core.constants import CORE_HP, PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS, TICK_LIMIT, ActionType
+from src.core.constants import (
+    BARON_HP,
+    CORE_HP,
+    PLAYER_IDS,
+    TEAM_A_PLAYERS,
+    TEAM_B_PLAYERS,
+    TICK_LIMIT,
+    ActionType,
+)
 from src.core.engine import Action, GameEngine
 from src.core.state import make_initial_state
 from src.training.env import ExternalActionBot
 from src.training.spaces import (
     ACTION_DIM,
+    ALL_NODES,
     BUILD_ACTION_START,
     MOVE_ACTION_START,
     OBSERVATION_VERSION,
+    ORDER_ROLE,
+    ORDER_TEMPO,
+    ORDER_WIN_PATH,
     action_is_legal,
     decode_action,
     encode_observation,
@@ -55,6 +67,14 @@ class TeamTrainingEnvConfig:
     # all-in — over-extending and exposing your own core is punished just as much.
     # Tune down (e.g. 0.25) for a gentler finishing nudge; 0.0 disables it.
     core_progress_weight: float = 0.5
+    # LLM-manager order channel (docs/cloudcode/LLM_MANAGER_ORDERS_SPEC.md).
+    # When sample_orders is True, each episode samples a random per-player order
+    # (tempo/win_path/role) injected into the observation, and a potential-based
+    # per-player alignment term is added to the reward scaled by
+    # order_shaping_weight — this weight IS the net's "obedience" (per-net knob;
+    # v1 uniform). 0.0 disables the order shaping (channel still in obs).
+    sample_orders: bool = True
+    order_shaping_weight: float = 0.5
     # Per-player faction map {player_id: "humans"|"infected"|"robots"}. When None,
     # make_initial_state defaults every player to "humans" (legacy behavior).
     player_factions: Optional[dict] = None
@@ -103,6 +123,8 @@ class TeamTrainingEnv:
         self.control_bots: dict[str, ExternalActionBot] = {}
         self._previous_team_score = 0.0
         self._previous_player_scores: dict[str, float] = {}
+        self._order: dict[str, dict] = {}
+        self._previous_order_potentials: dict[str, float] = {}
         self._done = False
         self._cache_tick: Optional[int] = None
         self._raw_cache: Optional[dict[str, dict]] = None
@@ -141,12 +163,17 @@ class TeamTrainingEnv:
             record_replay=self.config.record_replay,
         )
         self._done = False
+        self._order = self._sample_orders()
         self._invalidate_cache()
         observations = self.observations()
         raw = self.raw_observations()
         self._previous_team_score = self._team_score(next(iter(raw.values())))
         self._previous_player_scores = {
             player_id: self._player_score(obs)
+            for player_id, obs in raw.items()
+        }
+        self._previous_order_potentials = {
+            player_id: self._order_potential(obs, player_id)
             for player_id, obs in raw.items()
         }
         masks = self.action_masks()
@@ -199,10 +226,21 @@ class TeamTrainingEnv:
         self._previous_team_score = team_score
 
         player_shaping: dict[str, float] = {}
+        order_shaping: dict[str, float] = {}
         for player_id, obs in raw_after.items():
             score = self._player_score(obs)
             player_shaping[player_id] = (score - self._previous_player_scores.get(player_id, 0.0)) * self.config.shaping_weight
             self._previous_player_scores[player_id] = score
+            # Potential-based order-alignment term: telescopes over the episode,
+            # so it densifies "play in the ordered style" without overriding the
+            # dominant win reward. Weight = the net's obedience (v1 uniform).
+            potential = self._order_potential(obs, player_id)
+            order_shaping[player_id] = (
+                (potential - self._previous_order_potentials.get(player_id, 0.0))
+                * self.config.shaping_weight
+                * self.config.order_shaping_weight
+            )
+            self._previous_order_potentials[player_id] = potential
 
         terminal = self.state.winner in {"TEAM_A", "TEAM_B"} or (
             self.state.winner == "DRAW" and self.state.winner_type != "truncated"
@@ -215,9 +253,11 @@ class TeamTrainingEnv:
         reward_components = {}
         for player_id in self.controlled_players:
             shaping = player_shaping[player_id] if self.config.per_player_shaping else team_shaping
-            rewards[player_id] = float(shaping + terminal_reward)
+            order_term = order_shaping.get(player_id, 0.0)
+            rewards[player_id] = float(shaping + order_term + terminal_reward)
             reward_components[player_id] = {
                 "shaping": float(shaping),
+                "order": float(order_term),
                 "terminal": float(terminal_reward),
                 "team_score": float(team_score),
             }
@@ -269,10 +309,12 @@ class TeamTrainingEnv:
         if self._cache_tick == tick and self._raw_cache is not None:
             return self._raw_cache
         self._cache_tick = tick
-        self._raw_cache = {
-            player_id: self.engine.observe(player_id)
-            for player_id in self.controlled_players
-        }
+        self._raw_cache = {}
+        for player_id in self.controlled_players:
+            obs = self.engine.observe(player_id)
+            if self._order:
+                obs["order"] = self._order
+            self._raw_cache[player_id] = obs
         self._mask_cache = None
         self._obs_cache = None
         return self._raw_cache
@@ -421,6 +463,98 @@ class TeamTrainingEnv:
                 for count in ((node.get("visiting_units", {}) or {}).get(player_id, {}) or {}).values()
             )
         return resources + own_units
+
+    # ------------------------------------------------------------------
+    # LLM-manager orders
+    # ------------------------------------------------------------------
+
+    def _sample_orders(self) -> dict[str, dict]:
+        """Random per-player game plan for one episode (training-side; no LLM)."""
+        if not self.config.sample_orders:
+            return {}
+        return {
+            player_id: {
+                "tempo": str(self.rng.choice(ORDER_TEMPO)),
+                "win_path": str(self.rng.choice(ORDER_WIN_PATH)),
+                "role": str(self.rng.choice(ORDER_ROLE)),
+            }
+            for player_id in self.controlled_players
+        }
+
+    def _order_potential(self, obs: dict, player_id: str) -> float:
+        """Per-player alignment potential Φ for the current order.
+
+        A weighted sum of observable quantities selected by the order, each ~[0,1].
+        Used telescopically (Φ_t − Φ_{t-1}) so it rewards *progress in the ordered
+        style*. v1, deliberately simple and tunable (see spec).
+        """
+        order = (self._order or {}).get(player_id)
+        if not order:
+            return 0.0
+        own_team = team_of(player_id)
+        nodes = obs.get("nodes", {}) or {}
+        players = obs.get("players", {}) or {}
+        baron = obs.get("baron", {}) or {}
+
+        enemy_dmg = own_hp = 0.0
+        enemy_n = own_n = 0
+        for pid, p in players.items():
+            hp = float(p.get("core_hp", 0.0) or 0.0)
+            if team_of(pid) == own_team:
+                own_hp += max(0.0, hp) / float(CORE_HP); own_n += 1
+            else:
+                enemy_dmg += max(0.0, float(CORE_HP) - hp) / float(CORE_HP); enemy_n += 1
+        enemy_core_damage = enemy_dmg / max(1, enemy_n)
+        own_core_hp = own_hp / max(1, own_n)
+
+        own_nodes = sum(1 for n in nodes.values() if team_of(n.get("owner", "NEUTRAL")) == own_team)
+        own_nodes_frac = own_nodes / float(len(ALL_NODES))
+        own_resources = min(1.0, float(obs.get("resources", 0.0) or 0.0) / 100.0)
+
+        baron_progress = max(0.0, float(BARON_HP) - float(baron.get("hp", 0.0) or 0.0)) / float(BARON_HP)
+        if baron.get("allied_lord_alive") and team_of(baron.get("allied_lord_owner", "NEUTRAL")) == own_team:
+            baron_progress = min(2.0, baron_progress + 1.0)
+
+        forward = {"B1", "B2", "B3", "CP5", "CP6"} if own_team == "TEAM_A" else {"A1", "A2", "A3", "CP1", "CP2"}
+        home = set(TEAM_A_PLAYERS) if own_team == "TEAM_A" else set(TEAM_B_PLAYERS)
+        total = fwd = at_home = 0
+        for nid, node in nodes.items():
+            cnt = 0
+            if node.get("owner") == player_id:
+                cnt += sum(int(c or 0) for c in (node.get("units", {}) or {}).values())
+            cnt += sum(int(c or 0) for c in ((node.get("visiting_units", {}) or {}).get(player_id, {}) or {}).values())
+            total += cnt
+            if nid in forward:
+                fwd += cnt
+            if nid in home:
+                at_home += cnt
+        forward_frac = fwd / max(1, total)
+        home_frac = at_home / max(1, total)
+
+        phi = 0.0
+        tempo, win_path, role = order.get("tempo"), order.get("win_path"), order.get("role")
+        if tempo in ("aggressive", "all_in"):
+            phi += enemy_core_damage + forward_frac
+        elif tempo == "turtle":
+            phi += own_core_hp + home_frac
+        if win_path == "economy":
+            phi += own_nodes_frac + own_resources
+        elif win_path == "core_rush":
+            phi += 2.0 * enemy_core_damage
+        elif win_path == "baron_lord":
+            phi += baron_progress
+        elif win_path == "outlast":
+            phi += own_core_hp
+        if role == "carry_push":
+            phi += forward_frac + enemy_core_damage
+        elif role == "anchor_defend":
+            phi += home_frac + own_core_hp
+        elif role == "tech_eco":
+            phi += own_resources + own_nodes_frac
+        elif role == "roam_objective":
+            phi += baron_progress + 0.5 * forward_frac
+        # support_flex: neutral (no extra shaping)
+        return phi
 
     def _info(
         self,

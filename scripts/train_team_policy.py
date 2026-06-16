@@ -98,6 +98,19 @@ def parse_args() -> argparse.Namespace:
         help="Dense symmetric shaping for core damage (reward chipping enemy cores, "
              "penalize losing own). 0 disables; lower (e.g. 0.25) is a gentler finishing nudge.",
     )
+    parser.add_argument(
+        "--no-sample-orders",
+        dest="sample_orders",
+        action="store_false",
+        help="Disable per-episode LLM-manager order sampling (order channel stays neutral).",
+    )
+    parser.add_argument(
+        "--order-shaping-weight",
+        type=float,
+        default=0.5,
+        help="Per-net 'obedience' weight on the potential-based order-alignment shaping. "
+             "0 disables (channel still in obs).",
+    )
     return parser.parse_args()
 
 
@@ -130,6 +143,8 @@ def config_from_args(args: argparse.Namespace) -> TeamPPOConfig:
         device=args.device,
         role_assignment_mode=args.role_assignment_mode,
         core_progress_weight=args.core_progress_weight,
+        sample_orders=args.sample_orders,
+        order_shaping_weight=args.order_shaping_weight,
     )
 
 

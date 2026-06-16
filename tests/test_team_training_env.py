@@ -81,7 +81,9 @@ def test_team_training_env_dead_player_mask_is_hold_only():
 
 
 def test_team_training_env_finalizes_death_time_at_real_tick_limit():
-    env = TeamTrainingEnv(TeamTrainingEnvConfig(seed=15, max_ticks=TICK_LIMIT))
+    # sample_orders off: this test asserts the exact terminal death-time reward,
+    # and order shaping would add a small nonzero term to it.
+    env = TeamTrainingEnv(TeamTrainingEnvConfig(seed=15, max_ticks=TICK_LIMIT, sample_orders=False))
     env.reset()
     assert env.engine is not None
     assert env.state is not None

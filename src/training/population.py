@@ -242,6 +242,10 @@ class PopulationConfig:
     opponent_deterministic: bool = False
     mixed_faction: bool = True
     core_progress_weight: float = 0.5
+    # LLM-manager order channel. v1: uniform order_shaping_weight ("obedience")
+    # for all nets; Tier-2 makes it per-net (recipe/genotype). 0 disables shaping.
+    sample_orders: bool = True
+    order_shaping_weight: float = 0.5
 
     def spec_by_id(self) -> dict[str, NetSpec]:
         return {net.net_id: net for net in self.nets}
@@ -342,6 +346,8 @@ def _run_episode_collect(
         record_replay=False,
         record_trace=False,
         core_progress_weight=float(config_view.get("core_progress_weight", 0.5)),
+        sample_orders=bool(config_view.get("sample_orders", True)),
+        order_shaping_weight=float(config_view.get("order_shaping_weight", 0.5)),
     )
     env = TeamTrainingEnv(env_config)
     observations, _ = env.reset(seed=plan.seed, player_factions=player_factions)
@@ -553,6 +559,8 @@ class PopulationTrainer:
             "opponent_deterministic": self.config.opponent_deterministic,
             "max_ticks": self.config.max_ticks,
             "core_progress_weight": self.config.core_progress_weight,
+            "sample_orders": self.config.sample_orders,
+            "order_shaping_weight": self.config.order_shaping_weight,
         }
 
         worker_count = max(1, self.config.workers)

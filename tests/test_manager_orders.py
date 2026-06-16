@@ -57,3 +57,36 @@ def test_order_carried_through_team_b_mirror():
     assert block[:4][sp.ORDER_TEMPO.index("turtle")] == 1.0
     assert block[4:8][sp.ORDER_WIN_PATH.index("baron_lord")] == 1.0
     assert block[8:13][sp.ORDER_ROLE.index("anchor_defend")] == 1.0
+
+
+# --- env-side: order sampling, injection, and the reward term ---
+from src.training.team_env import TeamTrainingEnv, TeamTrainingEnvConfig
+
+
+def test_orders_sampled_and_injected_into_obs():
+    env = TeamTrainingEnv(TeamTrainingEnvConfig(seed=3, max_ticks=20, sample_orders=True))
+    env.reset()
+    assert set(env._order) == set(env.controlled_players)
+    for plan in env._order.values():
+        assert plan["tempo"] in sp.ORDER_TEMPO
+        assert plan["win_path"] in sp.ORDER_WIN_PATH
+        assert plan["role"] in sp.ORDER_ROLE
+    assert "order" in env.raw_observations()[env.controlled_players[0]]
+
+
+def test_order_reward_term_present_and_disableable():
+    pid = "A1"
+    on = TeamTrainingEnv(TeamTrainingEnvConfig(seed=3, max_ticks=20, sample_orders=True, order_shaping_weight=0.5))
+    on.reset()
+    terms = []
+    for _ in range(15):
+        res = on.step({p: 0 for p in on.controlled_players})
+        terms.append(res.info["reward_components"][pid]["order"])
+        if res.terminal or res.truncated:
+            break
+    assert any(abs(t) > 0 for t in terms)  # channel is live
+
+    off = TeamTrainingEnv(TeamTrainingEnvConfig(seed=3, max_ticks=20, order_shaping_weight=0.0))
+    off.reset()
+    res = off.step({p: 0 for p in off.controlled_players})
+    assert res.info["reward_components"][pid]["order"] == 0.0

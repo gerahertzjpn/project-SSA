@@ -58,6 +58,8 @@ class TeamPPOConfig:
     device: str = "auto"
     role_assignment_mode: str = "fixed"
     core_progress_weight: float = 0.5
+    sample_orders: bool = True
+    order_shaping_weight: float = 0.5
 
     def __post_init__(self) -> None:
         self.controlled_players = tuple(self.controlled_players)
@@ -81,6 +83,8 @@ def _env_config(config: TeamPPOConfig, seed: int) -> TeamTrainingEnvConfig:
         record_replay=False,
         record_trace=False,
         core_progress_weight=config.core_progress_weight,
+        sample_orders=config.sample_orders,
+        order_shaping_weight=config.order_shaping_weight,
     )
 
 
