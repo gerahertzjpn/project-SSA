@@ -277,38 +277,116 @@ FRANCHISES: list[dict] = [
 # Emblems (SVG)
 # --------------------------------------------------------------------------- #
 
-def _shape_svg(shape: str, color: str, accent: str) -> str:
-    """Inner emblem shape (120x120 viewbox, centred at 60,60)."""
-    stroke = f'fill="{color}" stroke="{accent}" stroke-width="4"'
+def _shape_el(shape: str, attrs: str) -> str:
+    """Badge outline element (120 viewbox, centred at 60,60) with given attrs."""
     if shape == "circle":
-        return f'<circle cx="60" cy="60" r="50" {stroke}/>'
+        return f'<circle cx="60" cy="60" r="52" {attrs}/>'
     if shape == "diamond":
-        return f'<polygon points="60,8 112,60 60,112 8,60" {stroke}/>'
+        return f'<polygon points="60,6 114,60 60,114 6,60" {attrs}/>'
     if shape == "triangle":
-        return f'<polygon points="60,12 108,100 12,100" {stroke}/>'
+        return f'<polygon points="60,8 110,104 10,104" {attrs}/>'
     if shape == "hexagon":
-        return ('<polygon points="60,8 105,34 105,86 60,112 15,86 15,34" '
-                f'{stroke}/>')
+        return f'<polygon points="60,6 106,33 106,87 60,114 14,87 14,33" {attrs}/>'
     if shape == "star":
-        pts = ("60,8 71,44 109,44 78,67 90,103 60,80 30,103 42,67 11,44 49,44")
-        return f'<polygon points="{pts}" {stroke}/>'
-    # shield (default)
-    return ('<path d="M60 8 L106 24 V60 Q106 96 60 114 Q14 96 14 60 V24 Z" '
-            f'{stroke}/>')
+        return ('<polygon points="60,6 72,42 110,42 79,66 91,104 60,80 29,104 '
+                f'41,66 10,42 48,42" {attrs}/>')
+    return f'<path d="M60 6 L108 22 V60 Q108 98 60 116 Q12 98 12 60 V22 Z" {attrs}/>'
+
+
+def _shade(hex_color: str, factor: float) -> str:
+    h = hex_color.lstrip("#")
+    r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    r, g, b = (max(0, min(255, round(c * factor))) for c in (r, g, b))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+# Small motif icons (centred ~(60,40)), drawn in the accent colour. {a}=accent.
+_MOTIFS: dict[str, str] = {
+    "chevron": ('<g fill="none" stroke="{a}" stroke-width="5" stroke-linejoin="round" '
+                'stroke-linecap="round"><path d="M48 44 L60 32 L72 44"/>'
+                '<path d="M48 52 L60 40 L72 52"/></g>'),
+    "eye": ('<path d="M46 40 Q60 28 74 40 Q60 52 46 40 Z" fill="none" stroke="{a}" '
+            'stroke-width="3.5"/><circle cx="60" cy="40" r="5" fill="{a}"/>'),
+    "bolt": '<polygon points="63,28 49,44 58,44 53,54 71,38 61,38" fill="{a}"/>',
+    "bars": ('<g fill="{a}"><rect x="48" y="30" width="6" height="22" rx="2"/>'
+             '<rect x="57" y="30" width="6" height="22" rx="2"/>'
+             '<rect x="66" y="30" width="6" height="22" rx="2"/></g>'),
+    "rings": ('<g fill="none" stroke="{a}" stroke-width="4">'
+              '<circle cx="54" cy="40" r="10"/><circle cx="66" cy="40" r="10"/></g>'),
+    "lotus": ('<g fill="{a}"><path d="M60 28 C63 36 63 42 60 50 C57 42 57 36 60 28 Z"/>'
+              '<path d="M60 50 C52 47 47 41 47 34 C55 37 60 44 60 50 Z"/>'
+              '<path d="M60 50 C68 47 73 41 73 34 C65 37 60 44 60 50 Z"/></g>'),
+    "flame": '<path d="M60 28 C68 38 70 46 60 54 C50 46 52 38 60 28 Z" fill="{a}"/>',
+    "wave": ('<g fill="none" stroke="{a}" stroke-width="4" stroke-linecap="round">'
+             '<path d="M46 38 Q53 31 60 38 T74 38"/>'
+             '<path d="M46 47 Q53 40 60 47 T74 47"/></g>'),
+    "crosshair": ('<circle cx="60" cy="40" r="12" fill="none" stroke="{a}" stroke-width="3"/>'
+                  '<g stroke="{a}" stroke-width="3"><line x1="60" y1="26" x2="60" y2="54"/>'
+                  '<line x1="46" y1="40" x2="74" y2="40"/></g>'),
+    "arrow": '<polygon points="60,28 72,44 64,44 64,54 56,54 56,44 48,44" fill="{a}"/>',
+    "compass": ('<circle cx="60" cy="40" r="13" fill="none" stroke="{a}" stroke-width="3"/>'
+                '<polygon points="60,29 65,40 60,51 55,40" fill="{a}"/>'),
+    "coin": ('<circle cx="60" cy="40" r="13" fill="none" stroke="{a}" stroke-width="4"/>'
+             '<circle cx="60" cy="40" r="4.5" fill="{a}"/>'),
+    "crown": '<path d="M47 50 L50 32 L56 43 L60 30 L64 43 L70 32 L73 50 Z" fill="{a}"/>',
+    "diamond": '<polygon points="60,28 71,40 60,52 49,40" fill="none" stroke="{a}" stroke-width="4.5"/>',
+}
+
+_MOTIF_BY_ID: dict[str, str] = {
+    "iron-falcons": "chevron", "quantum-owls": "eye", "crimson-pact": "bolt",
+    "northwind": "bars", "solar-drift": "rings", "black-lotus": "lotus",
+    "emberveil": "flame", "tidebreakers": "wave", "obsidian-syndicate": "crosshair",
+    "aurora-vanguard": "arrow", "dust-rangers": "compass", "nova-collective": "coin",
+    "ravens-guild": "crown", "titan-forge": "bars", "zephyr-syndicate": "arrow",
+    "mirage-pact": "diamond", "glacier-kings": "diamond", "phoenix-rising": "flame",
+    "void-hunters": "crosshair", "golden-spire": "coin", "storm-petrels": "bolt",
+    "silent-order": "bars", "red-meridian": "chevron", "echo-dynasty": "rings",
+    "nomad-syndicate": "compass",
+}
 
 
 def emblem_svg(franchise: dict) -> str:
     abbrev = str(franchise.get("abbrev", "?"))[:3]
-    color = franchise.get("color", "#444")
-    accent = franchise.get("accent", "#eee")
-    font = 40 if len(abbrev) <= 2 else 30
+    color = franchise.get("color", "#444444")
+    accent = franchise.get("accent", "#eeeeee")
+    shape = franchise.get("shape", "shield")
+    fid = str(franchise.get("franchise_id", "x"))
+    dark = _shade(color, 0.58)
+    # Background treatment varies the look beyond shape+colour.
+    style = ("solid", "split", "ring")[sum(ord(c) for c in fid) % 3]
+    motif = _MOTIFS.get(_MOTIF_BY_ID.get(fid, "diamond"), _MOTIFS["diamond"]).format(a=accent)
+
+    clip = f"clip-{fid}"
+    parts = [
+        f'<defs><clipPath id="{clip}">{_shape_el(shape, "")}</clipPath></defs>',
+        _shape_el(shape, f'fill="{color}"'),
+    ]
+    if style == "split":
+        parts.append(
+            f'<g clip-path="url(#{clip})"><rect x="60" y="0" width="60" height="120" '
+            f'fill="{dark}"/></g>'
+        )
+    parts.append(_shape_el(shape, f'fill="none" stroke="{accent}" stroke-width="4"'))
+    if style == "ring":
+        parts.append(
+            f'<g transform="translate(60 60) scale(0.72) translate(-60 -60)">'
+            f'{_shape_el(shape, f"fill=\"none\" stroke=\"{accent}\" stroke-width=\"5\"")}</g>'
+        )
+    parts.append(motif)
+    # Abbreviation, fitted so 2-3 chars never overflow the badge.
+    if len(abbrev) >= 3:
+        text_attrs = 'font-size="20" textLength="50" lengthAdjust="spacingAndGlyphs"'
+    else:
+        text_attrs = 'font-size="24"'
+    parts.append(
+        f'<text x="60" y="70" text-anchor="middle" dominant-baseline="central" '
+        f'font-family="Arial, sans-serif" font-weight="800" {text_attrs} '
+        f'fill="{accent}">{abbrev}</text>'
+    )
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">'
-        f'{_shape_svg(franchise.get("shape", "shield"), color, accent)}'
-        f'<text x="60" y="60" text-anchor="middle" dominant-baseline="central" '
-        f'font-family="Arial, sans-serif" font-size="{font}" font-weight="700" '
-        f'fill="{accent}">{abbrev}</text>'
-        '</svg>'
+        + "".join(parts)
+        + "</svg>"
     )
 
 
