@@ -52,7 +52,7 @@ FRANCHISES: list[dict] = [
         "color": "#4B3F8F", "accent": "#E0DBF5", "shape": "hexagon",
     },
     {
-        "franchise_id": "crimson-pact", "name": "Crimson Pact", "abbrev": "CP",
+        "franchise_id": "crimson-pact", "name": "Crimson Pact", "abbrev": "CRI",
         "manager": "Марко Девич",
         "persona": (
             "Ты Марко Девич, менеджер Crimson Pact, бывший киберспортсмен-хайроллер. "
@@ -288,8 +288,10 @@ def _shape_el(shape: str, attrs: str) -> str:
     if shape == "hexagon":
         return f'<polygon points="60,6 106,33 106,87 60,114 14,87 14,33" {attrs}/>'
     if shape == "star":
-        return ('<polygon points="60,6 72,42 110,42 79,66 91,104 60,80 29,104 '
-                f'41,66 10,42 48,42" {attrs}/>')
+        # Chunky 5-point star (outer r52, inner r30) — a fatter central body so
+        # the abbreviation fits inside instead of overflowing the thin arms.
+        return ('<polygon points="60,8 78,36 110,44 88,69 91,102 60,90 29,102 '
+                f'32,69 10,44 42,36" {attrs}/>')
     return f'<path d="M60 6 L108 22 V60 Q108 98 60 116 Q12 98 12 60 V22 Z" {attrs}/>'
 
 
