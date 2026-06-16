@@ -261,6 +261,9 @@ class PopulationConfig:
     # for all nets; Tier-2 makes it per-net (recipe/genotype). 0 disables shaping.
     sample_orders: bool = True
     order_shaping_weight: float = 0.5
+    # Fraction of episodes with NO order (channel zeroed, shaping off) so nets also
+    # learn free play when un-ordered ("no order = play as usual").
+    no_order_prob: float = 0.2
 
     def spec_by_id(self) -> dict[str, NetSpec]:
         return {net.net_id: net for net in self.nets}
@@ -371,6 +374,7 @@ def _run_episode_collect(
         core_progress_weight=float(config_view.get("core_progress_weight", 0.5)),
         sample_orders=bool(config_view.get("sample_orders", True)),
         order_shaping_weight=obedience_by_slot,
+        no_order_prob=float(config_view.get("no_order_prob", 0.0)),
     )
     env = TeamTrainingEnv(env_config)
     observations, _ = env.reset(seed=plan.seed, player_factions=player_factions)

@@ -1325,6 +1325,12 @@ def _player_order(obs: dict, player_id: str) -> dict:
 
 def _order_features(obs: dict, player_id: str) -> list[float]:
     entry = _player_order(obs, player_id)
+    # Explicit "no order" -> all-zeros: the channel is masked off and the net plays
+    # freely (distinct from any specific order, which is one-hot). Pass
+    # {"absent": True} for a player to mask the order. Missing/empty entries keep
+    # the neutral default (back-compat with un-ordered callers).
+    if entry.get("absent"):
+        return [0.0] * ORDER_FEATURES
     tempo = entry.get("tempo", ORDER_TEMPO_DEFAULT)
     win_path = entry.get("win_path", ORDER_WIN_PATH_DEFAULT)
     role = entry.get("role", ORDER_ROLE_DEFAULT)

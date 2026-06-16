@@ -76,6 +76,9 @@ class TeamTrainingEnvConfig:
     sample_orders: bool = True
     # float (uniform) OR {player_id: weight} for per-net obedience (population).
     order_shaping_weight: float | dict = 0.5
+    # Fraction of episodes with NO order at all (channel masked to zeros, order
+    # shaping off) so the net also learns to play freely when un-ordered. 0 = off.
+    no_order_prob: float = 0.0
     # Per-player faction map {player_id: "humans"|"infected"|"robots"}. When None,
     # make_initial_state defaults every player to "humans" (legacy behavior).
     player_factions: Optional[dict] = None
@@ -478,9 +481,15 @@ class TeamTrainingEnv:
         return float(weight)
 
     def _sample_orders(self) -> dict[str, dict]:
-        """Random per-player game plan for one episode (training-side; no LLM)."""
+        """Random per-player game plan for one episode (training-side; no LLM).
+
+        With probability ``no_order_prob`` the whole episode has NO order (each
+        player marked absent → zeros in obs, order shaping nil) so the net also
+        learns to play freely when un-ordered."""
         if not self.config.sample_orders:
             return {}
+        if self.config.no_order_prob > 0.0 and float(self.rng.random()) < self.config.no_order_prob:
+            return {player_id: {"absent": True} for player_id in self.controlled_players}
         return {
             player_id: {
                 "tempo": str(self.rng.choice(ORDER_TEMPO)),
@@ -498,7 +507,7 @@ class TeamTrainingEnv:
         style*. v1, deliberately simple and tunable (see spec).
         """
         order = (self._order or {}).get(player_id)
-        if not order:
+        if not order or order.get("absent"):  # no order -> no alignment potential
             return 0.0
         own_team = team_of(player_id)
         nodes = obs.get("nodes", {}) or {}

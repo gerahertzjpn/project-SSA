@@ -68,6 +68,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--master-seed", type=int, default=20260609)
     parser.add_argument("--opponent-mode", choices=["stochastic", "argmax"], default="stochastic")
+    parser.add_argument("--no-order-prob", type=float, default=0.2,
+                        help="Fraction of episodes with NO order (channel zeroed, shaping off) "
+                             "so nets learn to play freely when un-ordered. 0 disables.")
     parser.add_argument("--init-only", action="store_true",
                         help="Write the population spec, registry and initial checkpoints, then exit")
     parser.add_argument("--smoke", action="store_true",
@@ -116,6 +119,7 @@ def make_config(args: argparse.Namespace) -> PopulationConfig:
         device=args.device,
         opponent_deterministic=(args.opponent_mode == "argmax"),
         mixed_faction=True,
+        no_order_prob=float(args.no_order_prob),
     )
 
 
