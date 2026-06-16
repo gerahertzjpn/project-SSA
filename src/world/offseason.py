@@ -23,7 +23,7 @@ Stage order (rationale in docs/cloudcode/WORLD_OFFSEASON.md):
 from __future__ import annotations
 
 from src.world import (
-    calendar as cal, feature_flags, freeagents, rookies, soloq,
+    calendar as cal, feature_flags, freeagents, manager, rookies, soloq,
     training_auction, training_ops, transfers,
 )
 
@@ -175,10 +175,12 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     picks = transfers.rookie_draft(world)
     report["stages"]["rookie_draft"] = {"picks": picks, "n": len(picks)}
 
-    # 7. Coaching
+    # 7. Coaching — managers pick coaches (heuristic; LLM later)
+    coach_moves = manager.run_coaching_stage(world)
     report["stages"]["coaching"] = {
+        "moves": coach_moves, "n": len(coach_moves),
         "llm_decisions": feature_flags.ui_state("llm_manager"),
-        "note": "наём/смена тренера готов; решения LLM в разработке",
+        "note": "менеджеры выбирают тренеров (эвристика; LLM в разработке)",
     }
 
     # 8. Advance: close the off-season -> next season

@@ -136,3 +136,14 @@ create_player 4.0M, style_spec 1.0M, obedience_tune 0.75M.
 
 Тренировочные операции могут целиться и в тренера (`who_can_be_chosen` включает
 `coach` для skill_up/meta_adapt/style_spec) — тренер растит свою тактику.
+
+**Характер МЕНЕДЖЕРА переделан под новые реалии** (`src/world/manager.py`): раз
+менеджер больше не влияет на саму игру, его персона — это УПРАВЛЕНЧЕСКИЙ характер,
+а не стиль игры. `ManagerProfile` (натуральный, из id франшизы): aggression,
+frugality, youth_focus, risk, patience, **coach_priority**, loyalty. Из него
+строится персона (`manager_persona`) и решения фронт-офиса: `pick_coach` (новая
+ключевая обязанность — нанять тренера), `wants_to_buy/sell`, `auction_bid`,
+`max_offer`, `certificate_intent`. Старый tactical `default_plan` франшизы в World
+не используется менеджером — тактику задаёт тренер (его `tactic_bias`). Цель любого
+менеджера — титул верхней лиги. Решения — эвристики, которые LLM-менеджер
+консультирует и переопределяет в характере (LLM пока залочен, `in_development`).
