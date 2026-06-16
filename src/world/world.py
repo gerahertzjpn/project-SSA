@@ -148,6 +148,37 @@ def make_team(world_id: str, franchise: dict) -> dict:
         "trophies": [],                         # [{season, title}]
         "transfer_requests_used": 0,            # per transfer window (reset each window)
         "training_certificates": [],            # bankable gradeslot certs [{cert_id, steps, season}]
+        "coach": None,                          # coach_id of the hired RL coach (tactics)
+    }
+
+
+# Coach character: a default tactical leaning, paired with the order vocabulary.
+_COACH_TEMPO = ("turtle", "balanced", "aggressive", "all_in")
+_COACH_WIN_PATH = ("economy", "core_rush", "baron_lord", "outlast")
+
+
+def coach_id(world_id: str, index: int) -> str:
+    return f"{world_id}-c{index:03d}"
+
+
+def make_coach(world_id: str, index: int, name: str, rng: random.Random) -> dict:
+    """A coach is a hireable RL net responsible for TACTICS (lineup, in-match subs,
+    positions, the per-match order). The LLM manager hires it like a player; the
+    coach net is trained like the players. ``net_id`` (shared pool) is optional in
+    the foundation."""
+    return {
+        "coach_id": coach_id(world_id, index),
+        "net_id": None,
+        "name": name,
+        "rating": START_RATING,                 # coach competence (RL skill)
+        "salary": 0.0,
+        "salary_history": [],
+        "status": "free_agent",                 # free_agent | hired
+        "team_id": None,
+        "tactic_bias": {"tempo": rng.choice(_COACH_TEMPO),
+                        "win_path": rng.choice(_COACH_WIN_PATH)},
+        "lineage": {"parent_id": None, "origin": "founder", "generation": 0},
+        "history": [],
     }
 
 
@@ -185,6 +216,14 @@ def new_world(
         p = make_player(world_id, i, nicks[i], rng, tier=tier)
         players[p["player_id"]] = p
 
+    # Coach pool: one per team + a small free-agent surplus to hire from.
+    n_coaches = n_teams + max(4, n_teams // 4)
+    coach_names = _unique_nicknames(n_coaches, rng)
+    coaches: dict[str, dict] = {}
+    for i in range(n_coaches):
+        c = make_coach(world_id, i, "Coach " + coach_names[i], rng)
+        coaches[c["coach_id"]] = c
+
     return {
         "version": STORE_VERSION,
         "world_id": world_id,
@@ -195,7 +234,9 @@ def new_world(
         "config": dict(config or {}),
         "teams": teams,
         "players": players,
+        "coaches": coaches,
         "free_agents": list(players.keys()),
+        "free_coaches": list(coaches.keys()),
         "rookies_pool": [],
         "calendar": [],
         "history": [],
@@ -217,6 +258,18 @@ def get_player(world: dict, pid: str) -> dict:
     if p is None:
         raise WorldError(f"unknown player {pid!r}")
     return p
+
+
+def get_coach(world: dict, cid: str) -> dict:
+    c = world.get("coaches", {}).get(cid)
+    if c is None:
+        raise WorldError(f"unknown coach {cid!r}")
+    return c
+
+
+def team_coach(world: dict, team: dict) -> Optional[dict]:
+    cid = team.get("coach")
+    return world.get("coaches", {}).get(cid) if cid else None
 
 
 def teams_in_league(world: dict, league: str) -> list[dict]:

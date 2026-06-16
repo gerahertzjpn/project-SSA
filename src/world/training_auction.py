@@ -23,10 +23,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
+from src.world.training_ops import ENABLED_OPS as TRAINING_TYPES  # A–F ops (single source)
+
 DEFAULT_SLOT_STEPS = 1_000_000
 FORK_MIN_STEPS = 4_000_000
-# Step budget is unconstrained for these; create_player is gated by FORK_MIN_STEPS.
-TRAINING_TYPES = ("skill_up", "teamplay", "meta_adapt", "create_player")
+# Step budget is unconstrained for most ops; create_player is gated by FORK_MIN_STEPS.
 
 
 @dataclass
@@ -151,18 +152,15 @@ def request_spend(world: dict, team_id: str, spend_type: str, cert_ids: list[str
     }
 
 
-def execute_training(world: dict, job: dict, config: TrainingConfig) -> None:
-    """HARD STUB — do not implement until the owner picks the training menu.
+def execute_training(world: dict, job: dict, config: TrainingConfig, *, backend=None):
+    """Execute a pending training job via the A–F operation dispatch.
 
-    Intended backbone (docs/cloudcode/WORLD_TRAINING_OPTIONS.md):
-      - create_player : src/training/lineage.run_branch_select_cycle (fork+mini-train)
-      - skill_up      : continued PPO self-play (skill = winrate vs a fixed gauntlet)
-      - teamplay      : joint roster co-training in the team env
-      - meta_adapt    : training weighted toward the current top opponents
-    Validation = held-out gauntlet winrate / net-Elo + behavioral + uniqueness
-    guards. The owner is choosing which operations to support. NO TRAINING NOW.
+    Operations and their cards live in src/world/training_ops.py. Real training
+    runs only when an explicit ``backend`` (the PPO/lineage infra) is passed; with
+    the default (None -> NullBackend) any attempt is refused, so NO TRAINING runs
+    until the owner enables a backend. Returns a TrainingResult on success.
     """
-    raise NotImplementedError(
-        "training execution is a flagged stub — choose the training menu "
-        "(WORLD_TRAINING_OPTIONS.md) before wiring real training. No training right now."
-    )
+    from src.world import training_ops  # local import keeps torch out of the hot path
+    ctx = {"world": world, "team_id": job.get("team_id"), "target": job.get("target", {})}
+    return training_ops.execute(job["spend_type"], ctx,
+                                total_steps=job.get("total_steps", 0), backend=backend)

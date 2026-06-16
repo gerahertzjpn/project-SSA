@@ -14,7 +14,7 @@ import zlib
 from typing import Callable, Optional
 
 from src.regionals.elo import expected_score
-from src.world import brackets, calendar as cal, economy, soloq, team_elo
+from src.world import brackets, calendar as cal, coach, economy, soloq, team_elo
 from src.world.world import (
     get_player, lower_teams, roster_players, upper_teams,
 )
@@ -31,13 +31,16 @@ PlayFn = Callable[[str, str, int], dict]
 # Deterministic default match engine (no nets needed)
 # --------------------------------------------------------------------------- #
 def team_strength(world: dict, team_id: str) -> float:
-    """Avg SoloQ rating of a team's roster — the proxy strength for the
-    foundation's deterministic match simulation."""
+    """Proxy strength for the deterministic sim: avg SoloQ of the coach-picked
+    starting three, plus a coach competence bonus. (The coach selects the best 3;
+    extra roster players sit on the bench until subbed.)"""
     team = world["teams"][team_id]
     players = roster_players(world, team)
     if not players:
-        return soloq.K_FACTOR * 0 + 1000.0
-    return sum(p["soloq_rating"] for p in players) / len(players)
+        return 1000.0
+    starters = sorted(players, key=lambda p: -economy.player_value(p))[:3]
+    avg = sum(p["soloq_rating"] for p in starters) / len(starters)
+    return avg + coach.coach_bonus(world, team_id)
 
 
 def make_play_fn(world: dict, seed: int = 0) -> PlayFn:
@@ -278,6 +281,7 @@ def bootstrap_world(world: dict, *, seed: int = 0, play: Optional[PlayFn] = None
         # Foundation supports the canonical 22; degrade gracefully otherwise.
         pass
     balanced_draft(world, all_team_ids, rng, target_size=3)
+    coach.assign_default_coaches(world)  # every team gets a tactical brain
 
     # 3. Bootstrap leagues
     lower_ids = all_team_ids[:LOWER_SIZE]

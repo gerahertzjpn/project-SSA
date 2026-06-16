@@ -151,9 +151,12 @@ def test_eta_shown_for_slot():
     assert cfg.est_minutes_per_slot() == 20.0
 
 
-def test_execute_training_is_a_hard_stub():
+def test_execute_training_refused_without_backend():
+    # valid job, but no real backend -> NullBackend refuses (no training runs)
+    job = {"team_id": "t", "spend_type": "skill_up", "total_steps": 1_000_000,
+           "target": {"kind": "player", "player_id": "p"}}
     with pytest.raises(NotImplementedError):
-        ta.execute_training({}, {"spend_type": "skill_up"}, ta.TrainingConfig())
+        ta.execute_training({"teams": {}}, job, ta.TrainingConfig())
 
 
 def test_public_state_shows_awards_for_llm():
