@@ -21,6 +21,59 @@ if str(ROOT) not in sys.path:
 from src.core.constants import FACTION_TYPES, PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS
 from src.core.replay import REPLAY_SCHEMA_VERSION
 from src.core.runner import current_code_commit, rules_meta, run_match
+from src.training.spaces import ORDER_ROLE, ORDER_TEMPO, ORDER_WIN_PATH
+
+# Strategy (manager/coach order) vocabulary the nets are trained on, with RU labels
+# for the UI. "none" = no order -> the net plays freely (absent -> zeroed channel).
+_STRATEGY_LABELS = {
+    "tempo": {"turtle": "Черепаха", "balanced": "Баланс",
+              "aggressive": "Агрессия", "all_in": "Олл-ин"},
+    "win_path": {"economy": "Экономика", "core_rush": "Раш ядра",
+                 "baron_lord": "Барон/Лорд", "outlast": "Измор"},
+    "role": {"carry_push": "Кэрри-пуш", "anchor_defend": "Анкор-защита",
+             "tech_eco": "Тех-эко", "roam_objective": "Роум-объективы",
+             "support_flex": "Саппорт-флекс"},
+}
+
+
+def strategy_vocab() -> dict:
+    """Labeled order vocabulary for the match-tab strategy selectors."""
+    def opts(values, group):
+        return [{"value": v, "label": _STRATEGY_LABELS[group].get(v, v)} for v in values]
+    return {
+        "none": {"value": "none", "label": "— нет приказа —"},
+        "tempo": opts(ORDER_TEMPO, "tempo"),
+        "win_path": opts(ORDER_WIN_PATH, "win_path"),
+        "role": opts(ORDER_ROLE, "role"),
+    }
+
+
+def parse_player_orders(orders_in: dict) -> "dict | None":
+    """Build the per-player order dict for run_match from a match request.
+
+    Each player's strategy is {tempo, win_path, role}; "no order" (or unset) ->
+    {"absent": True} so the net plays freely (the masked-off channel it was trained
+    on). Returns None when NO player has a strategy, leaving the engine default
+    untouched (backward compatible with un-strategized matches).
+    """
+    if not isinstance(orders_in, dict):
+        return None
+    result: dict[str, dict] = {}
+    has_strategy = False
+    for player_id in PLAYER_IDS:
+        entry = orders_in.get(player_id) or {}
+        if not isinstance(entry, dict):
+            entry = {}
+        if entry.get("absent") or str(entry.get("mode", "")) == "none" or not entry.get("tempo"):
+            result[player_id] = {"absent": True}
+            continue
+        tempo, win_path, role = (str(entry.get("tempo")), str(entry.get("win_path")),
+                                 str(entry.get("role")))
+        if tempo not in ORDER_TEMPO or win_path not in ORDER_WIN_PATH or role not in ORDER_ROLE:
+            raise ValueError(f"Invalid strategy for {player_id}: {entry}")
+        result[player_id] = {"tempo": tempo, "win_path": win_path, "role": role}
+        has_strategy = True
+    return result if has_strategy else None
 from src.bots.policy_bot import (
     checkpoint_is_compatible,
     default_policy_checkpoint,
@@ -61,7 +114,11 @@ MAX_UI_RUNS = 100
 MAX_POLICY_CHECKPOINT_SCAN = 120
 MAX_DISCOVERED_POLICY_MODELS = 30
 REPLAY_NAME = re.compile(r"^replay_\d+\.json$")
-POPULATION_18_REGISTRY = ROOT / "training_runs/population_18_v1/registry.json"
+# The current trained anchor population (base18_v1). Falls back to the old
+# population_18_v1 only if base18 is absent.
+POPULATION_18_REGISTRY = ROOT / "training_runs/base18_v1/registry.json"
+if not POPULATION_18_REGISTRY.exists():
+    POPULATION_18_REGISTRY = ROOT / "training_runs/population_18_v1/registry.json"
 
 _RECIPE_LABEL = {
     "baseline": "Baseline",
@@ -399,6 +456,8 @@ def generate_replays(payload: dict) -> dict:
             raise ValueError(f"Unknown faction for {player_id}: {faction}; expected one of: {choices}")
         player_factions[player_id] = faction
 
+    orders_arg = parse_player_orders(payload.get("orders", {}) or {})
+
     clear_replays()
     results = []
     winners: dict[str, int] = {}
@@ -412,6 +471,7 @@ def generate_replays(payload: dict) -> dict:
             mode="replay",
             player_models=player_models,
             player_factions=player_factions,
+            orders=orders_arg,
         )
         winners[result.winner] = winners.get(result.winner, 0) + 1
         winner_types[result.winner_type] = winner_types.get(result.winner_type, 0) + 1
@@ -429,6 +489,7 @@ def generate_replays(payload: dict) -> dict:
         "seed": seed,
         "players": player_models,
         "factions": player_factions,
+        "orders": orders_arg or {},
         "winners": winners,
         "winner_types": winner_types,
         "results": results,
@@ -584,6 +645,7 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
                 },
                 "factions": list(FACTION_TYPES),
                 "models": available_models(),
+                "strategies": strategy_vocab(),
                 "max_ui_runs": MAX_UI_RUNS,
                 "replays": replay_files(),
                 "server": server_info(),

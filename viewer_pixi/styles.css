@@ -275,7 +275,25 @@ select:disabled {
 }
 
 .player-config-row {
-  grid-template-columns: 34px minmax(150px, 1.3fr) minmax(92px, 0.7fr);
+  grid-template-columns: 34px minmax(120px, 1.1fr) minmax(78px, 0.55fr) minmax(150px, 1.5fr);
+}
+
+.player-strategy {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  min-width: 0;
+}
+
+.player-strategy select {
+  width: 100%;
+  min-width: 0;
+  font-size: 11px;
+}
+
+.player-strategy.strategy-off select[data-player-winpath],
+.player-strategy.strategy-off select[data-player-role] {
+  opacity: 0.45;
 }
 
 .player-slot {

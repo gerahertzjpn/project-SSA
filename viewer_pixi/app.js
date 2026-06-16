@@ -114,6 +114,25 @@ const FACTION_LABELS = {
   infected: "Infected",
   robots: "Robots",
 };
+
+// Strategy (manager/coach order) vocabulary — mirrors the server; used offline.
+const FALLBACK_STRATEGIES = {
+  none: { value: "none", label: "— нет приказа —" },
+  tempo: [
+    { value: "turtle", label: "Черепаха" }, { value: "balanced", label: "Баланс" },
+    { value: "aggressive", label: "Агрессия" }, { value: "all_in", label: "Олл-ин" },
+  ],
+  win_path: [
+    { value: "economy", label: "Экономика" }, { value: "core_rush", label: "Раш ядра" },
+    { value: "baron_lord", label: "Барон/Лорд" }, { value: "outlast", label: "Измор" },
+  ],
+  role: [
+    { value: "carry_push", label: "Кэрри-пуш" }, { value: "anchor_defend", label: "Анкор-защита" },
+    { value: "tech_eco", label: "Тех-эко" }, { value: "roam_objective", label: "Роум-объективы" },
+    { value: "support_flex", label: "Саппорт-флекс" },
+  ],
+};
+const DEFAULT_ROLE_BY_SLOT = { "1": "carry_push", "2": "anchor_defend", "3": "support_flex" };
 const FALLBACK_MODELS = [
   { id: "random", label: "Random Bot", kind: "baseline", show_by_default: true },
   { id: "scripted", label: "Scripted Bot", kind: "baseline", show_by_default: true },
@@ -130,6 +149,7 @@ const appState = {
   players: [...PLAYER_IDS],
   teams: { ...TEAM_PLAYERS },
   factions: [...DEFAULT_FACTIONS],
+  strategies: null,
   apiAvailable: false,
   apiStale: false,
   serverInfo: null,
@@ -330,6 +350,7 @@ async function loadReplayList() {
     appState.apiStale = Boolean(appState.serverInfo?.stale);
     appState.samples = payload.replays?.length ? payload.replays : [...FALLBACK_REPLAYS];
     appState.models = payload.models?.length ? payload.models : [...FALLBACK_MODELS];
+    appState.strategies = payload.strategies || appState.strategies;
     appState.players = payload.players?.length ? payload.players : [...PLAYER_IDS];
     appState.teams = payload.teams || { ...TEAM_PLAYERS };
     appState.factions = payload.factions?.length ? payload.factions : [...DEFAULT_FACTIONS];
@@ -429,12 +450,77 @@ function populatePlayerConfigGrid() {
       });
       syncFactionLock(model, faction);
 
-      row.append(slot, model, faction);
+      const strategy = buildStrategyControls(playerId);
+      row.append(slot, model, faction, strategy);
       rows.appendChild(row);
     }
     group.appendChild(rows);
     els.playerConfigGrid.appendChild(group);
   }
+}
+
+function addOption(select, value, label) {
+  const opt = document.createElement("option");
+  opt.value = value;
+  opt.textContent = label;
+  select.appendChild(opt);
+}
+
+// Per-player strategy (manager/coach order): tempo + win_path + role, or "no order"
+// (-> the net plays freely). Returned to the server as `orders` for the match.
+function buildStrategyControls(playerId) {
+  const voc = appState.strategies || FALLBACK_STRATEGIES;
+  const wrap = document.createElement("span");
+  wrap.className = "player-strategy";
+
+  const tempo = document.createElement("select");
+  tempo.dataset.playerTempo = playerId;
+  tempo.title = "Стратегия (приказ): темп — «нет приказа» = играет свободно";
+  tempo.setAttribute("aria-label", `${playerId} стратегия: темп`);
+  addOption(tempo, voc.none.value, voc.none.label);
+  for (const o of voc.tempo) addOption(tempo, o.value, o.label);
+
+  const winpath = document.createElement("select");
+  winpath.dataset.playerWinpath = playerId;
+  winpath.title = "Стратегия: путь к победе";
+  for (const o of voc.win_path) addOption(winpath, o.value, o.label);
+
+  const role = document.createElement("select");
+  role.dataset.playerRole = playerId;
+  role.title = "Стратегия: роль";
+  for (const o of voc.role) addOption(role, o.value, o.label);
+
+  tempo.value = "none";
+  role.value = DEFAULT_ROLE_BY_SLOT[playerId.slice(1)] || "support_flex";
+
+  const sync = () => {
+    const off = tempo.value === "none";
+    winpath.disabled = off;
+    role.disabled = off;
+    wrap.classList.toggle("strategy-off", off);
+  };
+  tempo.addEventListener("change", sync);
+  sync();
+
+  wrap.append(tempo, winpath, role);
+  return wrap;
+}
+
+// Read the per-player strategy selectors into the orders payload.
+function playerOrderSelection() {
+  const grid = els.playerConfigGrid;
+  const orders = {};
+  for (const playerId of appState.players.length ? appState.players : PLAYER_IDS) {
+    const tempo = grid?.querySelector(`select[data-player-tempo="${playerId}"]`);
+    if (!tempo || tempo.value === "none") {
+      orders[playerId] = { mode: "none" };
+      continue;
+    }
+    const winpath = grid.querySelector(`select[data-player-winpath="${playerId}"]`);
+    const role = grid.querySelector(`select[data-player-role="${playerId}"]`);
+    orders[playerId] = { tempo: tempo.value, win_path: winpath?.value, role: role?.value };
+  }
+  return orders;
 }
 
 function populateModelOptions(select, selectedId) {
@@ -577,6 +663,7 @@ async function generateReplays() {
   const seed = Number(els.generateSeedInput.value || 20260602);
   const players = playerModelSelection();
   const factions = playerFactionSelection();
+  const orders = playerOrderSelection();
   appState.generating = true;
   validateGeneratorControls();
   setGenerateStatus("Generating", "loading", `${runs} matches | ${matchConfigSummary(players, factions)}`);
@@ -585,7 +672,7 @@ async function generateReplays() {
     const payload = await fetchJson("/api/generate-replays", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ runs, seed, players, factions }),
+      body: JSON.stringify({ runs, seed, players, factions, orders }),
     });
     appState.serverInfo = payload.server || appState.serverInfo;
     appState.apiStale = Boolean(appState.serverInfo?.stale);
