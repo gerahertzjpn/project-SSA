@@ -19,10 +19,13 @@ RECOMMENDED_STEPS_PER_AGENT = MIN_TRAINING_STEPS  # 800k
 
 @dataclass
 class FreeAgentBudget:
-    """Owner-set free-agent upkeep. Keep the total below the rookie budget."""
+    """Owner-set free-agent upkeep. ENTIRELY OPTIONAL and fully owner-driven:
+    the owner decides WHO and HOW MANY to keep in form (or skips it altogether by
+    not passing a budget). Total stays well below the rookie budget by design."""
+    agent_ids: list[str] | None = None  # owner names EXACT free agents to train
     steps_per_agent: int = RECOMMENDED_STEPS_PER_AGENT
-    max_agents: int | None = 6          # cap how many FAs train (None = all)
-    select: str = "by_rating"           # which FAs: strongest keep form first
+    max_agents: int | None = None       # used only if agent_ids is None
+    select: str = "by_rating"           # auto-pick order when agent_ids is None
 
     def __post_init__(self):
         if self.steps_per_agent < MIN_TRAINING_STEPS:
@@ -35,13 +38,21 @@ def free_agents(world: dict) -> list[str]:
 
 
 def select_agents(world: dict, budget: FreeAgentBudget) -> list[str]:
-    """Pick which free agents to maintain this off-season."""
-    fas = free_agents(world)
+    """Which free agents to maintain — the owner's explicit choice if given,
+    otherwise an auto top-N by the chosen order. With no explicit list AND no
+    cap, train NONE (the owner must opt in)."""
+    available = set(free_agents(world))
+    if budget.agent_ids is not None:
+        # honor exactly what the owner named (ignore anyone no longer a free agent)
+        return [pid for pid in budget.agent_ids if pid in available]
+    if budget.max_agents is None:
+        return []  # owner gave no selection -> train nobody
+    fas = list(available)
     if budget.select == "by_rating":
         fas.sort(key=lambda pid: -valuation.skill_score(world["players"][pid]))
-    if budget.max_agents is not None:
-        fas = fas[: budget.max_agents]
-    return fas
+    else:
+        fas.sort()
+    return fas[: budget.max_agents]
 
 
 def maintenance_jobs(world: dict, budget: FreeAgentBudget) -> list[dict]:

@@ -85,6 +85,31 @@ def test_eligible_parents_excludes_top():
     assert len(parents) < len(w["players"])  # top fraction removed
 
 
+def test_rostered_player_is_never_a_rookie_parent():
+    # fairness: a player a team owns must not be forked into a free rookie
+    w = new_world("w-fair", FRANCHISES, seed=9)
+    tid = list(w["teams"])[0]
+    owned = list(w["players"])[30]
+    _roster(w, tid, [owned], [1000])
+    assert owned not in rookies.eligible_parents(w)
+    # and every eligible parent is unowned
+    assert all(w["players"][pid]["team_id"] is None for pid in rookies.eligible_parents(w))
+
+
+def test_team_fork_parents_excludes_other_teams_players():
+    w = new_world("w-tfp", FRANCHISES, seed=10)
+    ta, tb = list(w["teams"])[:2]
+    mine = list(w["players"])[0]
+    theirs = list(w["players"])[1]
+    free = list(w["players"])[2]
+    _roster(w, ta, [mine], [1000])
+    _roster(w, tb, [theirs], [1000])
+    parents = rookies.team_fork_parents(w, ta)
+    assert mine in parents            # own asset (consent)
+    assert free in parents            # unowned
+    assert theirs not in parents      # another team's player — never
+
+
 def test_generate_rookies_creates_raw_high_upside_cards():
     w = new_world("w-gen", FRANCHISES, seed=6)
     budget = rookies.RookieBudget(n_rookies=4, steps_per_rookie=1_000_000, extra_minutes=30)

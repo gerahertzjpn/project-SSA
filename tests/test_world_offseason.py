@@ -101,6 +101,21 @@ def test_combined_launch_merges_team_rookies_and_free_agents():
     assert rep["stages"]["free_agents"]["n"] == 3
 
 
+def test_free_agents_owner_selected_and_optional():
+    w = _bootstrapped()
+    fas = freeagents.free_agents(w)
+    assert len(fas) >= 2
+    # explicit owner choice is honored exactly
+    chosen = fas[:2]
+    jobs = freeagents.maintenance_jobs(w, freeagents.FreeAgentBudget(agent_ids=chosen))
+    assert {j["target"]["player_id"] for j in jobs} == set(chosen)
+    # no explicit list and no cap -> owner opted out -> nobody trains
+    assert freeagents.maintenance_jobs(w, freeagents.FreeAgentBudget()) == []
+    # fully optional: no budget at all -> stage trains nobody
+    rep = offseason.run_offseason(w, seed=1)
+    assert rep["stages"]["free_agents"]["n"] == 0
+
+
 def test_free_agent_budget_smaller_than_rookies():
     # owner estimate: total free-agent compute < total rookie compute
     w = _bootstrapped()

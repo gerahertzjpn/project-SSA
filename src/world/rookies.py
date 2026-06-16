@@ -45,15 +45,30 @@ class RookieBudget:
 
 
 def eligible_parents(world: dict, exclude_top_fraction: float = EXCLUDE_TOP_FRACTION) -> list[str]:
-    """Parent pool for forks: everyone EXCEPT the strongest fraction (forbidden to
-    fork from current top players)."""
+    """Parent pool for rookie forks. FAIRNESS: we never fork from a player a team
+    owns — that player is the team's asset. Parents come only from **unowned**
+    players (free agents + released/retired, i.e. ``team_id is None`` and not
+    rostered), and we still exclude the strongest fraction (anti-imba)."""
     players = list(world["players"].values())
     if not players:
         return []
     ranked = sorted(players, key=valuation.skill_score, reverse=True)
     cut = int(len(ranked) * exclude_top_fraction)
     top = {p["player_id"] for p in ranked[:cut]}
-    return [p["player_id"] for p in players if p["player_id"] not in top]
+    return [p["player_id"] for p in players
+            if p["player_id"] not in top
+            and p.get("team_id") is None            # unowned only — fair to teams
+            and p.get("status") != "rostered"]
+
+
+def team_fork_parents(world: dict, team_id: str) -> list[str]:
+    """Valid parents for a TEAM's own paid ``create_player`` (>=4M steps): the
+    team's OWN roster (its asset, consent) plus any unowned player. Never another
+    team's owned player. No top-exclusion here — the team paid for the fork and the
+    uniqueness guard prevents clones."""
+    own = set(world["teams"][team_id]["roster"])
+    return [pid for pid, p in world["players"].items()
+            if pid in own or p.get("team_id") is None]
 
 
 def _next_player_index(world: dict) -> int:
