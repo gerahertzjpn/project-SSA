@@ -57,10 +57,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--updates", type=int, default=400)
     parser.add_argument("--episodes-per-net", type=int, default=3,
                         help="Episodes each net plays as a controlled learner per update")
-    parser.add_argument("--workers", type=int, default=32,
-                        help="Rollout workers. Default 32 = benchmarked optimum on the "
-                             "16C/32T Ryzen 9 9950X3D (3014 steps/sec, 1.75x vs 16w; "
-                             "40+ is RAM-bound). See benchmark_throughput.py.")
+    parser.add_argument("--workers", type=int, default=24,
+                        help="Rollout workers. Default 24 = SUSTAINED-stable optimum on the "
+                             "16C/32T Ryzen 9 9950X3D / 31GB. (Burst benchmark peaked at 32 = "
+                             "3014 st/s, but a long run shows 32 craters: the torch-import storm "
+                             "when the worker pool respawns peaks ~21GB = all free RAM, so spawns "
+                             "fail and the pool degrades. 24 holds ~2030 st/s with headroom.) "
+                             "See benchmark_throughput.py + BASE18_TRAINING.md.")
     parser.add_argument("--ppo-epochs", type=int, default=4)
     parser.add_argument("--minibatch-size", type=int, default=1024)
     parser.add_argument("--max-ticks", type=int, default=300)
