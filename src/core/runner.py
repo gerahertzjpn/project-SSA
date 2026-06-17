@@ -93,15 +93,17 @@ class MatchResult:
     state: GameState
 
 
-def make_bots(bot_type: str, seed_offset: int = 0) -> dict:
+def make_bots(bot_type: str, seed_offset: int = 0, deterministic: bool = False) -> dict:
     bots = {}
     for index, player_id in enumerate(PLAYER_IDS):
         team = "TEAM_A" if player_id in TEAM_A_PLAYERS else "TEAM_B"
-        bots[player_id] = make_bot(bot_type, player_id, team, seed=index + seed_offset)
+        bots[player_id] = make_bot(bot_type, player_id, team, seed=index + seed_offset,
+                                   deterministic=deterministic)
     return bots
 
 
-def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
+def make_bot(model_id: str, player_id: str, team: str, seed: int = 0,
+             deterministic: bool = False):
     scripted_variant = make_scripted_bot_variant(model_id, player_id, team)
     if scripted_variant is not None:
         return scripted_variant
@@ -112,7 +114,7 @@ def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
             player_id,
             team,
             checkpoint_path=checkpoint_from_policy_model_id(model_id),
-            deterministic=True,
+            deterministic=deterministic,
             policy_state_id=policy_state_id_from_model_id(model_id),
         )
     if model_id in {"ppo_random_v1", "ppo_random_v1_latest"}:
@@ -123,7 +125,7 @@ def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
             checkpoint = default_policy_checkpoint()
         if checkpoint is None:
             raise ValueError("PPO random v1 checkpoint is not available")
-        return PolicyBot(player_id, team, checkpoint_path=checkpoint, deterministic=True)
+        return PolicyBot(player_id, team, checkpoint_path=checkpoint, deterministic=deterministic)
     if model_id in {"ppo_team_scripted_v1", "ppo_team_scripted_v1_latest"}:
         if model_id == "ppo_team_scripted_v1_latest":
             latest = Path("training_runs/sprint3_team_scripted_warm_v1/checkpoints/latest.pt")
@@ -132,16 +134,18 @@ def make_bot(model_id: str, player_id: str, team: str, seed: int = 0):
             checkpoint = default_team_policy_checkpoint()
         if checkpoint is None:
             raise ValueError("PPO team scripted v1 checkpoint is not available")
-        return PolicyBot(player_id, team, checkpoint_path=checkpoint, deterministic=True)
+        return PolicyBot(player_id, team, checkpoint_path=checkpoint, deterministic=deterministic)
     raise ValueError(f"Unknown bot model: {model_id}")
 
 
-def make_bots_from_models(player_models: dict[str, str], seed_offset: int = 0) -> dict:
+def make_bots_from_models(player_models: dict[str, str], seed_offset: int = 0,
+                          deterministic: bool = False) -> dict:
     bots = {}
     for index, player_id in enumerate(PLAYER_IDS):
         team = "TEAM_A" if player_id in TEAM_A_PLAYERS else "TEAM_B"
         model_id = player_models.get(player_id, "random")
-        bots[player_id] = make_bot(model_id, player_id, team, seed=index + seed_offset)
+        bots[player_id] = make_bot(model_id, player_id, team, seed=index + seed_offset,
+                                   deterministic=deterministic)
     return bots
 
 
@@ -236,16 +240,24 @@ def run_match(
     player_models: Optional[dict[str, str]] = None,
     player_factions: Optional[dict[str, str]] = None,
     orders: Optional[dict] = None,
+    deterministic: bool = False,
 ) -> MatchResult:
     profile = generation_profile(mode)
     if profile.save_replay and replay_path is None:
         raise ValueError("replay_path is required in replay generation mode")
 
+    # Competitive matches sample the policy STOCHASTICALLY (deterministic=False) —
+    # argmax is predictable/exploitable and unlike how the nets trained. Seed the
+    # torch RNG with the match seed so a stochastic match stays reproducible per seed.
+    if not deterministic:
+        import torch
+        torch.manual_seed(seed)
+
     state = make_initial_state(seed=seed, player_factions=player_factions)
     bots = (
-        make_bots_from_models(player_models, seed_offset=seed * 10)
+        make_bots_from_models(player_models, seed_offset=seed * 10, deterministic=deterministic)
         if player_models is not None
-        else make_bots(bot_type, seed_offset=seed * 10)
+        else make_bots(bot_type, seed_offset=seed * 10, deterministic=deterministic)
     )
     engine = GameEngine(
         state,
