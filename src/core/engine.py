@@ -3614,7 +3614,14 @@ class GameEngine:
             src, dst = battle.participant_routes.get(player_id, (None, None))
             if src is None or dst is None:
                 continue
-            path = list(battle.participant_paths.get(player_id, [src, dst]))
+            # Re-anchor the continuing path so the battle edge (src->dst) is the FIRST
+            # leg. segment_index is forced to 1 below (the edge); using the raw full
+            # participant path here would instead place survivors at segment 1 of
+            # their ORIGINAL route (its very start), teleporting the merged group
+            # backwards across the map. Keep the remainder past dst toward final_dst.
+            full_path = list(battle.participant_paths.get(player_id, [src, dst]))
+            tail = full_path[full_path.index(dst) + 1:] if dst in full_path else []
+            path = [src, dst] + tail
             speed = float(battle.participant_speeds.get(player_id, self._group_speed(units)))
             # Edge battles resolve on the current edge segment. Once survivors
             # continue, their path is re-anchored at this edge's endpoints, so

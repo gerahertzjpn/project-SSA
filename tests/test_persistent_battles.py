@@ -255,6 +255,48 @@ def test_reinforcement_joins_edge_battle():
     )
 
 
+def test_edge_battle_survivors_resume_on_battle_edge_not_path_start():
+    # Regression: an army fighting an edge battle on a MID-PATH edge (here CP4->CP2,
+    # full route CP6->CP4->CP2) must, on resolution, resume ON the battle edge.
+    # The bug placed survivors at segment 1 of the FULL path (CP6->CP4, the path
+    # start), teleporting the merged army backwards across the map.
+    state = make_initial_state(seed=7)
+    engine = GameEngine(state, {}, record_trace=False, record_replay=False)
+    edge_src, edge_dst = "CP4", "CP2"
+    endpoints = engine._canonical_edge(edge_src, edge_dst)
+    battle = Battle(
+        battle_id=f"edge:{endpoints[0]}|{endpoints[1]}",
+        location_kind="edge",
+        location_id=f"{endpoints[0]}|{endpoints[1]}",
+        units=[*build_player_units({UnitType.VANGUARD.value: 5}, "B1", ATTACKER_SIDE)],
+        started_at_tick=state.tick,
+        last_tick=state.tick,
+        objective="pvp",
+        edge_endpoints=endpoints,
+        edge_position=0.3,
+    )
+    battle.participant_routes["B1"] = (edge_src, edge_dst)
+    battle.participant_paths["B1"] = ["CP6", "CP4", "CP2"]   # full multi-hop route
+    battle.participant_speeds["B1"] = 1.5
+    battle.participant_intents["B1"] = "CAPTURE"
+    battle.participant_final_dsts["B1"] = "CP2"
+    battle.participant_entry_sides["B1"] = ATTACKER_SIDE
+    state.active_battles[battle.battle_id] = battle
+
+    before = set(id(g) for g in state.moving_groups)
+    engine._finish_edge_battle(battle)
+    new = [g for g in state.moving_groups if id(g) not in before and g.player_id == "B1"]
+    assert new, "B1 survivors should continue as a moving group"
+    group = new[0]
+    # The continuing path must be re-anchored so the FIRST leg is the battle edge,
+    # not the rear leg of the original route.
+    assert group.path[0] == edge_src and group.path[1] == edge_dst, (
+        f"survivors teleported: path starts {group.path[:2]}, expected the battle "
+        f"edge [{edge_src}, {edge_dst}]")
+    seg_src, seg_dst = engine._moving_group_segment_nodes(group)
+    assert {seg_src, seg_dst} == {edge_src, edge_dst}
+
+
 def test_edge_battle_created_this_tick_catches_same_edge_groups():
     state = make_initial_state(seed=32)
     state.moving_groups = [
