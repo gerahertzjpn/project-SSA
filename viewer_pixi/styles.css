@@ -513,3 +513,15 @@ body.embed-replay #topHud {
 .brand-menu:hover {
   background: rgba(36, 44, 53, 0.92);
 }
+
+/* World tab home card badge */
+.wip-badge {
+  font-size: 11px;
+  background: #7a5a1e;
+  color: #ffd98a;
+  border-radius: 6px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  vertical-align: middle;
+  font-weight: 600;
+}

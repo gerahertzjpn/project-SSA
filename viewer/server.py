@@ -100,6 +100,68 @@ from src.regionals import (
     player_cards,
     regionals_public_view,
 )
+from src.regionals.franchises import emblem_svg, franchise_specs
+from src.world import feature_flags as world_flags
+from src.world import season as world_season
+from src.world.world import list_worlds, load_world, new_world, save_world
+
+
+WORLD_TEAM_COUNT = 22  # a World needs exactly 22 teams (lower 12 + upper 10)
+
+
+def world_franchise_cards() -> list[dict]:
+    """Every available franchise as a selectable card (name, manager, persona,
+    colours, generated emblem, default strategy) for the new-World team picker."""
+    cards = []
+    for fr in franchise_specs():
+        cards.append({
+            "franchise_id": fr["franchise_id"],
+            "name": fr["name"],
+            "abbrev": fr["abbrev"],
+            "manager": fr.get("manager", ""),
+            "persona": fr.get("persona", ""),
+            "color": fr.get("color", "#3a4757"),
+            "accent": fr.get("accent", "#d8e4f0"),
+            "default_plan": fr.get("default_plan", {}),
+            "emblem": emblem_svg(fr),
+        })
+    return cards
+
+
+def world_info() -> dict:
+    """Lock state + constraints for the World tab. ui.locked=True means the tab is
+    in-development: the UI shows it but blocks selection/start until one flag flips."""
+    return {
+        "team_count": WORLD_TEAM_COUNT,
+        "available": len(franchise_specs()),
+        "ui": world_flags.ui_state("ui_world_tab"),
+        "worlds": list_worlds(),
+    }
+
+
+def create_world_payload(payload: dict) -> dict:
+    """Create + bootstrap a new World from exactly WORLD_TEAM_COUNT selected
+    franchises. Gated by the ui_world_tab flag (raises FeatureLocked when locked)."""
+    world_flags.assert_enabled("ui_world_tab")  # locked in UI until the flag flips
+    selected = list(payload.get("franchises") or [])
+    if len(set(selected)) != WORLD_TEAM_COUNT:
+        raise ValueError(f"select exactly {WORLD_TEAM_COUNT} teams (got {len(set(selected))})")
+    by_id = {f["franchise_id"]: f for f in franchise_specs()}
+    unknown = [fid for fid in selected if fid not in by_id]
+    if unknown:
+        raise ValueError(f"unknown franchises: {unknown}")
+    specs = [by_id[fid] for fid in selected]
+    world_id = "world-" + uuid.uuid4().hex[:8]
+    seed = int(uuid.uuid4().int % (2 ** 31))
+    world = new_world(world_id, specs, name=world_id, seed=seed)
+    world_season.bootstrap_world(world, seed=seed)
+    save_world(world)
+    return {
+        "world_id": world_id,
+        "season": world["season"],
+        "upper": [t["name"] for t in world["teams"].values() if t["league"] == "upper"],
+        "lower": [t["name"] for t in world["teams"].values() if t["league"] == "lower"],
+    }
 
 
 REPLAY_DIR = ROOT / "replays_viewer_debug_smoke"
@@ -681,6 +743,26 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error)}, status=400)
             return
+        if path == "/api/world/info":
+            self._send_json({**world_info(), "server": server_info()})
+            return
+        if path == "/api/world/franchises":
+            self._send_json({"franchises": world_franchise_cards(), "server": server_info()})
+            return
+        if path.startswith("/api/world/"):
+            wid = path[len("/api/world/"):]
+            try:
+                from src.world.world import roster_players  # local import
+                w = load_world(wid)
+                self._send_json({"world": {
+                    "world_id": w["world_id"], "season": w["season"], "month": w["month"],
+                    "teams": [{"name": t["name"], "abbrev": t["abbrev"], "league": t["league"],
+                               "group": t["group"], "elo": t["elo"], "treasury": t["treasury"],
+                               "titles": t["titles"]} for t in w["teams"].values()],
+                }})
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error)}, status=404)
+            return
         if path.startswith("/api/regionals/"):
             self._handle_regionals_get(path)
             return
@@ -776,6 +858,16 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             except RuntimeError as error:
                 self._send_json({"error": str(error), "server": server_info()}, status=409)
             except Exception as error:
+                self._send_json({"error": str(error), "server": server_info()}, status=400)
+            return
+        if path == "/api/world/create":
+            try:
+                payload = self._read_json()
+                self._send_json(create_world_payload(payload))
+            except world_flags.FeatureLocked as error:
+                self._send_json({"error": str(error), "locked": True,
+                                 "server": server_info()}, status=403)
+            except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error), "server": server_info()}, status=400)
             return
         regionals_post = re.match(r"^/api/regionals/(?P<rid>[^/]+)/(?P<action>advance|commentary)$", path)

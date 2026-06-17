@@ -1,0 +1,117 @@
+/* The shared stylesheet locks scrolling for the full-screen Pixi tabs; the World
+   page is a scrollable list, so re-enable scrolling here. */
+html, body {
+  overflow: auto;
+  height: auto;
+  min-height: 100%;
+}
+
+.world {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 18px 20px 60px;
+  color: #eef4fa;
+}
+
+.world-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.world-title h1 { margin: 0; font-size: 26px; }
+.world-title p { margin: 2px 0 0; color: #9fb0c2; font-size: 13px; }
+
+.world-lock {
+  background: #3a2c12;
+  border: 1px solid #7a5a1e;
+  color: #ffd98a;
+  padding: 10px 14px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.world-new-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.world-new-head h2 { margin: 0; font-size: 18px; }
+.world-new-controls { display: flex; align-items: center; gap: 12px; }
+.sel-count {
+  font-weight: 800;
+  font-size: 15px;
+  color: #9fb0c2;
+  min-width: 64px;
+  text-align: right;
+}
+.sel-count.full { color: #6ee7a8; }
+.world-hint { color: #9fb0c2; font-size: 13px; margin: 6px 0 14px; }
+
+button.primary {
+  background: #2f6df0;
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+button.primary:disabled { background: #2b3340; color: #6b7886; cursor: not-allowed; }
+
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.team-card {
+  display: grid;
+  grid-template-columns: 24px 56px 1fr;
+  gap: 10px;
+  align-items: start;
+  background: #1a2029;
+  border: 1px solid #2a323d;
+  border-left: 4px solid var(--team-color, #3a4757);
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: border-color .12s, background .12s;
+}
+.team-card:hover { background: #1f2733; }
+.team-card.picked {
+  background: #182a22;
+  border-color: #2e7d52;
+  border-left-color: var(--team-accent, #6ee7a8);
+}
+.team-check { width: 18px; height: 18px; margin-top: 2px; accent-color: #2e7d52; cursor: pointer; }
+.team-check:disabled { cursor: not-allowed; }
+
+.team-emblem svg { width: 56px; height: 56px; display: block; }
+.team-body { min-width: 0; }
+.team-name { font-weight: 800; font-size: 14px; }
+.team-abbrev { color: #9fb0c2; font-weight: 600; font-size: 12px; }
+.team-manager { color: #c7d2de; font-size: 12px; margin-top: 2px; }
+.team-strategy { color: #8fb8ff; font-size: 12px; margin-top: 2px; }
+.team-persona { color: #8493a4; font-size: 11px; margin-top: 4px; line-height: 1.35; }
+
+/* Locked: dim the picker so selection reads as disabled */
+body.world-locked .team-grid,
+body.world-locked .world-new-controls { opacity: 0.55; }
+body.world-locked .team-card { cursor: not-allowed; }
+
+.world-result {
+  margin-top: 22px;
+  background: #161b22;
+  border: 1px solid #2a323d;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+.world-result h3 { margin: 0 0 10px; }
+.result-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; font-size: 13px; }
+.result-cols h4 { margin: 0 0 6px; color: #9fb0c2; }
+.result-error { color: #ff8a8a; }
+.is-hidden { display: none; }

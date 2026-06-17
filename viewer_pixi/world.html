@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World · 3v3 Autobattler</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./world.css" />
+</head>
+<body>
+  <main class="world">
+    <header class="world-head">
+      <a class="brand-menu" href="./home.html" title="Главное меню" aria-label="Главное меню">☰</a>
+      <div class="world-title">
+        <h1>World</h1>
+        <p>Персистентная экосистема: 2 лиги, экономика, трансферы, SoloQ, тренеры.</p>
+      </div>
+    </header>
+
+    <div id="lockBanner" class="world-lock is-hidden">
+      🔒 <strong>World в разработке.</strong>
+      <span id="lockNote">Выбор команд и старт пока заблокированы — включаются одним флагом.</span>
+    </div>
+
+    <section class="world-new">
+      <div class="world-new-head">
+        <h2>Новый World — выбери команды</h2>
+        <div class="world-new-controls">
+          <span id="selCount" class="sel-count">0 / 22</span>
+          <button id="startBtn" class="primary" disabled>Создать World</button>
+        </div>
+      </div>
+      <p class="world-hint">Отметь ровно <strong>22</strong> команды из доступных. Когда выбрано 22 — новые
+        отметить нельзя (сними одну, чтобы выбрать другую). У каждой команды — карточка.</p>
+      <div id="teamGrid" class="team-grid">Загрузка…</div>
+    </section>
+
+    <section id="resultPanel" class="world-result is-hidden"></section>
+  </main>
+
+  <script src="./world.js"></script>
+</body>
+</html>
