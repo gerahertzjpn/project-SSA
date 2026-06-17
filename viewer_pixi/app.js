@@ -115,24 +115,19 @@ const FACTION_LABELS = {
   robots: "Robots",
 };
 
-// Strategy (manager/coach order) vocabulary — mirrors the server; used offline.
+// Coherent strategy presets — mirrors the server; used offline. One preset per
+// player (no incoherent tempo×win_path combos).
 const FALLBACK_STRATEGIES = {
   none: { value: "none", label: "— нет приказа —" },
-  tempo: [
-    { value: "turtle", label: "Черепаха" }, { value: "balanced", label: "Баланс" },
-    { value: "aggressive", label: "Агрессия" }, { value: "all_in", label: "Олл-ин" },
-  ],
-  win_path: [
-    { value: "economy", label: "Экономика" }, { value: "core_rush", label: "Раш ядра" },
-    { value: "baron_lord", label: "Барон/Лорд" }, { value: "outlast", label: "Измор" },
-  ],
-  role: [
-    { value: "carry_push", label: "Кэрри-пуш" }, { value: "anchor_defend", label: "Анкор-защита" },
-    { value: "tech_eco", label: "Тех-эко" }, { value: "roam_objective", label: "Роум-объективы" },
-    { value: "support_flex", label: "Саппорт-флекс" },
+  presets: [
+    { value: "standard", label: "Стандарт" },
+    { value: "core_rush", label: "Раш ядра" },
+    { value: "all_in", label: "Олл-ин" },
+    { value: "turtle", label: "Черепаха" },
+    { value: "macro", label: "Макро-эконом" },
+    { value: "baron", label: "Контроль Барона" },
   ],
 };
-const DEFAULT_ROLE_BY_SLOT = { "1": "carry_push", "2": "anchor_defend", "3": "support_flex" };
 const FALLBACK_MODELS = [
   { id: "random", label: "Random Bot", kind: "baseline", show_by_default: true },
   { id: "scripted", label: "Scripted Bot", kind: "baseline", show_by_default: true },
@@ -466,43 +461,23 @@ function addOption(select, value, label) {
   select.appendChild(opt);
 }
 
-// Per-player strategy (manager/coach order): tempo + win_path + role, or "no order"
-// (-> the net plays freely). Returned to the server as `orders` for the match.
+// Per-player strategy (coach order): ONE coherent preset, or "no order" (-> the net
+// plays freely). Roles/tempo/win_path are derived server-side from the preset, so
+// there are no incoherent combos (e.g. turtle+core_rush). Sent as `orders`.
 function buildStrategyControls(playerId) {
   const voc = appState.strategies || FALLBACK_STRATEGIES;
   const wrap = document.createElement("span");
   wrap.className = "player-strategy";
 
-  const tempo = document.createElement("select");
-  tempo.dataset.playerTempo = playerId;
-  tempo.title = "Стратегия (приказ): темп — «нет приказа» = играет свободно";
-  tempo.setAttribute("aria-label", `${playerId} стратегия: темп`);
-  addOption(tempo, voc.none.value, voc.none.label);
-  for (const o of voc.tempo) addOption(tempo, o.value, o.label);
+  const strat = document.createElement("select");
+  strat.dataset.playerStrategy = playerId;
+  strat.title = "Стратегия (приказ тренера) — «нет приказа» = играет свободно";
+  strat.setAttribute("aria-label", `${playerId} стратегия`);
+  addOption(strat, voc.none.value, voc.none.label);
+  for (const o of (voc.presets || [])) addOption(strat, o.value, o.label);
+  strat.value = "none";
 
-  const winpath = document.createElement("select");
-  winpath.dataset.playerWinpath = playerId;
-  winpath.title = "Стратегия: путь к победе";
-  for (const o of voc.win_path) addOption(winpath, o.value, o.label);
-
-  const role = document.createElement("select");
-  role.dataset.playerRole = playerId;
-  role.title = "Стратегия: роль";
-  for (const o of voc.role) addOption(role, o.value, o.label);
-
-  tempo.value = "none";
-  role.value = DEFAULT_ROLE_BY_SLOT[playerId.slice(1)] || "support_flex";
-
-  const sync = () => {
-    const off = tempo.value === "none";
-    winpath.disabled = off;
-    role.disabled = off;
-    wrap.classList.toggle("strategy-off", off);
-  };
-  tempo.addEventListener("change", sync);
-  sync();
-
-  wrap.append(tempo, winpath, role);
+  wrap.append(strat);
   return wrap;
 }
 
@@ -511,14 +486,12 @@ function playerOrderSelection() {
   const grid = els.playerConfigGrid;
   const orders = {};
   for (const playerId of appState.players.length ? appState.players : PLAYER_IDS) {
-    const tempo = grid?.querySelector(`select[data-player-tempo="${playerId}"]`);
-    if (!tempo || tempo.value === "none") {
+    const strat = grid?.querySelector(`select[data-player-strategy="${playerId}"]`);
+    if (!strat || strat.value === "none") {
       orders[playerId] = { mode: "none" };
-      continue;
+    } else {
+      orders[playerId] = { strategy: strat.value };
     }
-    const winpath = grid.querySelector(`select[data-player-winpath="${playerId}"]`);
-    const role = grid.querySelector(`select[data-player-role="${playerId}"]`);
-    orders[playerId] = { tempo: tempo.value, win_path: winpath?.value, role: role?.value };
   }
   return orders;
 }

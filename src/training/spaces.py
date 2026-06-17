@@ -98,6 +98,34 @@ ORDER_WIN_PATH_DEFAULT = "economy"
 ORDER_ROLE_DEFAULT = "support_flex"
 ORDER_FEATURES = len(ORDER_TEMPO) + len(ORDER_WIN_PATH) + len(ORDER_ROLE)
 
+# Coherent strategy presets — the coach picks ONE per team, instead of free
+# tempo×win_path (which allowed nonsense like turtle+core_rush). Each preset is a
+# self-consistent game plan = a (tempo, win_path) + per-position roles. Training
+# samples ONLY these, and the UI/coach choose among these, so a net only ever sees
+# coherent orders. The obs encoding stays tempo/win_path/role — presets just curate
+# which combinations are valid (no obs-dim change).
+STRATEGY_PRESETS = (
+    {"id": "standard",  "label": "Стандарт",        "tempo": "balanced",   "win_path": "economy",    "roles": ("carry_push", "anchor_defend", "support_flex")},
+    {"id": "core_rush", "label": "Раш ядра",         "tempo": "aggressive", "win_path": "core_rush",  "roles": ("carry_push", "carry_push", "roam_objective")},
+    {"id": "all_in",    "label": "Олл-ин",           "tempo": "all_in",     "win_path": "core_rush",  "roles": ("carry_push", "carry_push", "carry_push")},
+    {"id": "turtle",    "label": "Черепаха",         "tempo": "turtle",     "win_path": "outlast",    "roles": ("anchor_defend", "anchor_defend", "tech_eco")},
+    {"id": "macro",     "label": "Макро-эконом",     "tempo": "turtle",     "win_path": "economy",    "roles": ("tech_eco", "anchor_defend", "carry_push")},
+    {"id": "baron",     "label": "Контроль Барона",  "tempo": "aggressive", "win_path": "baron_lord", "roles": ("roam_objective", "carry_push", "anchor_defend")},
+)
+STRATEGY_PRESET_BY_ID = {p["id"]: p for p in STRATEGY_PRESETS}
+
+
+def strategy_order_for_slot(strategy_id: str, slot_index: int = 0) -> dict:
+    """The per-player order ({tempo, win_path, role}) for a strategy preset at a
+    given team position (0/1/2). Unknown strategy -> the neutral default."""
+    p = STRATEGY_PRESET_BY_ID.get(strategy_id)
+    if not p:
+        return {"tempo": ORDER_TEMPO_DEFAULT, "win_path": ORDER_WIN_PATH_DEFAULT,
+                "role": ORDER_ROLE_DEFAULT}
+    roles = p["roles"]
+    return {"tempo": p["tempo"], "win_path": p["win_path"],
+            "role": roles[slot_index % len(roles)], "strategy": strategy_id}
+
 GLOBAL_FEATURES = 22 + len(UNIT_ORDER) + len(FACTIONS) + ORDER_FEATURES
 NODE_TYPE_FEATURES = 3
 CORE_TYPE_FEATURES = len(CORE_TYPES)

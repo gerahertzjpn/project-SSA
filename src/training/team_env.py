@@ -29,6 +29,7 @@ from src.training.spaces import (
     ORDER_ROLE,
     ORDER_TEMPO,
     ORDER_WIN_PATH,
+    STRATEGY_PRESETS,
     action_is_legal,
     decode_action,
     encode_observation,
@@ -490,13 +491,18 @@ class TeamTrainingEnv:
             return {}
         if self.config.no_order_prob > 0.0 and float(self.rng.random()) < self.config.no_order_prob:
             return {player_id: {"absent": True} for player_id in self.controlled_players}
+        # One COHERENT strategy preset for the whole controlled team (not free
+        # tempo×win_path) so the net only ever trains on sensible game plans.
+        preset = STRATEGY_PRESETS[int(self.rng.integers(len(STRATEGY_PRESETS)))]
+        roles = preset["roles"]
         return {
             player_id: {
-                "tempo": str(self.rng.choice(ORDER_TEMPO)),
-                "win_path": str(self.rng.choice(ORDER_WIN_PATH)),
-                "role": str(self.rng.choice(ORDER_ROLE)),
+                "tempo": preset["tempo"],
+                "win_path": preset["win_path"],
+                "role": roles[i % len(roles)],
+                "strategy": preset["id"],
             }
-            for player_id in self.controlled_players
+            for i, player_id in enumerate(self.controlled_players)
         }
 
     def _order_potential(self, obs: dict, player_id: str) -> float:
