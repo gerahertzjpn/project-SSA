@@ -7,9 +7,9 @@ checkpointed every round.
 Smoke (fast end-to-end sanity, a few CPU-minutes):
     python scripts/train_population.py --smoke
 
-Full run (size with --updates / --episodes-per-net / --workers):
-    python scripts/train_population.py --run-dir training_runs/population_18_v1 \
-        --updates 400 --episodes-per-net 3 --workers 16
+Full run (workers defaults to the benchmarked optimum = 32 on this machine):
+    python scripts/train_population.py --run-dir training_runs/population_v1 \
+        --updates 400 --episodes-per-net 3
 
 Resume a stopped run (re-run the same command; latest per-net checkpoints load
 automatically). Inspect only, without training:
@@ -57,7 +57,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--updates", type=int, default=400)
     parser.add_argument("--episodes-per-net", type=int, default=3,
                         help="Episodes each net plays as a controlled learner per update")
-    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--workers", type=int, default=32,
+                        help="Rollout workers. Default 32 = benchmarked optimum on the "
+                             "16C/32T Ryzen 9 9950X3D (3014 steps/sec, 1.75x vs 16w; "
+                             "40+ is RAM-bound). See benchmark_throughput.py.")
     parser.add_argument("--ppo-epochs", type=int, default=4)
     parser.add_argument("--minibatch-size", type=int, default=1024)
     parser.add_argument("--max-ticks", type=int, default=300)

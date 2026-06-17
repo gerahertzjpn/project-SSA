@@ -33,23 +33,23 @@ from src.training.population import (
 # --------------------------------------------------------------------------- #
 # Configs to benchmark: (workers, episodes_per_net, worker_torch_threads, label)
 # --------------------------------------------------------------------------- #
+# 2026-06-17 re-sweep into the SMT range (16C/32T Ryzen 9 9950X3D). The previous
+# sweep only went 8..18 and picked 16 (1400 steps/sec); this one pushes past the
+# physical-core count to use the 32 logical processors and find the new optimum.
 CONFIGS = [
-    # --- baseline: current production settings (workers inherit 8 torch threads)
-    (16, 4, 8, "w16-ep4-t8  [current]"),
-    # --- fix torch threads to 1 per worker via pool initializer
-    (16, 4, 1, "w16-ep4-t1"),
-    # --- vary worker count (torch_threads=1)
-    ( 8, 4, 1, "w8-ep4-t1"),
-    (12, 4, 1, "w12-ep4-t1"),
-    (14, 4, 1, "w14-ep4-t1"),
-    (18, 4, 1, "w18-ep4-t1"),
-    # --- vary episodes at best-candidate worker count
-    (16, 2, 1, "w16-ep2-t1"),
-    (16, 6, 1, "w16-ep6-t1"),
+    (16, 4, 1, "w16-ep4-t1  [re-baseline]"),   # old optimum, re-measured on current code
+    (24, 4, 1, "w24-ep4-t1"),
+    (32, 4, 1, "w32-ep4-t1"),                   # = logical-processor count
+    (40, 4, 1, "w40-ep4-t1"),
+    (48, 4, 1, "w48-ep4-t1"),
 ]
 
+# Previous benchmark optimum, for the historical gain comparison.
+OLD_BEST_SPS = 1400.0
+OLD_BEST_LABEL = "w16 (prev sweep)"
+
 N_WARMUP  = 2   # discarded updates (pool startup + JIT warmup)
-N_MEASURE = 4   # measured updates
+N_MEASURE = 5   # measured updates
 
 
 # --------------------------------------------------------------------------- #
@@ -162,18 +162,21 @@ if __name__ == "__main__":
     print(f"{'Config':<32} {'steps/sec':>10} {'sec/upd':>9} {'steps/upd':>10}")
     print("-" * 65)
     results.sort(key=lambda x: -x["steps_per_sec"])
-    baseline = next((r for r in results if "current" in r["label"]), results[-1])
+    baseline = next((r for r in results if "re-baseline" in r["label"]), results[-1])
     for r in results:
         gain = r["steps_per_sec"] / baseline["steps_per_sec"]
-        marker = " << BEST" if r is results[0] else (f" ({gain:.1f}x)" if r is not baseline else " << baseline")
+        marker = " << BEST" if r is results[0] else (f" ({gain:.2f}x)" if r is not baseline else " << baseline")
         print(
             f"{r['label']:<32} {r['steps_per_sec']:>10.0f} "
             f"{r['sec_per_update']:>9.3f} {r['avg_steps_per_update']:>10.0f}"
             f"{marker}"
         )
 
-    print(f"\nBest config:  {results[0]['label'].strip()}")
-    print(f"  workers={results[0]['workers']}  episodes_per_net={results[0]['episodes_per_net']}  worker_torch_threads={results[0]['worker_torch_threads']}")
-    baseline_sps = baseline["steps_per_sec"]
-    best_sps = results[0]["steps_per_sec"]
-    print(f"  {best_sps:.0f} steps/sec  vs baseline {baseline_sps:.0f}  ({best_sps/baseline_sps:.1f}x speedup)")
+    best = results[0]
+    print(f"\nBest config:  {best['label'].strip()}")
+    print(f"  workers={best['workers']}  episodes_per_net={best['episodes_per_net']}  worker_torch_threads={best['worker_torch_threads']}")
+    print(f"  {best['steps_per_sec']:.0f} steps/sec")
+    print(f"  vs re-baseline w{baseline['workers']} ({baseline['steps_per_sec']:.0f} st/s): "
+          f"{best['steps_per_sec']/baseline['steps_per_sec']:.2f}x")
+    print(f"  vs OLD data {OLD_BEST_LABEL} ({OLD_BEST_SPS:.0f} st/s): "
+          f"{best['steps_per_sec']/OLD_BEST_SPS:.2f}x")
