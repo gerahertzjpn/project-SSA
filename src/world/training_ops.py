@@ -26,8 +26,8 @@ MIN_TRAINING_STEPS = 800_000
 # --------------------------------------------------------------------------- #
 # Cards — the manager-facing definition of each training operation
 # --------------------------------------------------------------------------- #
-# target kinds: "player" (one net), "roster" (the trio), "parent" (fork source),
-# "coach" (the team's RL coach net). who_can_be_chosen lists allowed targets.
+# target kinds: "player" (one net), "roster" (the trio), "parent" (fork source).
+# who_can_be_chosen lists allowed targets. (No coach — see WORLD_MODE_SPEC §0-bis.)
 TRAINING_CARDS: dict[str, dict] = {
     "skill_up": {
         "op": "skill_up",
@@ -36,7 +36,7 @@ TRAINING_CARDS: dict[str, dict] = {
                 "политики: микро, макро, тайминги.",
         "efficiency": "Высокая на первых шагах, затухает при насыщении.",
         "requires": "1 цель + шаги.",
-        "who_can_be_chosen": ["player", "coach"],
+        "who_can_be_chosen": ["player"],
         "min_steps": 800_000,
         "recommended_steps": 1_000_000,
         "validation": "Δ винрейт/netElo против фикс. гонтлета; нет переобучения под одного.",
@@ -47,7 +47,7 @@ TRAINING_CARDS: dict[str, dict] = {
         "what": "PPO с пулом оппонентов, взвешенным в сторону текущих топ-команд сезона.",
         "efficiency": "Средняя; точечно поднимает матчапы против меты.",
         "requires": "1 цель + список мета-оппонентов (берём топ сезона автоматически).",
-        "who_can_be_chosen": ["player", "coach"],
+        "who_can_be_chosen": ["player"],
         "min_steps": 800_000,
         "recommended_steps": 1_500_000,
         "validation": "Винрейт против меты ДО/ПОСЛЕ + guard: нет регресса против общего пула.",
@@ -82,7 +82,7 @@ TRAINING_CARDS: dict[str, dict] = {
                 "economy-outlast и т.п.) — углубляет один стиль, поддерживает разнообразие.",
         "efficiency": "Средняя; меняет характер игры, не обязательно винрейт.",
         "requires": "1 цель + выбранный стиль (tempo/win_path).",
-        "who_can_be_chosen": ["player", "coach"],
+        "who_can_be_chosen": ["player"],
         "min_steps": 800_000,
         "recommended_steps": 1_000_000,
         "validation": "Поведенческие метрики сдвинулись как задумано И винрейт не упал.",

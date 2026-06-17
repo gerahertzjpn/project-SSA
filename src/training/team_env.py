@@ -69,13 +69,15 @@ class TeamTrainingEnvConfig:
     # Tune down (e.g. 0.25) for a gentler finishing nudge; 0.0 disables it.
     core_progress_weight: float = 0.5
     # LLM-manager order channel (docs/cloudcode/LLM_MANAGER_ORDERS_SPEC.md).
-    # When sample_orders is True, each episode samples a random per-player order
+    # When sample_orders is True, each episode samples a coherent strategy preset
     # (tempo/win_path/role) injected into the observation, and a potential-based
     # per-player alignment term is added to the reward scaled by
-    # order_shaping_weight — this weight IS the net's "obedience" (per-net knob;
-    # v1 uniform). 0.0 disables the order shaping (channel still in obs).
+    # order_shaping_weight — the UNIFORM training signal that teaches order-following.
+    # 0.0 disables the order shaping (channel still in obs). It is NOT a per-net
+    # obedience identity — any obedience spread emerges from training, never baked.
     sample_orders: bool = True
-    # float (uniform) OR {player_id: weight} for per-net obedience (population).
+    # Normally a single uniform float (population passes one weight for ALL nets). The
+    # {player_id: weight} form is supported only for special experiments, not the base.
     order_shaping_weight: float | dict = 0.5
     # Fraction of episodes with NO order at all (channel masked to zeros, order
     # shaping off) so the net also learns to play freely when un-ordered. 0 = off.
@@ -238,7 +240,7 @@ class TeamTrainingEnv:
             self._previous_player_scores[player_id] = score
             # Potential-based order-alignment term: telescopes over the episode,
             # so it densifies "play in the ordered style" without overriding the
-            # dominant win reward. Weight = the net's obedience (v1 uniform).
+            # dominant win reward. Weight = the uniform order-shaping signal.
             potential = self._order_potential(obs, player_id)
             order_shaping[player_id] = (
                 (potential - self._previous_order_potentials.get(player_id, 0.0))
@@ -474,8 +476,8 @@ class TeamTrainingEnv:
     # ------------------------------------------------------------------
 
     def _order_weight_for(self, player_id: str) -> float:
-        """Resolve the per-player order-shaping weight ('obedience'): a uniform
-        float, or a {player_id: weight} map for per-net obedience."""
+        """Resolve the order-shaping weight: a uniform float for all nets (the base
+        case — no baked obedience), or a {player_id: weight} map (experiments only)."""
         weight = self.config.order_shaping_weight
         if isinstance(weight, dict):
             return float(weight.get(player_id, 0.0))

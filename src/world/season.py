@@ -10,11 +10,11 @@ See docs/cloudcode/WORLD_MODE_SPEC.md §1, §5, §8.
 from __future__ import annotations
 
 import random
-import zlib
 from typing import Callable, Optional
 
+from src.core import rng as seeds
 from src.regionals.elo import expected_score
-from src.world import brackets, calendar as cal, coach, economy, soloq, team_elo
+from src.world import brackets, calendar as cal, economy, playbook, soloq, team_elo
 from src.world.world import (
     get_player, lower_teams, roster_players, upper_teams,
 )
@@ -31,29 +31,36 @@ PlayFn = Callable[[str, str, int], dict]
 # Deterministic default match engine (no nets needed)
 # --------------------------------------------------------------------------- #
 def team_strength(world: dict, team_id: str) -> float:
-    """Proxy strength for the deterministic sim: avg SoloQ of the coach-picked
-    starting three, plus a coach competence bonus. (The coach selects the best 3;
-    extra roster players sit on the bench until subbed.)"""
+    """Base proxy strength for the deterministic sim: avg SoloQ of the best
+    starting three (highest value). Extra roster players sit on the bench. The
+    manager's PLAYBOOK adds a matchup modifier on top of this (see playbook.py,
+    applied in make_play_fn)."""
     team = world["teams"][team_id]
     players = roster_players(world, team)
     if not players:
         return 1000.0
     starters = sorted(players, key=lambda p: -economy.player_value(p))[:3]
-    avg = sum(p["soloq_rating"] for p in starters) / len(starters)
-    return avg + coach.coach_bonus(world, team_id)
+    return sum(p["soloq_rating"] for p in starters) / len(starters)
 
 
-def make_play_fn(world: dict, seed: int = 0) -> PlayFn:
-    """A seeded ``play(home, away, best_of)`` that simulates a Bo-N series from
-    roster strength. Deterministic given the seed (per-series counter)."""
-    state = {"n": 0}
-    base = random.Random(seed)
+def make_play_fn(world: dict, seed: Optional[int] = None, *,
+                 use_playbook: bool = True, record_positions: bool = True) -> PlayFn:
+    """A ``play(home, away, best_of)`` that simulates a Bo-N series from roster
+    strength, modulated by each team's ACTIVE playbook (strategy counter + execution
+    + position-aware lineup/substitutions). Deterministic given an explicit seed
+    (independent child stream per series via Spawner); UNIQUE per run when
+    ``seed is None`` (§0-ter). ``use_playbook=False`` for pure roster sims/tests;
+    ``record_positions=False`` for Season 0 (which persists only SoloQ)."""
+    spawner = seeds.Spawner(seed)
 
     def play(home: str, away: str, best_of: int) -> dict:
-        state["n"] += 1
-        pair = zlib.crc32(f"{home}|{away}".encode("utf-8"))  # stable across processes
-        rng = random.Random(seed * 1_000_003 + state["n"] * 97 + (pair & 0xFFFF))
+        rng = spawner.random()
         sh, sa = team_strength(world, home), team_strength(world, away)
+        meta = None
+        if use_playbook:
+            dh, da, meta = playbook.matchup_modifiers(world, home, away, best_of)
+            sh += dh
+            sa += da
         p_home = expected_score(sh, sa)
         need = best_of // 2 + 1
         mh = ma = 0
@@ -63,32 +70,39 @@ def make_play_fn(world: dict, seed: int = 0) -> PlayFn:
             else:
                 ma += 1
         winner = home if mh > ma else away
-        return {"home": home, "away": away, "maps_home": mh, "maps_away": ma, "winner": winner}
+        result = {"home": home, "away": away, "maps_home": mh, "maps_away": ma,
+                  "winner": winner}
+        if meta:
+            result["playbook"] = meta
+            if record_positions:   # attribute the series to each starter's position
+                playbook.record_position_results(world, meta["home"]["lineup"], winner == home)
+                playbook.record_position_results(world, meta["away"]["lineup"], winner == away)
+        return result
 
-    # keep base referenced (future: shared noise); avoids lint on unused.
-    _ = base
     return play
 
 
 # --------------------------------------------------------------------------- #
 # Draft
 # --------------------------------------------------------------------------- #
-def _roster_value(world: dict, team: dict) -> float:
-    return sum(economy.player_value(get_player(world, pid)) for pid in team["roster"])
+DraftPickFn = Callable[[dict, list], Optional[str]]  # (team, available_players) -> pid|None
 
 
 def balanced_draft(world: dict, team_ids: list[str], rng: random.Random,
-                   target_size: int = 3) -> None:
-    """Snake-style balanced draft from the free-agent pool until every team has
-    ``target_size`` players. Each round the weakest roster (lowest total value)
-    picks first; it takes the best available free agent. Mutates the world."""
+                   target_size: int = 3, *, pick_fn: Optional[DraftPickFn] = None) -> None:
+    """Snake-style draft from the free-agent pool until every team has
+    ``target_size`` players. **Season 0 has NO weak teams — all are equal — so the
+    pick order among teams still needing a player is RANDOM (fair), NOT
+    weakest-first.** (The weakest-first rule begins at Season 1's rookie draft,
+    see ``transfers.rookie_draft``.) ``pick_fn(team, available)`` lets the LLM pick
+    per slot (L2 draft); falling back to best-by-value when it returns None/invalid.
+    Mutates the world."""
     free = world["free_agents"]
     while any(len(world["teams"][tid]["roster"]) < target_size for tid in team_ids):
-        # order teams: fewest players first, then weakest roster, then stable.
+        # fewest players first; ties broken RANDOMLY (equal teams in Season 0).
         order = sorted(
             team_ids,
-            key=lambda tid: (len(world["teams"][tid]["roster"]),
-                             _roster_value(world, world["teams"][tid]), tid),
+            key=lambda tid: (len(world["teams"][tid]["roster"]), rng.random()),
         )
         progressed = False
         for tid in order:
@@ -97,9 +111,13 @@ def balanced_draft(world: dict, team_ids: list[str], rng: random.Random,
                 continue
             if not free:
                 return  # pool exhausted
-            # best available by value
-            free.sort(key=lambda pid: -economy.player_value(get_player(world, pid)))
-            pick = free.pop(0)
+            pick = None
+            if pick_fn is not None:
+                pick = pick_fn(team, [get_player(world, pid) for pid in free])
+            if pick is None or pick not in free:   # heuristic fallback: best by value
+                free.sort(key=lambda pid: -economy.player_value(get_player(world, pid)))
+                pick = free[0]
+            free.remove(pick)
             player = get_player(world, pick)
             player["status"] = "rostered"
             player["team_id"] = tid
@@ -156,11 +174,15 @@ def _lower_final_ranking(champ: str, finalists: list[str],
 
 
 def run_regular_season(world: dict, play: Optional[PlayFn] = None, *,
+                       seed: Optional[int] = None,
                        settle_economy: bool = True, record: bool = True) -> dict:
     """Play one regular season: groups -> playoffs -> Elo -> economy ->
-    promotion/relegation -> calendar. Returns a season summary."""
+    promotion/relegation -> calendar. Returns a season summary. ``seed`` is
+    optional: None (production) → fresh entropy so each season plays out uniquely;
+    pass an explicit seed (tests) for a reproducible season (§0-ter)."""
     season = world["season"]
-    play = play or make_play_fn(world, seed=season)
+    resolved_seed = seeds.resolve_seed(seed)     # recorded in the summary for history
+    play = play or make_play_fn(world, seed=resolved_seed)
 
     up_ids = [t["team_id"] for t in upper_teams(world)]
     a_ids = _group_members(world, "A")
@@ -215,6 +237,7 @@ def run_regular_season(world: dict, play: Optional[PlayFn] = None, *,
 
     summary = {
         "season": season,
+        "seed": resolved_seed,                     # this run's seed (unique unless pinned)
         "upper_ranking": upper_ranking,
         "lower_ranking": lower_ranking,
         "upper_champion": up_play["champion"],
@@ -259,36 +282,41 @@ def _apply_promotion_relegation(world: dict, promoted: list[str], relegated: lis
 # --------------------------------------------------------------------------- #
 # Season 0 bootstrap
 # --------------------------------------------------------------------------- #
-def bootstrap_world(world: dict, *, seed: int = 0, play: Optional[PlayFn] = None,
+def bootstrap_world(world: dict, *, seed: Optional[int] = None,
+                    play: Optional[PlayFn] = None,
+                    draft_pick_fn: Optional[DraftPickFn] = None,
                     soloq_rounds: int = soloq.DEFAULT_ROUNDS) -> dict:
     """Run the Season-0 bootstrap (see spec §8):
 
     1. SoloQ seeds player ratings (persists).
-    2. Balanced draft to 3 for all teams.
+    2. Balanced draft to 3 for all teams (Season 0: equal/random order). The
+       ``draft_pick_fn`` hook lets the LLM draft per-pick (L2); default = heuristic.
     3. Lower-league series promote 2 each run until the upper league fills (10),
        refilling lower from a reserve queue; then +3 warm-up runs.
     No money, no salaries, no match history, no Elo persist — ONLY SoloQ.
+    ``seed`` optional: None → fresh entropy (unique world); explicit → reproducible.
     Ends with leagues set and treasuries seeded for Season 1.
     """
-    rng = random.Random(seed)
+    resolved = seeds.resolve_seed(seed)
+    sp = seeds.Spawner(resolved)        # independent child streams (no base+offset)
 
     # 1. SoloQ
-    soloq.apply_soloq(world, rounds=soloq_rounds, seed=seed)
+    soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed())
 
-    # 2. Draft all teams to 3
+    # 2. Draft all teams to 3 (equal/random order in Season 0)
     all_team_ids = list(world["teams"].keys())
     if len(all_team_ids) != UPPER_SIZE + LOWER_SIZE:
         # Foundation supports the canonical 22; degrade gracefully otherwise.
         pass
-    balanced_draft(world, all_team_ids, rng, target_size=3)
-    coach.assign_default_coaches(world)  # every team gets a tactical brain
+    balanced_draft(world, all_team_ids, sp.random(), target_size=3, pick_fn=draft_pick_fn)
 
     # 3. Bootstrap leagues
     lower_ids = all_team_ids[:LOWER_SIZE]
     reserve = list(all_team_ids[LOWER_SIZE:])
     assign_lower_groups(world, lower_ids)
     upper_ids: list[str] = []
-    play = play or make_play_fn(world, seed=seed + 1)
+    # Season 0 persists ONLY SoloQ -> do not accumulate per-position stats here.
+    play = play or make_play_fn(world, seed=sp.seed(), record_positions=False)
 
     runs = 0
     guard = 0
@@ -343,5 +371,6 @@ def bootstrap_world(world: dict, *, seed: int = 0, play: Optional[PlayFn] = None
     world["season"] = 1
     world["phase"] = "regular"
     world["bootstrap"] = {"lower_runs": runs, "extra_runs": BOOTSTRAP_EXTRA_RUNS,
-                          "upper_filled": len(upper_ids) == UPPER_SIZE}
+                          "upper_filled": len(upper_ids) == UPPER_SIZE,
+                          "seed": resolved}
     return world

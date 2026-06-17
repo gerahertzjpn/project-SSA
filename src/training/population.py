@@ -96,13 +96,12 @@ class NetSpec:
     clip_coef: float
     gae_lambda: float
     hidden_size: int
-    # "Obedience": per-net order-shaping weight (how strongly the coach's order
-    # bends this net). For the BASE population this is UNIFORM (BASE_OBEDIENCE) so
-    # every base net is EQUALLY coachable — a clean, undifferentiated foundation.
-    # Per-net character (loyalists vs mavericks, the eventual 10-40% spread) is
-    # introduced LATER via forks/tier-2, NOT pre-baked into the base. Still part of
-    # the genotype/uniqueness hash (uniform here; seed/faction/recipe keep nets unique).
-    obedience: float = 0.5
+    # NOTE: there is deliberately NO per-net "obedience" parameter. The base nets
+    # carry NO baked order-following bias and NO special numbers. Order-following is
+    # taught UNIFORMLY to all nets during training (a single global order-shaping
+    # reward, see PopulationConfig.order_shaping_weight); whether a net ends up more
+    # or less obedient EMERGES from training, it is never pre-painted. Uniqueness
+    # comes from seed/faction/recipe (CLAUDE.md uniqueness rule).
 
     def genotype_signature(self) -> dict:
         """Normalized, order-stable description used for the uniqueness hash."""
@@ -117,7 +116,6 @@ class NetSpec:
             "entropy_coef": self.entropy_coef,
             "clip_coef": self.clip_coef,
             "gae_lambda": self.gae_lambda,
-            "obedience": round(float(self.obedience), 3),
             "recipe": self.recipe,
             "seed": self.seed,
         }
@@ -127,13 +125,10 @@ class NetSpec:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
-# Uniform order-shaping weight for ALL base nets — a clean foundation with no
-# pre-baked coachability differences. Character/spread is added later (forks/tier-2).
-BASE_OBEDIENCE = 0.5
-
-
 def build_default_population() -> list[NetSpec]:
-    """The canonical 18-net population: 6 unique nets per faction (uniformly coachable)."""
+    """The canonical 18-net population: 6 unique nets per faction. NO baked obedience
+    — every base net is identical in coachability; order-following is learned during
+    training, and any spread is emergent (never a special per-net number)."""
     nets: list[NetSpec] = []
     for faction in FACTION_TYPES:
         base = FACTION_SEED_BASE[faction]
@@ -151,17 +146,9 @@ def build_default_population() -> list[NetSpec]:
                     clip_coef=recipe.clip_coef,
                     gae_lambda=recipe.gae_lambda,
                     hidden_size=recipe.hidden_size,
-                    obedience=BASE_OBEDIENCE,  # uniform: clean base, character added later
                 )
             )
     return nets
-
-
-def _natural_obedience(seed: int) -> float:
-    """Per-net obedience drawn from each net's own seed — a natural spread over
-    the full [0, 1] spectrum, so the population organically holds both loyalists
-    and mavericks (not a hand-painted ladder)."""
-    return float(round(np.random.default_rng(seed * 7919 + 13).uniform(0.0, 1.0), 3))
 
 
 def assert_population_unique(nets: list[NetSpec]) -> None:
@@ -264,8 +251,10 @@ class PopulationConfig:
     opponent_deterministic: bool = False
     mixed_faction: bool = True
     core_progress_weight: float = 0.5
-    # LLM-manager order channel. v1: uniform order_shaping_weight ("obedience")
-    # for all nets; Tier-2 makes it per-net (recipe/genotype). 0 disables shaping.
+    # LLM-manager order channel. order_shaping_weight is the UNIFORM training signal
+    # that teaches order-following to ALL nets equally (0 disables shaping). It is a
+    # training hyperparameter, NOT a per-net obedience number — obedience is never
+    # baked; any divergence emerges from training.
     sample_orders: bool = True
     order_shaping_weight: float = 0.5
     # Fraction of episodes with NO order (channel zeroed, shaping off) so nets also
@@ -358,13 +347,10 @@ def _run_episode_collect(
     }
     slot_to_net = {slot: net_id for slot, net_id in zip(CONTROLLED_SLOTS, plan.controlled)}
 
-    # Per-net obedience: each controlled net's genotype obedience scales how
-    # strongly the order bends it (× a global weight that can disable the channel).
+    # UNIFORM order-shaping weight for every controlled net (no per-net obedience —
+    # see NetSpec). All nets get the SAME signal to follow orders; any obedience
+    # spread must emerge from training, never from a baked number.
     global_order_weight = float(config_view.get("order_shaping_weight", 0.5))
-    obedience_by_slot = {
-        slot: float(spec[net_id].obedience) * global_order_weight
-        for slot, net_id in slot_to_net.items()
-    }
 
     env_config = TeamTrainingEnvConfig(
         controlled_players=CONTROLLED_SLOTS,
@@ -380,7 +366,7 @@ def _run_episode_collect(
         record_trace=False,
         core_progress_weight=float(config_view.get("core_progress_weight", 0.5)),
         sample_orders=bool(config_view.get("sample_orders", True)),
-        order_shaping_weight=obedience_by_slot,
+        order_shaping_weight=global_order_weight,   # uniform for all nets (no baked obedience)
         no_order_prob=float(config_view.get("no_order_prob", 0.0)),
     )
     env = TeamTrainingEnv(env_config)

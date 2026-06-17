@@ -44,7 +44,7 @@ def test_validate_request_enforces_steps_and_target():
         ops.validate_request("skill_up", {"kind": "player"}, total_steps=100)   # below min
     with pytest.raises(ValueError):
         ops.validate_request("skill_up", {"kind": "roster"}, total_steps=1_000_000)  # bad target
-    ops.validate_request("skill_up", {"kind": "coach"}, total_steps=1_000_000)   # ok (coach allowed)
+    ops.validate_request("skill_up", {"kind": "player"}, total_steps=1_000_000)   # ok (player)
     ops.validate_request("teamplay", {"kind": "roster"}, total_steps=1_000_000)  # ok
 
 

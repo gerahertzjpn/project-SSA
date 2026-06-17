@@ -16,6 +16,8 @@ import random
 from pathlib import Path
 from typing import Optional
 
+from src.core import rng as seeds
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_WORLD_ROOT = ROOT / "data" / "world"
 
@@ -95,6 +97,18 @@ def _synth_attributes(rng: random.Random, tier: float) -> dict:
     return attrs
 
 
+POSITIONS = ("A1", "A2", "A3")
+
+
+def _synth_position_affinity(rng: random.Random) -> dict:
+    """Per-position skill multiplier (latent): each player is clearly better at one
+    position. Drives strength when fielded there; the OBSERVED per-position winrate
+    accumulates separately in ``position_stats`` (data the manager/LLM scouts)."""
+    aff = {p: round(rng.uniform(0.86, 1.0), 3) for p in POSITIONS}
+    aff[rng.choice(POSITIONS)] = round(rng.uniform(1.06, 1.18), 3)
+    return aff
+
+
 def make_player(
     world_id: str,
     index: int,
@@ -115,6 +129,12 @@ def make_player(
         "faction": rng.choice(FACTIONS),
         "archetype": rng.choice(_ARCHETYPES),
         "attributes": _synth_attributes(rng, tier),
+        # latent per-position skill multiplier (A1/A2/A3) — fielding a player at a
+        # good position boosts strength; the LLM/manager picks positions + subs.
+        "position_affinity": _synth_position_affinity(rng),
+        # OBSERVED per-position record, filled as official matches are played:
+        # {pos: {"games": n, "wins": w}}. Different players -> different position winrate.
+        "position_stats": {},
         "soloq_rating": START_RATING,
         "soloq_history": [],
         "salary": 0.0,                          # set after first played season
@@ -148,37 +168,9 @@ def make_team(world_id: str, franchise: dict) -> dict:
         "trophies": [],                         # [{season, title}]
         "transfer_requests_used": 0,            # per transfer window (reset each window)
         "training_certificates": [],            # bankable gradeslot certs [{cert_id, steps, season}]
-        "coach": None,                          # coach_id of the hired RL coach (tactics)
-    }
-
-
-# Coach character: a default tactical leaning, paired with the order vocabulary.
-_COACH_TEMPO = ("turtle", "balanced", "aggressive", "all_in")
-_COACH_WIN_PATH = ("economy", "core_rush", "baron_lord", "outlast")
-
-
-def coach_id(world_id: str, index: int) -> str:
-    return f"{world_id}-c{index:03d}"
-
-
-def make_coach(world_id: str, index: int, name: str, rng: random.Random) -> dict:
-    """A coach is a hireable RL net responsible for TACTICS (lineup, in-match subs,
-    positions, the per-match order). The LLM manager hires it like a player; the
-    coach net is trained like the players. ``net_id`` (shared pool) is optional in
-    the foundation."""
-    return {
-        "coach_id": coach_id(world_id, index),
-        "net_id": None,
-        "name": name,
-        "rating": START_RATING,                 # coach competence (RL skill)
-        "salary": 0.0,
-        "salary_history": [],
-        "status": "free_agent",                 # free_agent | hired
-        "team_id": None,
-        "tactic_bias": {"tempo": rng.choice(_COACH_TEMPO),
-                        "win_path": rng.choice(_COACH_WIN_PATH)},
-        "lineage": {"parent_id": None, "origin": "founder", "generation": 0},
-        "history": [],
+        # The manager-LLM's contingency PLAYBOOK for the current tournament
+        # (base strategy + IF-THEN overrides incl. substitution rules). None until set.
+        "tournament_plan": None,
     }
 
 
@@ -191,7 +183,7 @@ def new_world(
     *,
     name: Optional[str] = None,
     player_pool_size: Optional[int] = None,
-    seed: int = 0,
+    seed: Optional[int] = None,
     config: Optional[dict] = None,
 ) -> dict:
     """Create a clean-slate world: a diverse player pool (all free agents) and
@@ -199,10 +191,14 @@ def new_world(
     neither). Rosters are filled later by the balanced draft (see season.py).
 
     ``player_pool_size`` defaults to enough for 3 per team + a free-agent buffer.
+    ``seed`` is OPTIONAL: ``None`` (production default) draws a fresh OS-entropy
+    seed so every world is unique; the resolved seed is RECORDED in ``world['seed']``
+    for history. Tests pass an explicit seed for determinism (WORLD_MODE_SPEC §0-ter).
     """
     if len(franchises) < 2:
         raise WorldError("need at least 2 franchises")
-    rng = random.Random(seed)
+    resolved_seed = seeds.resolve_seed(seed)
+    rng = random.Random(resolved_seed)
 
     teams = {t["team_id"]: t for t in (make_team(world_id, fr) for fr in franchises)}
     n_teams = len(teams)
@@ -216,27 +212,18 @@ def new_world(
         p = make_player(world_id, i, nicks[i], rng, tier=tier)
         players[p["player_id"]] = p
 
-    # Coach pool: one per team + a small free-agent surplus to hire from.
-    n_coaches = n_teams + max(4, n_teams // 4)
-    coach_names = _unique_nicknames(n_coaches, rng)
-    coaches: dict[str, dict] = {}
-    for i in range(n_coaches):
-        c = make_coach(world_id, i, "Coach " + coach_names[i], rng)
-        coaches[c["coach_id"]] = c
-
     return {
         "version": STORE_VERSION,
         "world_id": world_id,
         "name": name or world_id,
+        "seed": resolved_seed,       # recorded for history (unique per run; see §0-ter)
         "season": 0,
         "month": 0,
         "phase": "created",          # created | season0 | regular | offseason
         "config": dict(config or {}),
         "teams": teams,
         "players": players,
-        "coaches": coaches,
         "free_agents": list(players.keys()),
-        "free_coaches": list(coaches.keys()),
         "rookies_pool": [],
         "calendar": [],
         "history": [],
@@ -258,18 +245,6 @@ def get_player(world: dict, pid: str) -> dict:
     if p is None:
         raise WorldError(f"unknown player {pid!r}")
     return p
-
-
-def get_coach(world: dict, cid: str) -> dict:
-    c = world.get("coaches", {}).get(cid)
-    if c is None:
-        raise WorldError(f"unknown coach {cid!r}")
-    return c
-
-
-def team_coach(world: dict, team: dict) -> Optional[dict]:
-    cid = team.get("coach")
-    return world.get("coaches", {}).get(cid) if cid else None
 
 
 def teams_in_league(world: dict, league: str) -> list[dict]:

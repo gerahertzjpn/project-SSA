@@ -16,19 +16,25 @@ Stage order (rationale in docs/cloudcode/WORLD_OFFSEASON.md):
   4. training     — COMBINED launch (team + rookies + free agents): preview, (exec gated)
   5. transfers    — 2-round window (buy/sell, free-agent auctions)
   6. rookie_draft — lower league drafts prospects, weakest-first
-  7. coaching     — managers hire/release coaches
+  7. planning     — each manager authors its tournament PLAYBOOK (no coach; §0-bis)
   8. advance      — close the off-season: skip a calendar month, season += 1,
                     reset transfer-window limits, set phase back to 'regular'
+
+Every stage appends to an EVENT FEED (events.py) — a step-by-step chronicle the UI
+plays back; fallbacks emit notifications into the same feed.
 """
 from __future__ import annotations
 
+from typing import Optional
+
+from src.core import rng as seeds
 from src.world import (
-    calendar as cal, feature_flags, freeagents, manager, rookies, soloq,
-    training_auction, training_ops, transfers,
+    calendar as cal, events, feature_flags, freeagents, llm_manager,
+    rookies, soloq, training_auction, training_ops, transfers,
 )
 
 OFFSEASON_STAGES = ("soloq", "rookies", "free_agents", "training", "transfers",
-                    "rookie_draft", "coaching", "advance")
+                    "rookie_draft", "planning", "advance")
 
 # Labels for system-driven training jobs that are not team-auction ops.
 SYSTEM_OP_LABELS = {
@@ -125,25 +131,32 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
                   rookie_budget: rookies.RookieBudget | None = None,
                   fa_budget: freeagents.FreeAgentBudget | None = None,
                   training_config: training_auction.TrainingConfig | None = None,
-                  backend=None, seed: int = 0, soloq_rounds: int = soloq.DEFAULT_ROUNDS) -> dict:
-    """Run the off-season stages and return a structured report. The training
-    stage previews the COMBINED launch (team + rookies + free agents); it only
-    executes if a real (enabled) ``backend`` is supplied, otherwise it is recorded
-    as locked/in-development."""
+                  backend=None, llm=None, seed: Optional[int] = None,
+                  soloq_rounds: int = soloq.DEFAULT_ROUNDS) -> dict:
+    """Run the off-season stages and return a structured report (incl. a step-by-step
+    event feed). The training stage previews the COMBINED launch (team + rookies +
+    free agents); it only executes if a real (enabled) ``backend`` is supplied. ``llm``
+    (when the flag is on) authors playbooks; otherwise the heuristic runs + notifies.
+    ``seed`` optional: None → fresh entropy (unique off-season); explicit → reproducible."""
     cfg = training_config or training_auction.TrainingConfig()
-    report = {"season_just_ended": world["season"], "stages": {}}
+    sp = seeds.Spawner(seed)              # independent child streams (no base+offset)
+    feed: list = events.chronicle()
+    report = {"season_just_ended": world["season"], "seed": sp.root_seed,  # recorded for history
+              "stages": {}, "events": feed}
 
     # 1. SoloQ
-    log = soloq.apply_soloq(world, rounds=soloq_rounds, seed=seed)
+    log = soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed())
     report["stages"]["soloq"] = {"rounds": soloq_rounds,
                                  "last_round_matches": log[-1]["matches"] if log else 0}
+    events.emit(feed, "stage", f"SoloQ: сыграно {soloq_rounds} раундов, рейтинги обновлены")
 
     # 2. Rookies (cards now; their forks go into the combined launch)
     if rookie_budget is not None:
-        rk = rookies.generate_rookies(world, rookie_budget, seed=seed)
+        rk = rookies.generate_rookies(world, rookie_budget, seed=sp.seed())
     else:
         rk = {"n": 0, "fork_plan": [], "note": "no rookie budget set this off-season"}
     report["stages"]["rookies"] = rk
+    events.emit(feed, "stage", f"Новички: создано {rk.get('n', 0)} проспектов")
     rookie_jobs = rookies.rookie_training_jobs(rk)
 
     # 3. Free agents (keep form)
@@ -154,6 +167,8 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     report["stages"]["free_agents"] = {"n": len(fa_jobs),
                                        "total_steps": freeagents.total_steps(fa_jobs),
                                        "note": "form upkeep" if fa_jobs else "no free-agent budget"}
+    if fa_jobs:
+        events.emit(feed, "train", f"Фри-агенты: {len(fa_jobs)} на поддержании формы")
 
     # 4. Combined training launch — ONE preview, (exec gated)
     queue = build_training_queue(training_jobs, rookie_jobs, fa_jobs)
@@ -161,26 +176,39 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     execution = {"executed": False, "reason": "preview only — no training backend supplied",
                  "results": []}
     if backend is not None and queue:
-        execution = _execute_training(world, queue, cfg, backend)
+        execution = _execute_training(world, queue, cfg, backend, feed=feed)
     report["stages"]["training"] = {"preview": preview, "execution": execution}
+    events.emit(feed, "train", f"Тренировка (один запуск): {preview['n_requests']} заявок, "
+                f"{preview['total_steps']:,} шагов; исполнение — {execution['reason']}")
 
-    # 5. Transfers (rules ready; LLM decisions gated)
+    # 5. Transfers (rules ready; LLM decisions gated). When the LLM market runs it
+    #    appends bid/buy/sell/decline events to the feed (see llm_market.py).
     report["stages"]["transfers"] = {
         "window_rounds": transfers.ROUNDS,
         "llm_decisions": feature_flags.ui_state("llm_manager"),
         "note": "правила окна готовы; решения LLM-менеджера в разработке",
     }
 
-    # 6. Rookie draft (lower league, weakest-first)
+    # 6. Rookie draft (lower league, weakest-first) — chronicle each signing
     picks = transfers.rookie_draft(world)
+    for pk in picks:
+        nick = world["players"][pk["player_id"]]["nickname"]
+        tname = world["teams"][pk["team_id"]]["name"]
+        events.emit(feed, "draft", f"Драфт новичков: {tname} подписал {nick}", **pk)
     report["stages"]["rookie_draft"] = {"picks": picks, "n": len(picks)}
 
-    # 7. Coaching — managers pick coaches (heuristic; LLM later)
-    coach_moves = manager.run_coaching_stage(world)
-    report["stages"]["coaching"] = {
-        "moves": coach_moves, "n": len(coach_moves),
+    # 7. Planning — each manager authors its tournament PLAYBOOK (LLM if active, else
+    #    heuristic; author_playbook emits the chronicle + any fallback notification).
+    plans = []
+    for team in world["teams"].values():
+        if len(team.get("roster", [])) < 3:
+            continue
+        plan = llm_manager.author_playbook(world, team, llm=llm, feed=feed)
+        plans.append({"team_id": team["team_id"], "base": plan["base"]["strategy"]})
+    report["stages"]["planning"] = {
+        "plans": plans, "n": len(plans),
         "llm_decisions": feature_flags.ui_state("llm_manager"),
-        "note": "менеджеры выбирают тренеров (эвристика; LLM в разработке)",
+        "note": "менеджеры задают плейбук (LLM если включён, иначе эвристика)",
     }
 
     # 8. Advance: close the off-season -> next season
@@ -190,11 +218,13 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     for t in world["teams"].values():
         t["transfer_requests_used"] = 0
     report["stages"]["advance"] = {"month": world["month"], "next_season": world["season"]}
+    events.emit(feed, "stage", f"Межсезонье закрыто → сезон {world['season']}")
     report["next_season"] = world["season"]
     return report
 
 
-def _execute_training(world: dict, jobs: list[dict], cfg, backend) -> dict:
+def _execute_training(world: dict, jobs: list[dict], cfg, backend,
+                      feed: Optional[list] = None) -> dict:
     """Attempt to run the combined queue via the backend, per kind. A locked/in-dev
     backend refuses (FeatureLocked) — recorded honestly, not silently skipped."""
     results = []
@@ -219,8 +249,10 @@ def _execute_training(world: dict, jobs: list[dict], cfg, backend) -> dict:
             executed_any = True
         except feature_flags.FeatureLocked as exc:
             results.append({"kind": kind, "op": op, "status": "locked", "reason": str(exc)})
+            events.emit(feed, "train", f"Тренировка {op} ({kind}): заблокировано — {exc}")
         except NotImplementedError as exc:
             results.append({"kind": kind, "op": op, "status": "not_wired", "reason": str(exc)})
+            events.emit(feed, "train", f"Тренировка {op} ({kind}): backend не подключён")
     reason = "executed" if executed_any else "backend locked/in-development — nothing ran"
     return {"executed": executed_any, "reason": reason, "results": results}
 
@@ -236,4 +268,9 @@ def render_report(report: dict) -> list[str]:
     lines += render_training_preview(st["training"]["preview"])
     lines.append(f"Исполнение тренировок: {st['training']['execution']['reason']}")
     lines.append(f"Драфт новичков: {st['rookie_draft']['n']} подписаний")
+    lines.append(f"Плейбуки на турнир: {st.get('planning', {}).get('n', 0)} команд")
+    feed = report.get("events") or []
+    if feed:
+        lines.append("--- ЛЕНТА СОБЫТИЙ ---")
+        lines += events.render(feed)
     return lines

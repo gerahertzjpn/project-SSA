@@ -1,5 +1,6 @@
-"""World manager (front office): profiles, reworked character, decisions, coach pick."""
-from src.world import coach, manager, valuation
+"""World manager — the single brain (front office + playbook): profiles, decisions,
+planning. No coach (WORLD_MODE_SPEC §0-bis)."""
+from src.world import manager, playbook, season
 from src.world.manager import ManagerProfile
 from src.world.world import new_world
 
@@ -9,16 +10,17 @@ FRANCHISES = [{"franchise_id": f"fr{i:02d}", "name": f"Team {i}", "abbrev": f"T{
 
 def _profile(**over):
     base = dict(aggression=0.5, frugality=0.5, youth_focus=0.5, risk=0.5,
-                patience=0.5, coach_priority=0.5, loyalty=0.5)
+                patience=0.5, loyalty=0.5)
     base.update(over)
     return ManagerProfile(**base)
 
 
 # -------------------------------------------------------------- character -- #
-def test_rules_are_front_office_not_tactics():
+def test_rules_are_manager_only_with_playbook():
     r = manager.MANAGER_SYSTEM_RULES
-    assert "ТРЕНЕР" in r and "тренеров" in r          # picks coaches, coach owns tactics
-    assert "верхней лиг" in r                          # always aims for the upper title
+    assert "МЕНЕДЖЕР" in r and "ПЛЕЙБУК" in r          # single brain authors the playbook
+    assert "тренера НЕТ" in r                           # explicitly no coach
+    assert "верхней лиг" in r                           # always aims for the upper title
     # no in-game order vocabulary leaks into the manager's job
     for tactic in ("tempo", "win_path", "core_rush", "turtle"):
         assert tactic not in r
@@ -32,10 +34,10 @@ def test_natural_profile_deterministic_and_diverse():
     assert len(aggressions) > 8                         # spreads on its own
 
 
-def test_persona_describes_management_not_playstyle():
+def test_persona_describes_management_and_playbook():
     fr = {"name": "Team X", "manager": "Иван"}
     blurb = manager.manager_persona(fr, _profile(aggression=0.9, youth_focus=0.9))
-    assert "Иван" in blurb and "не вмешиваешься" in blurb
+    assert "Иван" in blurb and "плейбук" in blurb.lower()
     for tactic in ("tempo", "win_path", "core_rush"):
         assert tactic not in blurb
 
@@ -73,24 +75,22 @@ def test_certificate_intent_reflects_character():
     assert manager.certificate_intent(_profile(aggression=0.1, patience=0.9), False) == "teamplay"
 
 
-# ------------------------------------------------------------- coach pick -- #
-def test_pick_coach_prefers_best_and_respects_priority():
-    w = new_world("w-coach", FRANCHISES, seed=2)
-    tid = list(w["teams"])[0]
-    cands = list(w["free_coaches"])[:3]
-    w["coaches"][cands[0]]["rating"] = 1100
-    w["coaches"][cands[1]]["rating"] = 1000
-    w["coaches"][cands[2]]["rating"] = 900
-    # no current coach -> takes the strongest
-    assert manager.pick_coach(w, w["teams"][tid], cands, _profile(coach_priority=0.9)) == cands[0]
-    # with a decent current coach, a low-priority manager won't bother for a small gain
-    coach.hire_coach(w, tid, cands[1])               # current rating 1000
-    w["coaches"][cands[0]]["rating"] = 1010          # tiny upgrade
-    assert manager.pick_coach(w, w["teams"][tid], [cands[0]], _profile(coach_priority=0.05)) is None
+# --------------------------------------------------------------- planning -- #
+def test_run_planning_stage_sets_playbooks():
+    w = new_world("w-plan", FRANCHISES, seed=2)
+    season.bootstrap_world(w, seed=2)
+    plans = manager.run_planning_stage(w)
+    assert len(plans) == 22                             # every team gets a playbook
+    for pl in plans:
+        plan = w["teams"][pl["team_id"]]["tournament_plan"]
+        assert plan is not None
+        assert plan["base"]["strategy"] in playbook.STRATEGY_IDS
+        assert plan["overrides"]                        # has contingencies
 
 
-def test_run_coaching_stage_assigns_coaches():
-    w = new_world("w-cs", FRANCHISES, seed=3)
-    moves = manager.run_coaching_stage(w)
-    assert len(moves) > 0
-    assert all(w["teams"][m["team_id"]]["coach"] == m["hired_coach"] for m in moves)
+def test_aggressive_manager_tilts_base_aggressive():
+    w = new_world("w-tilt", FRANCHISES, seed=2)
+    season.bootstrap_world(w, seed=2)
+    team = list(w["teams"].values())[0]
+    plan = manager.set_tournament_playbook(w, team, _profile(aggression=0.95, patience=0.1))
+    assert plan["base"]["strategy"] == playbook.aggressive_comeback(w, team["team_id"])

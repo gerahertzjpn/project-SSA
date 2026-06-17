@@ -20,8 +20,11 @@ def month_label(month_index: int) -> str:
 def add_match(world: dict, *, season: int, stage: str, league: str,
               home: str, away: str, best_of: int,
               maps_home: int | None = None, maps_away: int | None = None,
-              winner: str | None = None) -> dict:
-    """Append a (scheduled or played) match to the calendar."""
+              winner: str | None = None,
+              home_strategy: str | None = None, away_strategy: str | None = None) -> dict:
+    """Append a (scheduled or played) match to the calendar. ``home_strategy`` /
+    ``away_strategy`` record the CALLS each manager made (the playbook's active
+    strategy) so the scouting layer can learn from past games."""
     event = {
         "season": season,
         "month": world.get("month", 0),
@@ -33,6 +36,8 @@ def add_match(world: dict, *, season: int, stage: str, league: str,
         "maps_home": maps_home,
         "maps_away": maps_away,
         "winner": winner,
+        "home_strategy": home_strategy,      # the manager's CALL (None if unknown)
+        "away_strategy": away_strategy,
         "played": winner is not None,
     }
     world.setdefault("calendar", []).append(event)
@@ -40,12 +45,16 @@ def add_match(world: dict, *, season: int, stage: str, league: str,
 
 
 def record_series(world: dict, season: int, league: str, series: list[dict]) -> None:
-    """Record a list of played series (from brackets/group play) onto the calendar."""
+    """Record played series (from brackets/group play) onto the calendar, including
+    each side's CALL (strategy) from the playbook meta when present."""
     for r in series:
+        pb = r.get("playbook") or {}
         add_match(
             world, season=season, stage=r.get("stage", "league"), league=league,
             home=r["home"], away=r["away"], best_of=r.get("best_of", 3),
             maps_home=r["maps_home"], maps_away=r["maps_away"], winner=r["winner"],
+            home_strategy=(pb.get("home") or {}).get("strategy"),
+            away_strategy=(pb.get("away") or {}).get("strategy"),
         )
 
 

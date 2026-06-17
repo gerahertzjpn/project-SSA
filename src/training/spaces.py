@@ -415,7 +415,7 @@ def mirror_observation(obs: dict) -> dict:
             for player_id, player in obs["players"].items()
         }
     if isinstance(obs.get("order"), dict):
-        # Order values are board-agnostic labels (tempo/win_path/role/obedience) —
+        # Order values are board-agnostic labels (tempo/win_path/role) —
         # only the per-player keys need remapping under the mirror.
         mirrored["order"] = {
             mirrored_player_id(player_id): dict(entry)
@@ -1342,7 +1342,7 @@ def _building_features(node: dict, player_id: str) -> list[float]:
 def _player_order(obs: dict, player_id: str) -> dict:
     """The manager order for one position, with neutral defaults.
 
-    obs["order"] is keyed by player_id: {pid: {tempo, win_path, role, obedience}}.
+    obs["order"] is keyed by player_id: {pid: {tempo, win_path, role}}.
     Missing entries / fields fall back to the neutral baseline so an un-ordered
     episode is well-defined (channel reads balanced/economy/support_flex).
     """

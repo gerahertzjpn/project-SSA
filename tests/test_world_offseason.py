@@ -17,7 +17,8 @@ def test_flags_locked_and_marked_in_development():
         st = feature_flags.ui_state(name)
         assert st["locked"] is True and st["selectable"] is False
         assert st["status"] == "in_development"
-    assert feature_flags.flag("offseason_coach_training")["status"] == "future"
+    # the optional L2 live auction is a secondary, locked-by-default feature
+    assert feature_flags.flag("live_auction_l2")["enabled"] is False
 
 
 def test_assert_enabled_raises_when_locked():

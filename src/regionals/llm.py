@@ -21,6 +21,15 @@ import os
 DEFAULT_MODEL = "claude-opus-4-8"
 
 
+def _first_text(response) -> str:
+    """The first text block of a response, or a clear error (not a cryptic
+    StopIteration) when the model returned no text."""
+    text = next((b.text for b in response.content if b.type == "text"), None)
+    if text is None:
+        raise RuntimeError("no text block in API response")
+    return text
+
+
 class LLMUnavailable(Exception):
     """Raised when the Anthropic SDK or API key is not available."""
 
@@ -66,8 +75,7 @@ class AnthropicLLM:
             output_config={"format": {"type": "json_schema", "schema": schema}},
         )
         self._track(response)
-        text = next(b.text for b in response.content if b.type == "text")
-        return json.loads(text)
+        return json.loads(_first_text(response))
 
     def plan(self, system: str, prompt: str, player_ids: list[str],
              tempo: list[str], win_path: list[str], role: list[str]) -> dict:
@@ -99,8 +107,21 @@ class AnthropicLLM:
             output_config={"format": {"type": "json_schema", "schema": schema}},
         )
         self._track(response)
-        text = next(b.text for b in response.content if b.type == "text")
-        return json.loads(text)
+        return json.loads(_first_text(response))
+
+    def structured(self, system: str, prompt: str, schema: dict,
+                   max_tokens: int = 900) -> dict:
+        """Generic structured-output call against an arbitrary JSON schema (used by
+        the World manager layer for playbooks / market plans / draft picks)."""
+        response = self._client.messages.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": prompt}],
+            output_config={"format": {"type": "json_schema", "schema": schema}},
+        )
+        self._track(response)
+        return json.loads(_first_text(response))
 
     def say(self, system: str, prompt: str, max_tokens: int = 400) -> str:
         response = self._client.messages.create(
