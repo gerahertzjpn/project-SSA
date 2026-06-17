@@ -96,10 +96,12 @@ class NetSpec:
     clip_coef: float
     gae_lambda: float
     hidden_size: int
-    # "Obedience": per-net order-shaping weight (how strongly the manager's order
-    # bends this net). NOT a hand-set dial — drawn as a natural spread per net so
-    # loyalists and mavericks emerge across the population (see spec). Part of the
-    # genotype/uniqueness hash; win-neutral so it isn't selected to fixation.
+    # "Obedience": per-net order-shaping weight (how strongly the coach's order
+    # bends this net). For the BASE population this is UNIFORM (BASE_OBEDIENCE) so
+    # every base net is EQUALLY coachable — a clean, undifferentiated foundation.
+    # Per-net character (loyalists vs mavericks, the eventual 10-40% spread) is
+    # introduced LATER via forks/tier-2, NOT pre-baked into the base. Still part of
+    # the genotype/uniqueness hash (uniform here; seed/faction/recipe keep nets unique).
     obedience: float = 0.5
 
     def genotype_signature(self) -> dict:
@@ -125,8 +127,13 @@ class NetSpec:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
+# Uniform order-shaping weight for ALL base nets — a clean foundation with no
+# pre-baked coachability differences. Character/spread is added later (forks/tier-2).
+BASE_OBEDIENCE = 0.5
+
+
 def build_default_population() -> list[NetSpec]:
-    """The canonical 18-net population: 6 unique nets per faction."""
+    """The canonical 18-net population: 6 unique nets per faction (uniformly coachable)."""
     nets: list[NetSpec] = []
     for faction in FACTION_TYPES:
         base = FACTION_SEED_BASE[faction]
@@ -144,7 +151,7 @@ def build_default_population() -> list[NetSpec]:
                     clip_coef=recipe.clip_coef,
                     gae_lambda=recipe.gae_lambda,
                     hidden_size=recipe.hidden_size,
-                    obedience=_natural_obedience(seed),
+                    obedience=BASE_OBEDIENCE,  # uniform: clean base, character added later
                 )
             )
     return nets

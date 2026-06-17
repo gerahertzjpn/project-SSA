@@ -116,7 +116,7 @@ MAX_DISCOVERED_POLICY_MODELS = 30
 REPLAY_NAME = re.compile(r"^replay_\d+\.json$")
 # The current trained anchor population (base18_v1). Falls back to the old
 # population_18_v1 only if base18 is absent.
-POPULATION_18_REGISTRY = ROOT / "training_runs/base18_v1/registry.json"
+POPULATION_18_REGISTRY = ROOT / "training_runs/base18_v2/registry.json"
 if not POPULATION_18_REGISTRY.exists():
     POPULATION_18_REGISTRY = ROOT / "training_runs/population_18_v1/registry.json"
 
