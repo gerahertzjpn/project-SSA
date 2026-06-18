@@ -60,17 +60,20 @@ def parse_args() -> argparse.Namespace:
                              "4 (default) amortizes the fixed per-update overhead over more "
                              "rollout -> higher steps/sec + more data per gradient update.")
     parser.add_argument("--workers", type=int, default=24,
-                        help="Rollout workers. Default 24 = SUSTAINED-stable optimum on the "
-                             "16C/32T Ryzen 9 9950X3D / 31GB. (Burst benchmark peaked at 32 = "
-                             "3014 st/s, but a long run shows 32 craters: the torch-import storm "
-                             "when the worker pool respawns peaks ~21GB = all free RAM, so spawns "
-                             "fail and the pool degrades. 24 holds ~2030 st/s with headroom.) "
-                             "See benchmark_throughput.py + BASE18_TRAINING.md.")
+                        help="Rollout workers. Default 24 = the KNEE on the 16C/32T Ryzen 9 "
+                             "9950X3D. A correct step-1 sweep (16..32, trained nets, ep4, "
+                             "no-respawn) shows throughput climbs steeply 16->24 (+51%) then "
+                             "PLATEAUS 24..32 (~2500 st/s, flat within noise). 24 is the fewest "
+                             "workers at the ceiling -> max throughput with CPU/RAM headroom for "
+                             "the PPO process. >24 gives nothing. See BASE18_TRAINING.md.")
     parser.add_argument("--ppo-epochs", type=int, default=4)
     parser.add_argument("--minibatch-size", type=int, default=1024)
     parser.add_argument("--max-ticks", type=int, default=300)
-    parser.add_argument("--snapshot-interval", type=int, default=5,
-                        help="Refresh the frozen opponent pool every N updates")
+    parser.add_argument("--snapshot-interval", type=int, default=20,
+                        help="Refresh the frozen opponent pool every N updates. 20 (was 5): "
+                             "since the pool no longer respawns on refresh (#3), this is now a "
+                             "dynamics knob, not a perf one (~1-2% faster) — refreshing less "
+                             "often keeps slightly older/more-diverse frozen opponents.")
     parser.add_argument("--checkpoint-interval", type=int, default=5)
     parser.add_argument("--torch-threads", type=int, default=1)
     parser.add_argument("--device", default="auto")
