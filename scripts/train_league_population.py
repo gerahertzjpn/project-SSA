@@ -31,7 +31,8 @@ def main() -> int:
     ap.add_argument("--ancestor-run-dir", default="training_runs/population_v1")
     ap.add_argument("--target-steps-per-net", type=int, default=1_400_000)
     ap.add_argument("--workers", type=int, default=24)
-    ap.add_argument("--scripted-prob", type=float, default=0.45)
+    ap.add_argument("--ancestor-prob", type=float, default=0.35)
+    ap.add_argument("--descendant-prob", type=float, default=0.35)
     ap.add_argument("--episodes-per-triple", type=int, default=2)
     ap.add_argument("--checkpoint-interval", type=int, default=25)
     ap.add_argument("--device", default="auto")
@@ -46,7 +47,8 @@ def main() -> int:
         run_dir=run_dir, ancestor_run_dir=args.ancestor_run_dir,
         target_steps_per_net=1 if args.smoke else args.target_steps_per_net,
         workers=2 if args.smoke else args.workers,
-        scripted_opponent_prob=args.scripted_prob,
+        ancestor_opponent_prob=args.ancestor_prob,
+        descendant_opponent_prob=args.descendant_prob,
         episodes_per_triple=1 if args.smoke else args.episodes_per_triple,
         max_triples_per_update=2 if args.smoke else 0,
         checkpoint_interval=1 if args.smoke else args.checkpoint_interval,
@@ -55,8 +57,10 @@ def main() -> int:
     trainer = LeagueTrainer(cfg)
     print(f"forked {len(trainer.nets)} descendants from {len(trainer.ancestors)} ancestors "
           f"-> {cfg.run_dir} (device {trainer.device})")
-    print(f"ancestor pool: {trainer.pool_path.name} ({trainer.pool_path.stat().st_size} bytes); "
-          f"scripted_opponent_prob={cfg.scripted_opponent_prob}")
+    scripted_p = round(1 - cfg.ancestor_opponent_prob - cfg.descendant_opponent_prob, 3)
+    print(f"opponent pool {trainer.pool_path.name} ({trainer.pool_path.stat().st_size} bytes); "
+          f"mix ancestors={cfg.ancestor_opponent_prob}/descendants={cfg.descendant_opponent_prob}/"
+          f"scripted={scripted_p}")
 
     if args.init_only:
         any_id = next(iter(trainer.nets))

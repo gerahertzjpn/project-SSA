@@ -1,23 +1,21 @@
 """League-population trainer (parallel) — trains the 90 descendants from the 18 ancestors
-against a DIVERSE opponent pool, to break the rush monoculture.
+against a DIVERSE, CO-EVOLVING opponent pool.
 
-Why diverse opponents: a controlled experiment (scripted) showed pure rush is NOT dominant
-— a tech-while-pushing bot beats it 58:42. The base nets nonetheless converged to rush
-because self-play is a rush echo-chamber (everyone rushes → no pressure to tech). So each
-descendant trains against a mix of: frozen ANCESTORS (rushers — the "train from ancestors"
-base) + scripted opponents (tech/raider/rush/turtle/eco). The tech bots (which beat rush)
-create the pressure to learn the deeper strategy.
+Opponent mix per episode (owner rules 2026-06-18: descendants may play each other; only the
+18 ancestors are cull-exempt; the goal is unique + diverse players, no near-duplicate
+"brothers"):
+  - frozen ANCESTORS (rushers) — the "from ancestors" base + rush pressure.
+  - other DESCENDANTS (a refreshed cross-archetype snapshot) — CO-EVOLUTION: an aggro net
+    faces a macro/tech net, an arms race that pushes them apart in style (diversity) and up
+    in strength.
+  - scripted {core_bmp, raider, eco, core, turtle} — the tech bots beat pure rush, breaking
+    the rush monoculture self-play never escaped.
 
 Reuses the proven base-18 PPO machinery unchanged (population._merge_net_rollout,
-_PPOUpdateView, _empty_buffer, write_frozen_pool; ppo_trainer.update_policy) and the same
-multiprocessing worker-pool pattern. base-18 code is untouched.
-
-Each episode: a same-archetype descendant triple (one per faction) on team A learns; team B
-is either 3 frozen ancestors or 3 scripted bots. Diversity axes: per-net recipe (PPO), per-
-archetype reward shaping (env), curriculum (ancestor sampling), strategy niche (recorded).
-
-Fork-init = each descendant starts as a copy of its parent ancestor's latest weights, then
-diverges under its own recipe + the diverse opponents.
+_PPOUpdateView, _empty_buffer, write_frozen_pool; ppo_trainer.update_policy) + the same
+multiprocessing worker pool. base-18 code untouched. Restart-safe (resumes from descendant
+checkpoints). Diversity-aware culling is built separately and driven by a redundancy metric;
+it is NOT applied here.
 """
 from __future__ import annotations
 
@@ -33,18 +31,16 @@ import torch
 
 from src.training.policy import MaskedActorCritic, to_cpu_state_dict
 from src.training.population import (
-    NetSpec, build_default_population, write_frozen_pool,
+    build_default_population, write_frozen_pool,
     _merge_net_rollout, _PPOUpdateView, _empty_buffer,
     CONTROLLED_SLOTS, OPPONENT_SLOTS,
 )
-from src.training.population_roster import DescendantSpec, build_population
+from src.training.population_roster import build_population
 from src.training.ppo_trainer import update_policy
 from src.training.team_env import TeamTrainingEnv, TeamTrainingEnvConfig
 
 FACTIONS = ("humans", "infected", "robots")
 ANCESTOR_RUN = "training_runs/population_v1"
-# Non-ancestor scripted opponents. bmp/raider/eco PRESSURE tech-learning (they punish pure
-# rush); core adds rush variety; turtle adds a passive holder. Weighted in _pick_scripted.
 SCRIPTED_OPPONENTS = (
     "scripted_core_bmp", "scripted_core_bmp", "scripted_core_raider", "scripted_eco",
     "scripted_core", "scripted_turtle",
@@ -56,7 +52,7 @@ class LeagueConfig:
     run_dir: str
     ancestor_run_dir: str = ANCESTOR_RUN
     master_seed: int = 20260618
-    target_steps_per_net: int = 1_400_000
+    target_steps_per_net: int = 1_000_000
     episodes_per_triple: int = 2
     workers: int = 24
     torch_threads: int = 1
@@ -69,14 +65,18 @@ class LeagueConfig:
     sample_orders: bool = True
     no_order_prob: float = 0.2
     opponent_deterministic: bool = False
-    scripted_opponent_prob: float = 0.45    # fraction of episodes vs scripted (else ancestors)
+    # opponent mix (the remainder after these two is the scripted share)
+    ancestor_opponent_prob: float = 0.35
+    descendant_opponent_prob: float = 0.35
+    descendant_pool_size: int = 24            # cross-archetype snapshot used as co-evo opponents
+    pool_refresh_interval: int = 150          # refresh the descendant snapshot every N updates
     device: str = "auto"
     checkpoint_interval: int = 25
-    max_triples_per_update: int = 0         # 0 = all 30; >0 caps for smoke
+    max_triples_per_update: int = 0
 
 
 # --------------------------------------------------------------------------- #
-# Worker (module-level, picklable for spawn)
+# Worker
 # --------------------------------------------------------------------------- #
 def _buffers_to_agents(buffers: dict) -> dict:
     agents = {}
@@ -97,16 +97,15 @@ def _buffers_to_agents(buffers: dict) -> dict:
 
 
 def _run_episode_vs(plan, nets, faction_by_id, pool_path, common, buffers):
-    """One episode: controlled descendant triple vs either frozen ancestors or a scripted
-    bot. Collects the controlled nets' trajectories. Mirrors population._run_episode_collect
-    but with a configurable opponent."""
+    """One episode: controlled descendant triple vs ancestors / other descendants (both
+    policy from the combined pool) or a scripted bot."""
     ctrl = plan["controlled"]
     kind = plan["opponent_kind"]
     slot_to_net = {slot: nid for slot, nid in zip(CONTROLLED_SLOTS, ctrl)}
     controlled_factions = {slot: faction_by_id[nid] for slot, nid in zip(CONTROLLED_SLOTS, ctrl)}
     player_factions = {**controlled_factions, **plan["opponent_factions"]}
 
-    cfg_kwargs = dict(
+    cfg = dict(
         controlled_players=CONTROLLED_SLOTS, seed=plan["seed"],
         player_factions=player_factions, max_ticks=int(common["max_ticks"]),
         record_replay=False, record_trace=False,
@@ -115,18 +114,17 @@ def _run_episode_vs(plan, nets, faction_by_id, pool_path, common, buffers):
         order_shaping_weight=float(plan["order_shaping_weight"]),
         no_order_prob=float(common["no_order_prob"]),
     )
-    if kind == "ancestors":
-        cfg_kwargs.update(
-            opponent_bot="policy",
-            opponent_policy_checkpoint=str(pool_path),
+    if kind in ("ancestors", "descendants"):
+        cfg.update(
+            opponent_bot="policy", opponent_policy_checkpoint=str(pool_path),
             opponent_policy_deterministic=bool(common["opponent_deterministic"]),
             opponent_policy_state_ids={slot: oid for slot, oid in
                                        zip(OPPONENT_SLOTS, plan["opponent_ids"])},
         )
     else:
-        cfg_kwargs.update(opponent_bot=kind)  # a scripted variant id
+        cfg.update(opponent_bot=kind)
 
-    env = TeamTrainingEnv(TeamTrainingEnvConfig(**cfg_kwargs))
+    env = TeamTrainingEnv(TeamTrainingEnvConfig(**cfg))
     obs, _ = env.reset(seed=plan["seed"], player_factions=player_factions)
     done = False
     result = None
@@ -158,7 +156,9 @@ def _run_episode_vs(plan, nets, faction_by_id, pool_path, common, buffers):
     info = result.info if result is not None else {}
     winner = info.get("winner") or "DRAW"
     return {"win": 1 if winner == env.controlled_team else 0, "steps": steps,
-            "kind": kind, "controlled": list(ctrl)}
+            "kind": "descendants" if kind == "descendants"
+                    else ("ancestors" if kind == "ancestors" else "scripted"),
+            "controlled": list(ctrl)}
 
 
 def _league_worker(request: dict) -> dict:
@@ -177,7 +177,7 @@ def _league_worker(request: dict) -> dict:
     episodes = []
     for plan in request["plans"]:
         episodes.append(_run_episode_vs(plan, nets, faction_by_id,
-                                        request["frozen_pool_path"], request["config_common"], buffers))
+                                        request["pool_path"], request["config_common"], buffers))
     return {"agents": _buffers_to_agents(buffers), "episodes": episodes}
 
 
@@ -195,17 +195,18 @@ class LeagueTrainer:
         self.descendants = descendants or build_population(self.ancestors)
         self.desc_by_id = {d.net_id: d for d in self.descendants}
         self.anc_by_id = {a.net_id: a for a in self.ancestors}
-        self.faction_by_id = {**{d.net_id: d.faction for d in self.descendants},
-                              **{a.net_id: a.faction for a in self.ancestors}}
-        self.hidden_by_id = {d.net_id: d.hidden_size for d in self.descendants}
+        self.spec_by_id = {**self.anc_by_id, **self.desc_by_id}   # both expose faction/hidden_size
+        self.faction_by_id = {nid: s.faction for nid, s in self.spec_by_id.items()}
+        self.hidden_by_id = {nid: s.hidden_size for nid, s in self.spec_by_id.items()}
         self.run_dir = Path(config.run_dir)
         (self.run_dir / "nets").mkdir(parents=True, exist_ok=True)
         self.total_steps = 0
         self.steps_by_net = {d.net_id: 0 for d in self.descendants}
+        self._anc_states = {a.net_id: self._ancestor_state(a.net_id) for a in self.ancestors}
         self._fork_init()
-        self._build_ancestor_pool()
+        self._pool_version = 0
+        self._refresh_pool(0)
 
-    # --- setup --- #
     def _ancestor_state(self, anc_id: str) -> dict:
         path = Path(self.config.ancestor_run_dir) / "nets" / anc_id / "latest.pt"
         if not path.exists():
@@ -213,9 +214,6 @@ class LeagueTrainer:
         return torch.load(path, map_location="cpu", weights_only=False)["policy_state"]
 
     def _fork_init(self) -> None:
-        """Resume from existing descendant checkpoints if present (restart-safe), else
-        fork (warm start) from the parent ancestor. Optimizer (Adam) state is not
-        persisted — it re-warms over a few updates on resume; negligible for a long run."""
         self.nets: dict[str, MaskedActorCritic] = {}
         self.optimizers: dict[str, torch.optim.Optimizer] = {}
         resumed = 0
@@ -228,7 +226,7 @@ class LeagueTrainer:
                 self.steps_by_net[d.net_id] = int(blob.get("steps_trained", 0))
                 resumed += 1
             else:
-                net.load_state_dict(self._ancestor_state(d.parent_id))
+                net.load_state_dict(self._anc_states[d.parent_id])
             self.nets[d.net_id] = net
             self.optimizers[d.net_id] = torch.optim.Adam(net.parameters(), lr=d.learning_rate)
         self.total_steps = sum(self.steps_by_net.values())
@@ -236,22 +234,41 @@ class LeagueTrainer:
             print(f"resumed {resumed}/{len(self.descendants)} descendants "
                   f"(min steps/net {min(self.steps_by_net.values())})")
 
-    def _build_ancestor_pool(self) -> None:
-        states = {a.net_id: self._ancestor_state(a.net_id) for a in self.ancestors}
-        self.pool_path = self.run_dir / "ancestor_pool.pt"
-        write_frozen_pool(self.pool_path, self.anc_by_id, states, update=0)
+    def _refresh_pool(self, version: int) -> None:
+        """Write the combined opponent pool: all ancestors + a rotating cross-archetype
+        snapshot of the descendants (co-evolution opponents). New file per version so the
+        PolicyBot cache picks up fresh descendant weights."""
+        rng = np.random.default_rng(self.config.master_seed + version * 7919)
+        ids = [d.net_id for d in self.descendants]
+        rng.shuffle(ids)
+        sample = sorted(ids[:self.config.descendant_pool_size])
+        states = dict(self._anc_states)
+        for nid in sample:
+            states[nid] = to_cpu_state_dict(self.nets[nid])
+        specs = {nid: self.spec_by_id[nid] for nid in states}
+        path = self.run_dir / f"pool_v{version}.pt"
+        write_frozen_pool(path, specs, states, update=version)
+        old = getattr(self, "pool_path", None)
+        self.pool_path = path
+        self._pool_sample = sample
+        self._pool_version = version
+        if old is not None and Path(old).exists() and Path(old) != path:
+            try:
+                Path(old).unlink()
+            except OSError:
+                pass
 
     # --- scheduling --- #
     def _triples(self):
         archetypes = sorted({d.archetype for d in self.descendants})
         lines = sorted({int(d.parent_id.split("_")[1]) for d in self.descendants})
-        triples = []
+        out = []
         for arc in archetypes:
             for ln in lines:
                 ids = tuple(f"{fac}_{ln}__{arc}" for fac in FACTIONS)
                 if all(i in self.desc_by_id for i in ids):
-                    triples.append(ids)
-        return triples
+                    out.append(ids)
+        return out
 
     def _pick_ancestors(self, curriculum, rng):
         weights = dict(curriculum)
@@ -267,36 +284,56 @@ class LeagueTrainer:
             chosen.append(str(rng.choice(cands)))
         return chosen
 
+    def _pick_descendants(self, exclude, rng):
+        """3 co-evolution opponents from the current snapshot, distinct factions if possible
+        and not in the controlled triple (cross-archetype variety comes from the snapshot)."""
+        pool = [n for n in self._pool_sample if n not in exclude]
+        if len(pool) < 3:
+            pool = [n for n in self.desc_by_id if n not in exclude]
+        chosen = []
+        for fac in FACTIONS:
+            cands = [n for n in pool if self.faction_by_id[n] == fac and n not in chosen]
+            if cands:
+                chosen.append(str(rng.choice(cands)))
+        while len(chosen) < 3:
+            cands = [n for n in pool if n not in chosen]
+            if not cands:
+                break
+            chosen.append(str(rng.choice(cands)))
+        return chosen[:3]
+
     def _build_plans(self, update: int) -> list[dict]:
         triples = self._triples()
         if self.config.max_triples_per_update > 0:
             triples = triples[:self.config.max_triples_per_update]
+        a_p = self.config.ancestor_opponent_prob
+        d_p = self.config.descendant_opponent_prob
         plans = []
         for ti, triple in enumerate(triples):
             lead = self.desc_by_id[triple[0]]
+            shaping = {"order_shaping_weight": lead.order_shaping_weight,
+                       "core_progress_weight": lead.core_progress_weight}
             for e in range(self.config.episodes_per_triple):
                 rng = np.random.default_rng(self.config.master_seed + update * 9176 + ti * 131 + e * 17)
                 seed = self.config.master_seed + update * 1_000_003 + ti * 101 + e * 7
-                if float(rng.random()) < self.config.scripted_opponent_prob:
+                r = float(rng.random())
+                base = {"seed": seed, "controlled": list(triple), **shaping}
+                if r < a_p:
+                    opp = self._pick_ancestors(lead.opponent_curriculum, rng)
+                    base.update(opponent_kind="ancestors", opponent_ids=opp,
+                                opponent_factions={s: self.faction_by_id[o]
+                                                   for s, o in zip(OPPONENT_SLOTS, opp)})
+                elif r < a_p + d_p:
+                    opp = self._pick_descendants(set(triple), rng)
+                    base.update(opponent_kind="descendants", opponent_ids=opp,
+                                opponent_factions={s: self.faction_by_id[o]
+                                                   for s, o in zip(OPPONENT_SLOTS, opp)})
+                else:
                     kind = SCRIPTED_OPPONENTS[int(rng.integers(len(SCRIPTED_OPPONENTS)))]
                     opp_facs = [FACTIONS[int(rng.integers(3))] for _ in range(3)]
-                    plans.append({
-                        "seed": seed, "controlled": list(triple), "opponent_kind": kind,
-                        "opponent_ids": None,
-                        "opponent_factions": {s: f for s, f in zip(OPPONENT_SLOTS, opp_facs)},
-                        "order_shaping_weight": lead.order_shaping_weight,
-                        "core_progress_weight": lead.core_progress_weight,
-                    })
-                else:
-                    opp_ids = self._pick_ancestors(lead.opponent_curriculum, rng)
-                    plans.append({
-                        "seed": seed, "controlled": list(triple), "opponent_kind": "ancestors",
-                        "opponent_ids": opp_ids,
-                        "opponent_factions": {s: self.faction_by_id[o]
-                                              for s, o in zip(OPPONENT_SLOTS, opp_ids)},
-                        "order_shaping_weight": lead.order_shaping_weight,
-                        "core_progress_weight": lead.core_progress_weight,
-                    })
+                    base.update(opponent_kind=kind, opponent_ids=None,
+                                opponent_factions={s: f for s, f in zip(OPPONENT_SLOTS, opp_facs)})
+                plans.append(base)
         return plans
 
     # --- one update --- #
@@ -317,7 +354,7 @@ class LeagueTrainer:
                 "torch_threads": self.config.torch_threads,
                 "worker_seed": self.config.master_seed + update * 7919 + wi * 17,
                 "hidden_by_id": self.hidden_by_id, "faction_by_id": self.faction_by_id,
-                "frozen_pool_path": str(self.pool_path), "config_common": common,
+                "pool_path": str(self.pool_path), "config_common": common,
                 "live_states": {nid: live_states[nid] for nid in needed}, "plans": chunk,
             })
         if pool is None or len(requests) == 1:
@@ -343,17 +380,16 @@ class LeagueTrainer:
         self.total_steps += steps
 
         eps = [e for r in results for e in r["episodes"]]
-        anc_eps = [e for e in eps if e["kind"] == "ancestors"]
-        scr_eps = [e for e in eps if e["kind"] != "ancestors"]
-        def _wr(es):
+        def _wr(k):
+            es = [e for e in eps if e["kind"] == k]
             return round(sum(e["win"] for e in es) / max(1, len(es)), 4)
         return {"kind": "league_update", "update": update, "total_steps": self.total_steps,
+                "pool_version": self._pool_version,
                 "min_steps_per_net": min(self.steps_by_net.values()),
-                "episodes": len(eps), "win_vs_ancestors": _wr(anc_eps),
-                "win_vs_scripted": _wr(scr_eps), "scripted_share": round(len(scr_eps) / max(1, len(eps)), 3),
+                "episodes": len(eps), "win_vs_ancestors": _wr("ancestors"),
+                "win_vs_descendants": _wr("descendants"), "win_vs_scripted": _wr("scripted"),
                 "mean_episode_steps": round(sum(e["steps"] for e in eps) / max(1, len(eps)), 2),
-                "nets_updated": len(losses),
-                "sample_loss": next(iter(losses.values()), None)}
+                "nets_updated": len(losses), "sample_loss": next(iter(losses.values()), None)}
 
     # --- persistence --- #
     def save_checkpoints(self, update: int) -> None:
@@ -393,6 +429,8 @@ class LeagueTrainer:
                     if max_updates is not None and u >= max_updates:
                         break
                     u += 1
+                    if u % self.config.pool_refresh_interval == 0:
+                        self._refresh_pool(self._pool_version + 1)
                     t = time.perf_counter()
                     rec = self.run_update(u, pool)
                     rec["elapsed_sec"] = round(time.perf_counter() - t, 3)
