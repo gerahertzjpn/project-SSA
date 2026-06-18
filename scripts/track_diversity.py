@@ -90,7 +90,9 @@ def build_state_bank(specs, per_faction, seed):
 
 
 def fingerprint(net, bank_states):
-    return tuple(int(net.act(o, m, deterministic=True).action) for o, m in bank_states)
+    """Argmax action per bank state -> (N, action_dim) array (action is factorized)."""
+    acts = [np.asarray(net.act(o, m, deterministic=True).action).ravel() for o, m in bank_states]
+    return np.asarray(acts, dtype=np.int64)
 
 
 def main() -> None:
@@ -124,7 +126,7 @@ def main() -> None:
             fps[d.net_id] = (np.asarray(fingerprint(net, bank[f])), specs[d.net_id])
         pairs = []
         for a, b in combinations(fps, 2):
-            agree = float(np.mean(fps[a][0] == fps[b][0]))
+            agree = float(np.mean(np.all(fps[a][0] == fps[b][0], axis=1)))  # full-action match
             pairs.append((agree, a, b))
             overall.append(agree)
         pairs.sort(reverse=True)

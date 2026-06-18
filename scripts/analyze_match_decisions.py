@@ -26,6 +26,7 @@ from src.training.policy import MaskedActorCritic  # noqa: E402
 from src.training.population import (  # noqa: E402
     CONTROLLED_SLOTS, OPPONENT_SLOTS, build_default_population, write_frozen_pool,
 )
+from src.training.population_roster import build_population  # noqa: E402
 from src.training.ppo_trainer import action_label, action_kind_label  # noqa: E402
 from src.training.team_env import TeamTrainingEnv, TeamTrainingEnvConfig  # noqa: E402
 
@@ -167,19 +168,33 @@ def main() -> None:
     ap.add_argument("--ticks", type=int, default=160)
     ap.add_argument("--narrate", action="store_true")
     ap.add_argument("--seed", type=int, default=20260618)
+    ap.add_argument("--population", action="store_true",
+                    help="analyze the trained league population (eco/defense archetypes)")
     args = ap.parse_args()
 
-    specs = {s.net_id: s for s in build_default_population()}
+    global RUN_DIR
+    if args.population:
+        RUN_DIR = ROOT / "training_runs" / "league_population_v1"
+        specs = {s.net_id: s for s in build_population()}
+        # feature the eco/defense/objective archetypes vs aggro — do they build/tech now?
+        matchups = [
+            (["humans_1__architect", "infected_1__architect", "robots_1__architect"],
+             ["humans_2__skirmisher", "infected_2__skirmisher", "robots_2__skirmisher"]),
+            (["humans_3__sentinel", "infected_3__sentinel", "robots_3__sentinel"],
+             ["humans_4__berserker", "infected_4__berserker", "robots_4__berserker"]),
+            (["humans_5__warden", "infected_5__warden", "robots_5__warden"],
+             ["humans_6__architect", "infected_6__architect", "robots_6__architect"]),
+        ]
+    else:
+        specs = {s.net_id: s for s in build_default_population()}
+        matchups = [
+            (["humans_1", "infected_1", "robots_1"], ["humans_2", "infected_2", "robots_2"]),
+            (["humans_5", "infected_3", "robots_2"], ["humans_4", "infected_6", "robots_5"]),
+            (["robots_6", "humans_3", "infected_4"], ["robots_1", "humans_6", "infected_5"]),
+        ]
     states = {nid: _load_state(nid) for nid in specs}
     pool = RUN_DIR / "_match_pool.pt"
     write_frozen_pool(pool, specs, states, update=0)
-
-    # a few faction-mixed matchups across different nets/recipes
-    matchups = [
-        (["humans_1", "infected_1", "robots_1"], ["humans_2", "infected_2", "robots_2"]),
-        (["humans_5", "infected_3", "robots_2"], ["humans_4", "infected_6", "robots_5"]),
-        (["robots_6", "humans_3", "infected_4"], ["robots_1", "humans_6", "infected_5"]),
-    ]
     results = []
     for i, (a, b) in enumerate(matchups):
         results.append(run_match(a, b, specs, pool, args.ticks, args.seed + i * 101, args.narrate))
