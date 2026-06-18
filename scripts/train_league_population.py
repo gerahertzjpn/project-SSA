@@ -1,12 +1,11 @@
-"""Train the 90-net league population from the 18 ancestors (fork + train-vs-ancestors).
+"""Train the 90-net league population (parallel) from the 18 ancestors.
 
     python scripts/train_league_population.py --init-only        # fork-init + pool, no training
-    python scripts/train_league_population.py --smoke            # tiny end-to-end pipeline check
-    python scripts/train_league_population.py --updates 100      # a real chunk (needs frozen ancestors)
+    python scripts/train_league_population.py --smoke            # tiny parallel end-to-end check
+    python scripts/train_league_population.py                    # real run: ~1.4M steps/net
 
-A REAL run should wait until base-18 has plateaued and stopped (ancestors frozen). --smoke
-tolerates still-training ancestors: it only verifies the spine (fork-init -> rollout vs
-ancestor pool -> PPO update -> checkpoint save/load).
+Each descendant forks (warm start) from its parent ancestor and trains against a DIVERSE
+opponent pool (frozen ancestors + scripted rush/tech/turtle) to break the rush monoculture.
 """
 from __future__ import annotations
 
@@ -30,65 +29,58 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-dir", default="training_runs/league_population_v1")
     ap.add_argument("--ancestor-run-dir", default="training_runs/population_v1")
-    ap.add_argument("--updates", type=int, default=100)
+    ap.add_argument("--target-steps-per-net", type=int, default=1_400_000)
+    ap.add_argument("--workers", type=int, default=24)
+    ap.add_argument("--scripted-prob", type=float, default=0.45)
     ap.add_argument("--episodes-per-triple", type=int, default=2)
-    ap.add_argument("--max-triples-per-update", type=int, default=0)
-    ap.add_argument("--checkpoint-interval", type=int, default=10)
-    ap.add_argument("--device", default="cpu")
-    ap.add_argument("--init-only", action="store_true", help="fork-init + ancestor pool, then exit")
-    ap.add_argument("--smoke", action="store_true", help="tiny end-to-end pipeline check")
+    ap.add_argument("--checkpoint-interval", type=int, default=25)
+    ap.add_argument("--device", default="auto")
+    ap.add_argument("--init-only", action="store_true")
+    ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--max-updates", type=int, default=None,
+                    help="cap updates (calibration/debug); real run omits this")
     args = ap.parse_args()
 
-    run_dir = args.run_dir
-    if args.smoke:
-        run_dir = "training_runs/_league_smoke"
-
+    run_dir = "training_runs/_league_smoke" if args.smoke else args.run_dir
     cfg = LeagueConfig(
         run_dir=run_dir, ancestor_run_dir=args.ancestor_run_dir,
-        updates=2 if args.smoke else args.updates,
+        target_steps_per_net=1 if args.smoke else args.target_steps_per_net,
+        workers=2 if args.smoke else args.workers,
+        scripted_opponent_prob=args.scripted_prob,
         episodes_per_triple=1 if args.smoke else args.episodes_per_triple,
-        max_triples_per_update=2 if args.smoke else args.max_triples_per_update,
+        max_triples_per_update=2 if args.smoke else 0,
         checkpoint_interval=1 if args.smoke else args.checkpoint_interval,
         device=args.device,
     )
     trainer = LeagueTrainer(cfg)
     print(f"forked {len(trainer.nets)} descendants from {len(trainer.ancestors)} ancestors "
-          f"-> {cfg.run_dir}")
-    print(f"ancestor opponent pool: {trainer.pool_path.name}  "
-          f"({trainer.pool_path.stat().st_size} bytes)")
+          f"-> {cfg.run_dir} (device {trainer.device})")
+    print(f"ancestor pool: {trainer.pool_path.name} ({trainer.pool_path.stat().st_size} bytes); "
+          f"scripted_opponent_prob={cfg.scripted_opponent_prob}")
 
     if args.init_only:
-        # prove a forked net is a real, distinct, runnable policy
         any_id = next(iter(trainer.nets))
-        n_params = sum(p.numel() for p in trainer.nets[any_id].parameters())
-        print(f"sample net {any_id}: {n_params} params, lr={trainer.desc_by_id[any_id].learning_rate}")
-        print("init-only: OK (no training)")
+        print(f"sample {any_id}: {sum(p.numel() for p in trainer.nets[any_id].parameters())} params, "
+              f"lr={trainer.desc_by_id[any_id].learning_rate}")
+        print("init-only: OK")
         return 0
 
     if args.smoke:
-        print(f"triples this update (capped): {min(cfg.max_triples_per_update, len(trainer._triples()))}")
+        trainer.train(max_updates=2)
+        # verify a checkpoint round-trips
+        any_id = next(iter(trainer.nets))
+        ck = Path(cfg.run_dir) / "nets" / any_id / "latest.pt"
+        blob = torch.load(ck, map_location="cpu", weights_only=False)
+        MaskedActorCritic(hidden_size=trainer.desc_by_id[any_id].hidden_size).load_state_dict(blob["policy_state"])
+        print(f"checkpoint round-trip OK: {any_id} (genotype {blob['genotype_hash']}, "
+              f"steps {blob['steps_trained']})")
+        print("SMOKE OK")
+        return 0
 
-    for u in range(1, cfg.updates + 1):
-        rec = trainer.run_update(u)
-        print(f"  update {u}: triples={rec['triples']} eps={rec['episodes']} "
-              f"win={rec['win_rate']} mean_steps={rec['mean_episode_steps']} "
-              f"nets_updated={rec['nets_updated']}")
-        if rec["sample_loss"]:
-            sl = rec["sample_loss"]
-            print(f"    sample loss keys: {sorted(sl)[:6]}")
-
-    trainer.save_checkpoints(cfg.updates)
-    trainer.write_registry(cfg.updates)
-
-    # checkpoint save/load round-trip check
-    any_id = next(iter(trainer.nets))
-    ck = Path(cfg.run_dir) / "nets" / any_id / "latest.pt"
-    blob = torch.load(ck, map_location="cpu", weights_only=False)
-    reloaded = MaskedActorCritic(hidden_size=trainer.desc_by_id[any_id].hidden_size)
-    reloaded.load_state_dict(blob["policy_state"])
-    print(f"checkpoint round-trip OK: {any_id} ({ck.stat().st_size} bytes, "
-          f"genotype {blob['genotype_hash']})")
-    print("SMOKE OK" if args.smoke else "DONE")
+    print(f"training to {cfg.target_steps_per_net:,} steps/net on {cfg.workers} workers"
+          f"{' (max %d updates)' % args.max_updates if args.max_updates else ''}...")
+    trainer.train(max_updates=args.max_updates)
+    print(f"DONE: total_steps {trainer.total_steps:,}, min steps/net {min(trainer.steps_by_net.values()):,}")
     return 0
 
 

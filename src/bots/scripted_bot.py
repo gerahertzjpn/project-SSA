@@ -440,4 +440,27 @@ def make_scripted_bot_variant(model_id: str, player_id: str, team: str) -> Scrip
             save_for_first_building=False,
             produce_threshold=5,
         )
+    if model_id == "scripted_turtle":
+        # Defensive holder: no core-rush, builds CP turrets + an economy collector,
+        # invests before producing. A non-rush opponent to break the rush monoculture.
+        return ScriptedBot(
+            player_id,
+            team,
+            core_focus=False,
+            build_plan=(BuildingType.ECONOMY_COLLECTOR,),
+            cp_turrets=True,
+            save_for_first_building=True,
+            produce_threshold=8,
+        )
+    if model_id == "scripted_eco":
+        # Greedy economy/tech line that still pushes: collector + tech, turrets for safety.
+        return ScriptedBot(
+            player_id,
+            team,
+            core_focus=True,
+            build_plan=(BuildingType.ECONOMY_COLLECTOR, BuildingType.TECH_1),
+            cp_turrets=True,
+            save_for_first_building=True,
+            produce_threshold=6,
+        )
     return None
