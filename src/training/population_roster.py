@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Sequence
 
 from src.training.population import (
@@ -284,3 +285,60 @@ def build_roster(ancestors: Sequence[NetSpec] | None = None,
         "ancestors": [ancestor_registry_entry(a) for a in ancestors],
         "population": [descendant_registry_entry(d) for d in descendants],
     }
+
+
+# --------------------------------------------------------------------------- #
+# Dynamic roster I/O + respawn (for diversity-aware culling)
+# --------------------------------------------------------------------------- #
+def spec_to_dict(d: DescendantSpec) -> dict:
+    out = asdict(d)
+    out["opponent_curriculum"] = [list(t) for t in d.opponent_curriculum]
+    return out
+
+
+def spec_from_dict(data: dict) -> DescendantSpec:
+    data = dict(data)
+    data["opponent_curriculum"] = tuple((str(f), float(w)) for f, w in data["opponent_curriculum"])
+    return DescendantSpec(**data)
+
+
+def save_roster(specs: Sequence[DescendantSpec], path) -> None:
+    Path(path).write_text(json.dumps(
+        {"schema": "league_roster.v2", "count": len(specs),
+         "descendants": [spec_to_dict(d) for d in specs]}, ensure_ascii=False, indent=2),
+        encoding="utf-8")
+
+
+def load_roster(path) -> list[DescendantSpec]:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return [spec_from_dict(d) for d in data["descendants"]]
+
+
+_ARCHETYPE_BY_NAME = {a.name: a for a in DEFAULT_ARCHETYPES}
+
+
+def respawn_descendant(faction: str, parent_id: str, base_archetype_name: str,
+                       gen: int, k: int, rng, existing_hashes, parent_recipe: dict) -> DescendantSpec:
+    """A FRESH unique player to replace a culled one: fork from an ancestor of the same
+    faction, mutate the recipe and BOOST exploration (higher entropy) to seek a new niche.
+    Faction is preserved (keeps 30/30/30); genotype is guaranteed unique vs existing_hashes."""
+    base = _ARCHETYPE_BY_NAME.get(base_archetype_name, DEFAULT_ARCHETYPES[0])
+    arc_name = f"{base.name}_g{gen}x{k}"
+    em = base.entropy_mult * float(rng.uniform(1.2, 1.8))      # more exploration
+    lm = base.lr_mult * float(rng.uniform(0.8, 1.3))
+    ow = round(_clamp(base.order_shaping_weight * float(rng.uniform(0.7, 1.3)), 0.1, 0.9), 3)
+    cw = round(_clamp(base.core_progress_weight * float(rng.uniform(0.7, 1.3)), 0.2, 1.0), 3)
+    for _ in range(100):
+        seed = int(rng.integers(1, 2**31 - 1))
+        d = DescendantSpec(
+            net_id=f"{faction}_{base.name}_g{gen}_{k}", faction=faction, parent_id=parent_id,
+            generation=gen, seed=seed, archetype=arc_name,
+            learning_rate=_clamp(parent_recipe["learning_rate"] * lm, 5e-5, 1e-3),
+            entropy_coef=_clamp(parent_recipe["entropy_coef"] * em, 1e-3, 5e-2),
+            clip_coef=_clamp(parent_recipe["clip_coef"] + base.clip_delta, 0.05, 0.40),
+            gae_lambda=parent_recipe["gae_lambda"], hidden_size=128,
+            order_shaping_weight=ow, core_progress_weight=cw,
+            opponent_curriculum=base.opponent_curriculum, strategy_bias=base.strategy_bias)
+        if d.genotype_hash() not in existing_hashes:
+            return d
+    raise RuntimeError(f"no unique respawn genotype for {faction}/{base.name}")

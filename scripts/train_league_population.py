@@ -23,6 +23,7 @@ import torch  # noqa: E402
 
 from src.training.league_trainer import LeagueConfig, LeagueTrainer  # noqa: E402
 from src.training.policy import MaskedActorCritic  # noqa: E402
+from src.training.population_roster import load_roster  # noqa: E402
 
 
 def main() -> int:
@@ -54,7 +55,11 @@ def main() -> int:
         checkpoint_interval=1 if args.smoke else args.checkpoint_interval,
         device=args.device,
     )
-    trainer = LeagueTrainer(cfg)
+    roster_path = Path(run_dir) / "roster.json"
+    descendants = load_roster(roster_path) if roster_path.exists() else None
+    if descendants is not None:
+        print(f"loaded culled roster: {len(descendants)} descendants from {roster_path.name}")
+    trainer = LeagueTrainer(cfg, descendants=descendants)
     print(f"forked {len(trainer.nets)} descendants from {len(trainer.ancestors)} ancestors "
           f"-> {cfg.run_dir} (device {trainer.device})")
     scripted_p = round(1 - cfg.ancestor_opponent_prob - cfg.descendant_opponent_prob, 3)
