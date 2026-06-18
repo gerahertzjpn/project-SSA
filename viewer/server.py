@@ -169,11 +169,14 @@ MAX_UI_RUNS = 100
 MAX_POLICY_CHECKPOINT_SCAN = 120
 MAX_DISCOVERED_POLICY_MODELS = 30
 REPLAY_NAME = re.compile(r"^replay_\d+\.json$")
-# The current trained anchor population (base18_v1). Falls back to the old
-# population_18_v1 only if base18 is absent.
-POPULATION_18_REGISTRY = ROOT / "training_runs/base18_v2/registry.json"
-if not POPULATION_18_REGISTRY.exists():
-    POPULATION_18_REGISTRY = ROOT / "training_runs/population_18_v1/registry.json"
+# The current trained anchor population shown on the match tab = population_v1 (the live
+# base-18). Older runs (base18_v2 / population_18_v1) are only a fallback if the current
+# one is absent; any other discovered checkpoints are listed as legacy further down.
+POPULATION_18_REGISTRY = ROOT / "training_runs/population_v1/registry.json"
+for _legacy_registry in ("training_runs/base18_v2/registry.json",
+                         "training_runs/population_18_v1/registry.json"):
+    if not POPULATION_18_REGISTRY.exists():
+        POPULATION_18_REGISTRY = ROOT / _legacy_registry
 
 _RECIPE_LABEL = {
     "baseline": "Baseline",
