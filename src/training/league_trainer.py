@@ -111,7 +111,7 @@ def _run_episode_vs(plan, nets, faction_by_id, pool_path, common, buffers):
         record_replay=False, record_trace=False,
         core_progress_weight=float(plan["core_progress_weight"]),
         sample_orders=bool(common["sample_orders"]),
-        order_shaping_weight=float(plan["order_shaping_weight"]),
+        order_shaping_weight=plan["order_shaping_weight"],   # per-player {slot: weight} dict
         no_order_prob=float(common["no_order_prob"]),
     )
     if kind in ("ancestors", "descendants"):
@@ -260,15 +260,12 @@ class LeagueTrainer:
 
     # --- scheduling --- #
     def _triples(self):
-        archetypes = sorted({d.archetype for d in self.descendants})
-        lines = sorted({int(d.parent_id.split("_")[1]) for d in self.descendants})
-        out = []
-        for arc in archetypes:
-            for ln in lines:
-                ids = tuple(f"{fac}_{ln}__{arc}" for fac in FACTIONS)
-                if all(i in self.desc_by_id for i in ids):
-                    out.append(ids)
-        return out
+        """One net per faction per triple, covering ALL descendants — works for the
+        dynamic culled+respawned roster (not just the rigid {fac}_{line}__{arch} grid).
+        Shaping is per-net (see _build_plans), so mixed-archetype triples are fine."""
+        by_fac = {f: sorted(d.net_id for d in self.descendants if d.faction == f) for f in FACTIONS}
+        n = min(len(by_fac[f]) for f in FACTIONS)
+        return [tuple(by_fac[f][i] for f in FACTIONS) for i in range(n)]
 
     def _pick_ancestors(self, curriculum, rng):
         weights = dict(curriculum)
@@ -311,7 +308,10 @@ class LeagueTrainer:
         plans = []
         for ti, triple in enumerate(triples):
             lead = self.desc_by_id[triple[0]]
-            shaping = {"order_shaping_weight": lead.order_shaping_weight,
+            # per-net order shaping (env accepts a {player_id: weight} dict) so each net in a
+            # mixed-archetype triple keeps its own temperament; core_progress is global -> lead's.
+            shaping = {"order_shaping_weight": {slot: self.desc_by_id[nid].order_shaping_weight
+                                                for slot, nid in zip(CONTROLLED_SLOTS, triple)},
                        "core_progress_weight": lead.core_progress_weight}
             for e in range(self.config.episodes_per_triple):
                 rng = np.random.default_rng(self.config.master_seed + update * 9176 + ti * 131 + e * 17)
