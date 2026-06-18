@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 from typing import Optional
 
@@ -19,7 +20,14 @@ from src.training.spaces import (
 )
 
 
-_POLICY_STATE_CACHE: dict[str, tuple[dict, int]] = {}
+# LRU-bounded so a long training run that loads many *versioned* frozen-pool
+# checkpoints (a new file every snapshot refresh) does NOT grow this cache without
+# limit. This lets the rollout worker pool stay ALIVE across refreshes (no respawn
+# spike) while memory stays flat. Correctness is unchanged — a cache miss just
+# re-loads the same weights. 48 entries >> one update's working set (<=18 opponent
+# state-ids), so the current frozen pool is never evicted mid-update.
+_MAX_POLICY_CACHE = 48
+_POLICY_STATE_CACHE: "OrderedDict[str, tuple[dict, int]]" = OrderedDict()
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MIRRORED_PLAYER_SLOT = {
     **dict(zip(TEAM_A_PLAYERS, TEAM_B_PLAYERS)),
@@ -71,20 +79,23 @@ def cached_policy_state(
     checkpoint_path = Path(path)
     lookup_state_id = policy_state_id or player_id
     cache_key = f"{checkpoint_path.resolve()}::{lookup_state_id}"
-    if cache_key not in _POLICY_STATE_CACHE:
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        policy_state = policy_state_from_checkpoint(
-            checkpoint,
-            checkpoint_path,
-            player_id,
-            policy_state_id=policy_state_id,
-        )
-        validate_checkpoint_compatible(checkpoint, policy_state, checkpoint_path)
-        _POLICY_STATE_CACHE[cache_key] = (
-            policy_state,
-            checkpoint_hidden_size(checkpoint),
-        )
-    return _POLICY_STATE_CACHE[cache_key]
+    cached = _POLICY_STATE_CACHE.get(cache_key)
+    if cached is not None:
+        _POLICY_STATE_CACHE.move_to_end(cache_key)   # mark most-recently-used
+        return cached
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    policy_state = policy_state_from_checkpoint(
+        checkpoint,
+        checkpoint_path,
+        player_id,
+        policy_state_id=policy_state_id,
+    )
+    validate_checkpoint_compatible(checkpoint, policy_state, checkpoint_path)
+    entry = (policy_state, checkpoint_hidden_size(checkpoint))
+    _POLICY_STATE_CACHE[cache_key] = entry
+    while len(_POLICY_STATE_CACHE) > _MAX_POLICY_CACHE:
+        _POLICY_STATE_CACHE.popitem(last=False)      # evict least-recently-used
+    return entry
 
 
 def policy_state_from_checkpoint(

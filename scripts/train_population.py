@@ -55,8 +55,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the 18-net population via frozen-snapshot self-play")
     parser.add_argument("--run-dir", default="training_runs/population_18_v1")
     parser.add_argument("--updates", type=int, default=400)
-    parser.add_argument("--episodes-per-net", type=int, default=3,
-                        help="Episodes each net plays as a controlled learner per update")
+    parser.add_argument("--episodes-per-net", type=int, default=4,
+                        help="Episodes each net plays as a controlled learner per update. "
+                             "4 (default) amortizes the fixed per-update overhead over more "
+                             "rollout -> higher steps/sec + more data per gradient update.")
     parser.add_argument("--workers", type=int, default=24,
                         help="Rollout workers. Default 24 = SUSTAINED-stable optimum on the "
                              "16C/32T Ryzen 9 9950X3D / 31GB. (Burst benchmark peaked at 32 = "
@@ -303,7 +305,11 @@ def main() -> int:
             if refresh:
                 current_pool_path = trainer.refresh_frozen_pool(version=update)
                 last_refresh = update
-                ensure_pool(refresh=True)  # rebuild workers so frozen-state caches stay bounded
+                # Keep the worker pool ALIVE across refreshes (no respawn spike). The
+                # per-worker policy-state cache is LRU-bounded (see policy_bot.py), so
+                # memory stays flat without rebuilding. Workers pick up the new frozen
+                # pool path on a cache miss — identical weights, identical results.
+                ensure_pool(refresh=False)
                 _cleanup_old_pools(run_dir, keep_version=update)
             elif pool is None and config.workers > 1:
                 ensure_pool(refresh=False)
