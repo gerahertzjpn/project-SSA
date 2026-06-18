@@ -234,8 +234,10 @@ def ancestor_registry_entry(a: NetSpec) -> dict:
         "genotype_hash": a.genotype_hash(), "hidden_size": a.hidden_size,
         "parameter_count": _PARAM_COUNT_BY_HIDDEN.get(a.hidden_size, -1),
         "recipe": a.recipe, "seed": a.seed,
-        "role": "ancestor", "free_agent": True, "plays_league": False,
-        "signable": False, "in_soloq": True, "fork_source": True,
+        # ALL 18 ancestors are "streamers": they NEVER play the league and are never
+        # signable. They only appear in SoloQ and are the fork-source for newbies.
+        "role": "ancestor", "persona": "streamer", "free_agent": True,
+        "plays_league": False, "signable": False, "in_soloq": True, "fork_source": True,
         "checkpoint": f"training_runs/population_v1/nets/{a.net_id}/latest.pt",
         "status": "free_player",
     }
@@ -253,9 +255,10 @@ def descendant_registry_entry(d: DescendantSpec) -> dict:
         "core_progress_weight": d.core_progress_weight,
         "opponent_curriculum": {k: v for k, v in d.opponent_curriculum},
         "seed": d.seed,
-        "role": "player", "free_agent": d.free_agent, "plays_league": d.plays_league,
-        "signable": d.signable, "in_soloq": d.in_soloq, "fork_source": d.fork_source,
-        "fork_origin": d.fork_origin,
+        # descendants are the "classic players / pros": they play the league + SoloQ.
+        "role": "player", "persona": "pro", "free_agent": d.free_agent,
+        "plays_league": d.plays_league, "signable": d.signable, "in_soloq": d.in_soloq,
+        "fork_source": d.fork_source, "fork_origin": d.fork_origin,
         "checkpoint": None,            # not trained yet
         "status": "planned",
     }
