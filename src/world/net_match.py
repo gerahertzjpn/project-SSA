@@ -112,3 +112,75 @@ def make_soloq_match_fn(
         return winner, _slot_impacts(result.state, slot_pids)
 
     return match_fn
+
+
+def make_net_play_fn(
+    world: dict,
+    manifest_path: Optional[str | Path] = None,
+    *,
+    seed: Optional[int] = None,
+    run_match_fn: Callable = _default_run_match,
+    use_playbook: bool = True,
+    record_positions: bool = True,
+) -> Callable:
+    """A season ``play(home, away, best_of) -> result`` that plays a REAL net Bo-N series
+    between each team's playbook LINEUP. Same result contract as ``season.make_play_fn`` (home,
+    away, maps_home, maps_away, winner, playbook-meta) so it drops in as the season's ``play=``,
+    but the winner comes from actual GameEngine matches instead of roster-rating coin flips.
+
+    The manager-LLM still chooses strategy + lineup (via ``playbook.matchup_modifiers``); here
+    that lineup decides WHICH three nets play. (Strategy-as-in-match-orders is a later refinement
+    — run_match accepts an ``orders`` overlay; for now the nets play their lineup free.)"""
+    from src.core.rng import Spawner
+    from src.world import playbook
+    from src.world.world import POSITIONS
+
+    idx = net_model_index(load_manifest(manifest_path))
+    series_spawner = Spawner(seed)
+
+    def _lineup_pids(lineup_map: dict) -> list[str]:
+        return [lineup_map[pos] for pos in POSITIONS]
+
+    def play(home: str, away: str, best_of: int) -> dict:
+        meta = None
+        if use_playbook:
+            _dh, _da, meta = playbook.matchup_modifiers(world, home, away, best_of)
+            home_lu, away_lu = meta["home"]["lineup"], meta["away"]["lineup"]
+        else:
+            home_lu = playbook.optimal_lineup(world, home)
+            away_lu = playbook.optimal_lineup(world, away)
+        models, factions, _ = _models_factions(
+            world, idx, _lineup_pids(home_lu), _lineup_pids(away_lu))
+
+        needed = best_of // 2 + 1
+        game_spawner = Spawner(series_spawner.seed())  # independent per-game seeds
+        mh = ma = 0
+        for _ in range(best_of):  # hard cap: a Bo-N can't exceed N games even with draws
+            if mh >= needed or ma >= needed:
+                break
+            result = run_match_fn(seed=game_spawner.seed(), bot_type="league", mode="training",
+                                  replay_path=None, player_models=models, player_factions=factions)
+            if result.winner == "TEAM_A":
+                mh += 1
+            elif result.winner == "TEAM_B":
+                ma += 1
+            # a draw counts as a played game toward the cap but clinches nothing
+        winner = home if mh > ma else (away if ma > mh else home)  # tie on the cap -> home seed
+        out = {"home": home, "away": away, "maps_home": mh, "maps_away": ma, "winner": winner}
+        if meta:
+            out["playbook"] = meta
+            if record_positions:
+                playbook.record_position_results(world, home_lu, winner == home)
+                playbook.record_position_results(world, away_lu, winner == away)
+        return out
+
+    return play
+
+
+def world_match_fns(world: dict, manifest_path: Optional[str | Path] = None) -> tuple:
+    """Convenience: (soloq_match_fn, season_play_fn) for a population-backed world, or
+    ``(None, None)`` for an abstract world (callers then fall back to the rating defaults)."""
+    if not world.get("streamers") and not any(
+            p.get("net_id") for p in world.get("players", {}).values()):
+        return None, None
+    return make_soloq_match_fn(world, manifest_path), make_net_play_fn(world, manifest_path)

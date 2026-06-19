@@ -154,8 +154,20 @@ def create_world_payload(payload: dict) -> dict:
     specs = [by_id[fid] for fid in selected]
     world_id = "world-" + uuid.uuid4().hex[:8]
     seed = int(uuid.uuid4().int % (2 ** 31))
-    world = new_world(world_id, specs, name=world_id, seed=seed)
-    world_season.bootstrap_world(world, seed=seed)
+    # Back the world with the FROZEN trained population when its manifest is present: the
+    # players ARE the nets (90 pros + 18 streamers), and SoloQ + the season play REAL 3v3
+    # matches via run_match. (A net-real Season-0 bootstrap runs many GameEngine matches ->
+    # minutes; the World tab is UI-locked and a production unlock should background it.)
+    # Falls back to the abstract rating model when the manifest is absent.
+    frozen = ROOT / "population" / "frozen_population_v1.json"
+    use_pop = frozen.exists()
+    world = new_world(world_id, specs, name=world_id, seed=seed,
+                      population=str(frozen) if use_pop else None)
+    soloq_mf = play_fn = None
+    if use_pop:
+        from src.world import net_match
+        soloq_mf, play_fn = net_match.world_match_fns(world, str(frozen))
+    world_season.bootstrap_world(world, seed=seed, play=play_fn, soloq_match_fn=soloq_mf)
     save_world(world)
     return {
         "world_id": world_id,

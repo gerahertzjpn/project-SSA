@@ -285,6 +285,7 @@ def _apply_promotion_relegation(world: dict, promoted: list[str], relegated: lis
 def bootstrap_world(world: dict, *, seed: Optional[int] = None,
                     play: Optional[PlayFn] = None,
                     draft_pick_fn: Optional[DraftPickFn] = None,
+                    soloq_match_fn: Optional[Callable] = None,
                     soloq_rounds: int = soloq.DEFAULT_ROUNDS) -> dict:
     """Run the Season-0 bootstrap (see spec §8):
 
@@ -300,8 +301,9 @@ def bootstrap_world(world: dict, *, seed: Optional[int] = None,
     resolved = seeds.resolve_seed(seed)
     sp = seeds.Spawner(resolved)        # independent child streams (no base+offset)
 
-    # 1. SoloQ
-    soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed())
+    # 1. SoloQ (net-backed when soloq_match_fn is supplied — real games seed ratings;
+    #    default None -> the rating-based stochastic model, so tests stay net-free)
+    soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed(), match_fn=soloq_match_fn)
 
     # 2. Draft all teams to 3 (equal/random order in Season 0)
     all_team_ids = list(world["teams"].keys())

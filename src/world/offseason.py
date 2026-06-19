@@ -132,6 +132,7 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
                   fa_budget: freeagents.FreeAgentBudget | None = None,
                   training_config: training_auction.TrainingConfig | None = None,
                   backend=None, llm=None, seed: Optional[int] = None,
+                  soloq_match_fn=None,
                   soloq_rounds: int = soloq.DEFAULT_ROUNDS) -> dict:
     """Run the off-season stages and return a structured report (incl. a step-by-step
     event feed). The training stage previews the COMBINED launch (team + rookies +
@@ -144,8 +145,8 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     report = {"season_just_ended": world["season"], "seed": sp.root_seed,  # recorded for history
               "stages": {}, "events": feed}
 
-    # 1. SoloQ
-    log = soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed())
+    # 1. SoloQ (net-backed when soloq_match_fn supplied; default None -> rating model)
+    log = soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed(), match_fn=soloq_match_fn)
     report["stages"]["soloq"] = {"rounds": soloq_rounds,
                                  "last_round_matches": log[-1]["matches"] if log else 0}
     events.emit(feed, "stage", f"SoloQ: сыграно {soloq_rounds} раундов, рейтинги обновлены")
