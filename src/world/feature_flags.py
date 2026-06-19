@@ -19,9 +19,9 @@ FLAGS: dict[str, dict] = {
         "note": "Интерфейс вшит; решения пока эвристика. В разработке.",
     },
     "ui_world_tab": {
-        "enabled": False, "status": "in_development",
+        "enabled": True, "status": "live",
         "label": "Вкладка World (UI)",
-        "note": "Движок готов; UI-вкладка в разработке.",
+        "note": "Создание мира, лиги/таблицы/составы и прогон сезонов на реальных нейронках.",
     },
     "live_auction_l2": {
         "enabled": False, "status": "secondary",

@@ -13,10 +13,15 @@ FRANCHISES = [{"franchise_id": f"fr{i:02d}", "name": f"Team {i}", "abbrev": f"T{
 
 # ----------------------------------------------------------- feature flags- #
 def test_flags_locked_and_marked_in_development():
-    for name in ("real_training_backend", "llm_manager", "ui_world_tab"):
+    # The training backend + LLM manager stay locked/in-development.
+    for name in ("real_training_backend", "llm_manager"):
         st = feature_flags.ui_state(name)
         assert st["locked"] is True and st["selectable"] is False
         assert st["status"] == "in_development"
+    # The World UI tab is now LIVE (unlocked): create world + leagues/standings + net-real
+    # season advance are wired and selectable.
+    world_tab = feature_flags.ui_state("ui_world_tab")
+    assert world_tab["locked"] is False and world_tab["selectable"] is True
     # the optional L2 live auction is a secondary, locked-by-default feature
     assert feature_flags.flag("live_auction_l2")["enabled"] is False
 

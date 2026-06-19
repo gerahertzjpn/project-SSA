@@ -13,7 +13,12 @@
       <a class="brand-menu" href="./home.html" title="Главное меню" aria-label="Главное меню">☰</a>
       <div class="world-title">
         <h1>World</h1>
-        <p>Персистентная экосистема: 2 лиги, экономика, трансферы, SoloQ, тренеры.</p>
+        <p>Персистентная экосистема: 2 лиги, экономика, трансферы, SoloQ — на реальных нейронках.</p>
+      </div>
+      <div class="world-open">
+        <select id="worldSelect" class="world-select" title="Открыть существующий мир"></select>
+        <button id="openBtn" class="ghost" disabled>Открыть</button>
+        <button id="newBtn" class="ghost">+ Новый</button>
       </div>
     </header>
 
@@ -22,7 +27,7 @@
       <span id="lockNote">Выбор команд и старт пока заблокированы — включаются одним флагом.</span>
     </div>
 
-    <section class="world-new">
+    <section id="newSection" class="world-new">
       <div class="world-new-head">
         <h2>Новый World — выбери команды</h2>
         <div class="world-new-controls">
@@ -30,12 +35,47 @@
           <button id="startBtn" class="primary" disabled>Создать World</button>
         </div>
       </div>
-      <p class="world-hint">Отметь ровно <strong>22</strong> команды из доступных. Когда выбрано 22 — новые
-        отметить нельзя (сними одну, чтобы выбрать другую). У каждой команды — карточка.</p>
+      <p class="world-hint">Отметь ровно <strong>22</strong> команды. Создание прогоняет SoloQ и расстановку
+        лиг <strong>реальными матчами нейронок</strong> — это несколько минут, идёт в фоне.</p>
       <div id="teamGrid" class="team-grid">Загрузка…</div>
     </section>
 
+    <section id="jobPanel" class="world-job is-hidden">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="job-text">
+        <strong id="jobTitle">Работаем…</strong>
+        <span id="jobPhase"></span>
+        <span id="jobTimer" class="job-timer"></span>
+      </div>
+    </section>
+
     <section id="resultPanel" class="world-result is-hidden"></section>
+
+    <section id="worldView" class="world-view is-hidden">
+      <div class="view-head">
+        <div class="view-title">
+          <h2 id="viewName">World</h2>
+          <span id="viewSeason" class="view-season"></span>
+          <span id="viewCounts" class="view-counts"></span>
+        </div>
+        <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
+      </div>
+      <div class="view-grid">
+        <div class="view-col">
+          <h3>Верхняя лига <span class="muted">(Power)</span></h3>
+          <div id="upperTable" class="standings"></div>
+          <h3>Нижняя лига <span class="muted">(Power)</span></h3>
+          <div id="lowerTable" class="standings"></div>
+        </div>
+        <div class="view-col">
+          <h3>SoloQ — топ рейтинга</h3>
+          <div id="ladder" class="ladder"></div>
+          <h3>История чемпионов</h3>
+          <div id="history" class="history"></div>
+        </div>
+      </div>
+      <div id="rosterPanel" class="roster-panel is-hidden"></div>
+    </section>
   </main>
 
   <script src="./world.js"></script>

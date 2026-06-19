@@ -140,10 +140,38 @@ def world_info() -> dict:
     }
 
 
-def create_world_payload(payload: dict) -> dict:
-    """Create + bootstrap a new World from exactly WORLD_TEAM_COUNT selected
-    franchises. Gated by the ui_world_tab flag (raises FeatureLocked when locked)."""
-    world_flags.assert_enabled("ui_world_tab")  # locked in UI until the flag flips
+# A World creation + each season advance run REAL net matches (minutes), so they run on a
+# background thread (same pattern as the league/regionals jobs) and the UI polls for status.
+WORLD_JOBS: dict[str, dict] = {}
+WORLD_JOBS_LOCK = threading.Lock()
+FROZEN_POP = ROOT / "population" / "frozen_population_v1.json"
+
+
+def _world_net_fns(world: dict):
+    """(soloq_match_fn, season_play_fn) bound to the frozen population, or (None, None)
+    when the manifest is absent (-> abstract rating model)."""
+    if not FROZEN_POP.exists():
+        return None, None
+    from src.world import net_match  # local: pulls torch only when a world actually runs
+    return net_match.world_match_fns(world, str(FROZEN_POP))
+
+
+def _set_world_job(job_id: str, **fields) -> None:
+    with WORLD_JOBS_LOCK:
+        job = WORLD_JOBS.get(job_id)
+        if job is not None:
+            job.update(**fields)
+
+
+def _team_name(world: dict, tid) -> str:
+    t = world["teams"].get(tid)
+    return t["name"] if t else str(tid)
+
+
+def start_world_create_job(payload: dict) -> dict:
+    """Validate the 22-team pick, then bootstrap a population-backed world on a worker
+    thread (net-real SoloQ + league fill). Returns a job_id the UI polls."""
+    world_flags.assert_enabled("ui_world_tab")
     selected = list(payload.get("franchises") or [])
     if len(set(selected)) != WORLD_TEAM_COUNT:
         raise ValueError(f"select exactly {WORLD_TEAM_COUNT} teams (got {len(set(selected))})")
@@ -152,29 +180,107 @@ def create_world_payload(payload: dict) -> dict:
     if unknown:
         raise ValueError(f"unknown franchises: {unknown}")
     specs = [by_id[fid] for fid in selected]
-    world_id = "world-" + uuid.uuid4().hex[:8]
-    seed = int(uuid.uuid4().int % (2 ** 31))
-    # Back the world with the FROZEN trained population when its manifest is present: the
-    # players ARE the nets (90 pros + 18 streamers), and SoloQ + the season play REAL 3v3
-    # matches via run_match. (A net-real Season-0 bootstrap runs many GameEngine matches ->
-    # minutes; the World tab is UI-locked and a production unlock should background it.)
-    # Falls back to the abstract rating model when the manifest is absent.
-    frozen = ROOT / "population" / "frozen_population_v1.json"
-    use_pop = frozen.exists()
-    world = new_world(world_id, specs, name=world_id, seed=seed,
-                      population=str(frozen) if use_pop else None)
-    soloq_mf = play_fn = None
-    if use_pop:
-        from src.world import net_match
-        soloq_mf, play_fn = net_match.world_match_fns(world, str(frozen))
-    world_season.bootstrap_world(world, seed=seed, play=play_fn, soloq_match_fn=soloq_mf)
-    save_world(world)
-    return {
-        "world_id": world_id,
-        "season": world["season"],
-        "upper": [t["name"] for t in world["teams"].values() if t["league"] == "upper"],
-        "lower": [t["name"] for t in world["teams"].values() if t["league"] == "lower"],
-    }
+
+    job_id = uuid.uuid4().hex
+    with WORLD_JOBS_LOCK:
+        WORLD_JOBS[job_id] = {"status": "running", "kind": "create",
+                              "phase": "Готовим мир…", "world_id": None, "error": None}
+
+    def worker() -> None:
+        try:
+            world_id = "world-" + uuid.uuid4().hex[:8]
+            seed = int(uuid.uuid4().int % (2 ** 31))
+            use_pop = FROZEN_POP.exists()
+            _set_world_job(job_id, phase="Привязываем нейронок к составам…")
+            world = new_world(world_id, specs, name=world_id, seed=seed,
+                              population=str(FROZEN_POP) if use_pop else None)
+            soloq_mf, play_fn = _world_net_fns(world) if use_pop else (None, None)
+            _set_world_job(job_id, phase="SoloQ + драфт + лиги (реальные матчи)…")
+            world_season.bootstrap_world(world, seed=seed, play=play_fn, soloq_match_fn=soloq_mf)
+            _set_world_job(job_id, phase="Сохраняем…")
+            save_world(world)
+            _set_world_job(job_id, status="done", phase="Готово", world_id=world_id)
+        except Exception as error:  # noqa: BLE001 — surfaced to the client
+            traceback.print_exc()
+            _set_world_job(job_id, status="error", error=str(error))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {"job_id": job_id, "status": "running"}
+
+
+def start_world_advance_job(world_id: str) -> dict:
+    """Play ONE regular season for an existing world on a worker thread (net-real groups +
+    playoffs -> Elo/economy/promotion), roll to the next season, save. Returns a job_id."""
+    world_flags.assert_enabled("ui_world_tab")
+    job_id = uuid.uuid4().hex
+    with WORLD_JOBS_LOCK:
+        WORLD_JOBS[job_id] = {"status": "running", "kind": "advance", "world_id": world_id,
+                              "phase": "Играем сезон (реальные матчи)…", "summary": None,
+                              "error": None}
+
+    def worker() -> None:
+        try:
+            world = load_world(world_id)
+            _, play_fn = _world_net_fns(world)
+            _set_world_job(job_id, phase="Группы + плей-офф (реальные матчи)…")
+            summary = world_season.run_regular_season(world, play=play_fn)
+            world["season"] = int(world.get("season", 0)) + 1  # roll to the next season
+            save_world(world)
+            _set_world_job(job_id, status="done", phase="Сезон сыгран", summary={
+                "season": summary["season"],
+                "upper_champion": _team_name(world, summary["upper_champion"]),
+                "lower_champion": _team_name(world, summary["lower_champion"]),
+                "promoted": [_team_name(world, t) for t in summary["promoted"]],
+                "relegated": [_team_name(world, t) for t in summary["relegated"]],
+            })
+        except Exception as error:  # noqa: BLE001
+            traceback.print_exc()
+            _set_world_job(job_id, status="error", error=str(error))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {"job_id": job_id, "status": "running"}
+
+
+def world_job_status(job_id: str) -> dict:
+    with WORLD_JOBS_LOCK:
+        job = WORLD_JOBS.get(job_id)
+        if job is None:
+            raise KeyError(f"unknown world job {job_id}")
+        return dict(job, job_id=job_id)
+
+
+def world_view_payload(world_id: str) -> dict:
+    """Full state for the World view: leagues sorted by Power(Elo) with rosters (players +
+    bound net/faction/archetype/SoloQ rating), the SoloQ ladder, season + champions history."""
+    w = load_world(world_id)
+    players = w["players"]
+    pid_team = {pid: t for t in w["teams"].values() for pid in t.get("roster", [])}
+
+    def pcard(pid: str) -> dict:
+        p = players[pid]
+        t = pid_team.get(pid)
+        return {"nickname": p["nickname"], "net_id": p.get("net_id"), "faction": p["faction"],
+                "archetype": p.get("archetype"), "rating": round(float(p["soloq_rating"])),
+                "role": p.get("role", "pro"), "team": (t["abbrev"] if t else None)}
+
+    def team_row(t: dict) -> dict:
+        return {"team_id": t["team_id"], "name": t["name"], "abbrev": t["abbrev"],
+                "league": t["league"], "group": t["group"], "power": round(float(t["elo"])),
+                "treasury": round(float(t.get("treasury", 0))), "titles": t.get("titles", 0),
+                "roster": [pcard(pid) for pid in t.get("roster", [])]}
+
+    teams = [team_row(t) for t in w["teams"].values()]
+    upper = sorted([t for t in teams if t["league"] == "upper"], key=lambda t: -t["power"])
+    lower = sorted([t for t in teams if t["league"] == "lower"], key=lambda t: -t["power"])
+    ladder = sorted((pcard(pid) for pid in players), key=lambda c: -c["rating"])[:25]
+    history = [{"season": s["season"], "upper_champion": _team_name(w, s["upper_champion"]),
+                "lower_champion": _team_name(w, s["lower_champion"])}
+               for s in w.get("history", [])[-10:]]
+    return {"world_id": w["world_id"], "name": w.get("name"), "season": w["season"],
+            "phase": w.get("phase"), "upper": upper, "lower": lower, "ladder": ladder,
+            "history": history,
+            "counts": {"players": len(players), "free_agents": len(w.get("free_agents", [])),
+                       "streamers": len(w.get("streamers", [])), "rostered": len(pid_team)}}
 
 
 REPLAY_DIR = ROOT / "replays"
@@ -769,17 +875,17 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/world/franchises":
             self._send_json({"franchises": world_franchise_cards(), "server": server_info()})
             return
+        world_job = re.match(r"^/api/world/job/(?P<job_id>[0-9a-f]+)$", path)
+        if world_job:
+            try:
+                self._send_json(world_job_status(world_job.group("job_id")))
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error)}, status=404)
+            return
         if path.startswith("/api/world/"):
             wid = path[len("/api/world/"):]
             try:
-                from src.world.world import roster_players  # local import
-                w = load_world(wid)
-                self._send_json({"world": {
-                    "world_id": w["world_id"], "season": w["season"], "month": w["month"],
-                    "teams": [{"name": t["name"], "abbrev": t["abbrev"], "league": t["league"],
-                               "group": t["group"], "elo": t["elo"], "treasury": t["treasury"],
-                               "titles": t["titles"]} for t in w["teams"].values()],
-                }})
+                self._send_json({"world": world_view_payload(wid)})
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error)}, status=404)
             return
@@ -883,7 +989,17 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
         if path == "/api/world/create":
             try:
                 payload = self._read_json()
-                self._send_json(create_world_payload(payload))
+                self._send_json(start_world_create_job(payload))
+            except world_flags.FeatureLocked as error:
+                self._send_json({"error": str(error), "locked": True,
+                                 "server": server_info()}, status=403)
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error), "server": server_info()}, status=400)
+            return
+        world_advance = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/advance$", path)
+        if world_advance:
+            try:
+                self._send_json(start_world_advance_job(world_advance.group("wid")))
             except world_flags.FeatureLocked as error:
                 self._send_json({"error": str(error), "locked": True,
                                  "server": server_info()}, status=403)
