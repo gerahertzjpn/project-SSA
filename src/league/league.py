@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from src.core.constants import FACTION_TYPES
+from src.core.rng import Spawner, resolve_seed
 from src.core.runner import run_match as _default_run_match
 
 from .templates import get_template
@@ -165,10 +166,11 @@ def _simulate_encounter(
 
     home_wins = away_wins = 0
     games: list[dict] = []
+    game_spawner = Spawner(base_seed)  # independent per-game seeds (not base+offset)
     for game_index in range(best_of):
         if home_wins >= needed or away_wins >= needed:
             break
-        seed = base_seed + game_index
+        seed = game_spawner.seed()
         replay_abs = league_dir / "replays" / f"d{encounter['day']:02d}_g{game_index}.json"
         replay_abs.parent.mkdir(parents=True, exist_ok=True)
         run_kwargs = dict(
@@ -251,8 +253,9 @@ def create_league(
 
     norm_teams = _validate_teams(teams, template, set(allowed_models or set()))
 
-    seed = int(seed) if seed else int(time.time())
+    seed = resolve_seed(seed if seed else None)  # fresh OS entropy when not provided (recorded)
     rng = random.Random(seed)
+    enc_spawner = Spawner(seed)  # independent per-encounter seeds (not base+offset)
 
     league_id = f"{_slugify(name)}-{int(time.time())}"
     league_dir = leagues_root / league_id
@@ -270,7 +273,7 @@ def create_league(
         _simulate_encounter(
             encounter,
             teams_by_id,
-            base_seed=seed + (index + 1) * 1000,
+            base_seed=enc_spawner.seed(),
             best_of=best_of,
             league_dir=league_dir,
             run_match_fn=run_match_fn,

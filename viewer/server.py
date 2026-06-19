@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 
 from src.core.constants import FACTION_TYPES, PLAYER_IDS, TEAM_A_PLAYERS, TEAM_B_PLAYERS
 from src.core.replay import REPLAY_SCHEMA_VERSION
+from src.core.rng import Spawner, resolve_seed
 from src.core.runner import current_code_commit, rules_meta, run_match
 from src.training.spaces import (
     STRATEGY_PRESETS, STRATEGY_PRESET_BY_ID, strategy_order_for_slot,
@@ -491,9 +492,13 @@ def generate_replays(payload: dict) -> dict:
         )
 
     runs = int(payload.get("runs", 1) or 1)
-    seed = int(payload.get("seed", 20260602) or 20260602)
     if runs < 1 or runs > MAX_UI_RUNS:
         raise ValueError(f"runs must be between 1 and {MAX_UI_RUNS}")
+    # Non-training randomness must be UNIQUE every run: fresh OS-entropy root by default
+    # (recorded in the response), independent per-match children via spawn — never base+offset.
+    raw_seed = payload.get("seed")
+    root_seed = resolve_seed(int(raw_seed) if raw_seed not in (None, "") else None)
+    match_seeds = Spawner(root_seed).seeds(runs)
 
     allowed = {model["id"] for model in available_models()}
     players = payload.get("players", {}) or {}
@@ -523,7 +528,7 @@ def generate_replays(payload: dict) -> dict:
     for index in range(runs):
         replay_path = REPLAY_DIR / f"replay_{index}.json"
         result = run_match(
-            seed=seed + index,
+            seed=match_seeds[index],
             bot_type="mixed",
             replay_path=str(replay_path),
             mode="replay",
@@ -544,7 +549,7 @@ def generate_replays(payload: dict) -> dict:
 
     return {
         "runs": runs,
-        "seed": seed,
+        "seed": root_seed,
         "players": player_models,
         "factions": player_factions,
         "orders": orders_arg or {},

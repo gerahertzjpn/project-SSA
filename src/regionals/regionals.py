@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+from src.core.rng import Spawner, resolve_seed
+
 from src.core.runner import run_match as _default_run_match
 from src.league.league import (
     AWAY_SLOTS,
@@ -168,8 +170,9 @@ def create_regionals(
     franchise_store = ensure_franchise_store(franchises_store_path)
     cards = player_cards(player_store)
 
-    seed = int(seed) if seed else int(time.time())
+    seed = resolve_seed(seed if seed else None)  # fresh OS entropy when not provided (recorded)
     rng = random.Random(seed)
+    enc_spawner = Spawner(seed)  # independent per-encounter seeds (not base+offset)
     # Draw this tournament's teams from the franchise pool (25). team_count<pool
     # → a varying lineup each tournament; otherwise use the whole pool.
     pool = franchise_specs()
@@ -220,7 +223,7 @@ def create_regionals(
     total_encounters = len(schedule) + 2
 
     for index, enc in enumerate(schedule):
-        _simulate_encounter(enc, teams_by_id, base_seed=seed + (index + 1) * 1000,
+        _simulate_encounter(enc, teams_by_id, base_seed=enc_spawner.seed(),
                             best_of=league_best_of, league_dir=regionals_dir,
                             run_match_fn=run_match_fn)
         report(index + 1, total_encounters, "league")
@@ -237,7 +240,7 @@ def create_regionals(
     def playoff_encounter(day: int, stage: str, home_id: str, away_id: str, index: int) -> dict:
         enc = {"day": day, "home": home_id, "away": away_id, "games": [], "result": None,
                "home_game_wins": 0, "away_game_wins": 0, "stage": stage}
-        _simulate_encounter(enc, teams_by_id, base_seed=seed + (index + 1) * 1000,
+        _simulate_encounter(enc, teams_by_id, base_seed=enc_spawner.seed(),
                             best_of=playoff_best_of, league_dir=regionals_dir,
                             run_match_fn=run_match_fn)
         return enc
