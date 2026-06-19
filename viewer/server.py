@@ -526,7 +526,7 @@ def generate_replays(payload: dict) -> dict:
     winners: dict[str, int] = {}
     winner_types: dict[str, int] = {}
     for index in range(runs):
-        replay_path = REPLAY_DIR / f"replay_{index}.json"
+        replay_path = REPLAY_DIR / f"replay_{index + 1}.json"  # 1-based: first replay is #1
         result = run_match(
             seed=match_seeds[index],
             bot_type="mixed",
@@ -539,12 +539,12 @@ def generate_replays(payload: dict) -> dict:
         winners[result.winner] = winners.get(result.winner, 0) + 1
         winner_types[result.winner_type] = winner_types.get(result.winner_type, 0) + 1
         results.append({
-            "index": index,
+            "index": index + 1,
             "seed": result.seed,
             "winner": result.winner,
             "winner_type": result.winner_type,
             "ticks": result.total_ticks,
-            "path": f"../{REPLAY_DIR.name}/replay_{index}.json",
+            "path": f"../{REPLAY_DIR.name}/replay_{index + 1}.json",
         })
 
     return {
