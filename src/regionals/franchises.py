@@ -139,7 +139,7 @@ FRANCHISES: list[dict] = [
         "franchise_id": "dust-rangers", "name": "Dust Rangers", "abbrev": "DR",
         "manager": "Хэнк Моралес",
         "persona": ("Ты Хэнк Моралес, Dust Rangers. Партизан: роумы, объекты, неожиданные точки. "
-                    "Лорд и Барон — твои; бей туда, где соперник не ждёт."),
+                    "Лорд — твой; бей туда, где соперник не ждёт."),
         "default_plan": {"tempo": "balanced", "win_path": "baron_lord",
                          "roles": ["roam_objective", "carry_push", "support_flex"]},
         "color": "#B98A4B", "accent": "#F2E6D2", "shape": "star",
@@ -157,7 +157,7 @@ FRANCHISES: list[dict] = [
         "franchise_id": "ravens-guild", "name": "Raven's Guild", "abbrev": "RG",
         "manager": "Магда Зелинская",
         "persona": ("Ты Магда Зелинская, Raven's Guild. Расчётливый риск вокруг объектов: бери "
-                    "Барона/Лорда на просчитанном тайминге, не раньше."),
+                    "Лорда на просчитанном тайминге, не раньше."),
         "default_plan": {"tempo": "balanced", "win_path": "baron_lord",
                          "roles": ["roam_objective", "tech_eco", "carry_push"]},
         "color": "#5C4B8A", "accent": "#E1DAF0", "shape": "shield",
@@ -210,7 +210,7 @@ FRANCHISES: list[dict] = [
     {
         "franchise_id": "void-hunters", "name": "Void Hunters", "abbrev": "VH",
         "manager": "Илья Соколов",
-        "persona": ("Ты Илья Соколов, Void Hunters. Охотник за объектами: Барон и Лорд — приоритет, "
+        "persona": ("Ты Илья Соколов, Void Hunters. Охотник за объектами: Лорд — приоритет, "
                     "вокруг них строй всю игру."),
         "default_plan": {"tempo": "aggressive", "win_path": "baron_lord",
                          "roles": ["roam_objective", "carry_push", "roam_objective"]},

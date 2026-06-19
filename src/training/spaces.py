@@ -110,7 +110,7 @@ STRATEGY_PRESETS = (
     {"id": "all_in",    "label": "Олл-ин",           "tempo": "all_in",     "win_path": "core_rush",  "roles": ("carry_push", "carry_push", "carry_push")},
     {"id": "turtle",    "label": "Черепаха",         "tempo": "turtle",     "win_path": "outlast",    "roles": ("anchor_defend", "anchor_defend", "tech_eco")},
     {"id": "macro",     "label": "Макро-эконом",     "tempo": "turtle",     "win_path": "economy",    "roles": ("tech_eco", "anchor_defend", "carry_push")},
-    {"id": "baron",     "label": "Контроль Барона",  "tempo": "aggressive", "win_path": "baron_lord", "roles": ("roam_objective", "carry_push", "anchor_defend")},
+    {"id": "baron",     "label": "Контроль Лорда",   "tempo": "aggressive", "win_path": "baron_lord", "roles": ("roam_objective", "carry_push", "anchor_defend")},
 )
 STRATEGY_PRESET_BY_ID = {p["id"]: p for p in STRATEGY_PRESETS}
 
