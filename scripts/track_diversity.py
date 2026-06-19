@@ -32,7 +32,7 @@ from src.training.policy import MaskedActorCritic  # noqa: E402
 from src.training.population import (  # noqa: E402
     CONTROLLED_SLOTS, OPPONENT_SLOTS, build_default_population, write_frozen_pool,
 )
-from src.training.population_roster import build_population  # noqa: E402
+from src.training.population_roster import build_population, load_roster  # noqa: E402
 from src.training.team_env import TeamTrainingEnv, TeamTrainingEnvConfig  # noqa: E402
 
 FACTIONS = ("humans", "infected", "robots")
@@ -103,7 +103,11 @@ def main() -> None:
     args = ap.parse_args()
     run_dir = ROOT / args.run_dir
 
-    descendants = build_population()
+    # Load the ACTUAL run roster (post-cull, with respawns) so all 90 nets are measured —
+    # build_population() would rebuild the default pre-cull roster and silently skip the
+    # respawned net_ids (they have no nets/<original_id>/latest.pt).
+    roster_path = run_dir / "roster.json"
+    descendants = load_roster(roster_path) if roster_path.exists() else build_population()
     specs = {d.net_id: d for d in descendants}
     specs.update({a.net_id: a for a in build_default_population()})
     print(f"building state bank ({args.bank}/faction)...")
