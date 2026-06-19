@@ -1850,6 +1850,7 @@ class GameEngine:
                 group.player_id,
                 group.units,
                 entry_side=self._entry_side(group.player_id, group.src, group.dst),
+                visual_units=group.visual_units,  # keep stable visual_id on arrival (no teleport)
             )
             self._lock_node_player(node, group.player_id)
             return {
@@ -1865,6 +1866,7 @@ class GameEngine:
                 group.units,
                 player_id=group.player_id,
                 entry_side=self._entry_side(group.player_id, group.src, group.dst),
+                visual_units=group.visual_units,  # keep stable visual_id on arrival (no teleport)
             )
             self._lock_node_player(node, group.player_id)
             return {"type": "REINFORCE", "node": group.dst, "player": group.player_id}
@@ -1905,6 +1907,7 @@ class GameEngine:
                 group.player_id,
                 group.units,
                 entry_side=self._entry_side(group.player_id, group.src, group.dst),
+                visual_units=group.visual_units,  # keep stable visual_id on arrival (no teleport)
             )
             self._lock_node_player(node, group.player_id)
             return {
@@ -1928,6 +1931,7 @@ class GameEngine:
                 group.units,
                 player_id=group.player_id,
                 entry_side=self._entry_side(group.player_id, group.src, group.dst),
+                visual_units=group.visual_units,  # keep stable visual_id on arrival (no teleport)
             )
             self._lock_node_player(node, group.player_id)
             return {"type": "CAPTURE", "node": group.dst, "player": group.player_id}
@@ -1947,6 +1951,7 @@ class GameEngine:
                 group.units,
                 player_id=group.player_id,
                 entry_side=self._entry_side(group.player_id, group.src, group.dst),
+                visual_units=group.visual_units,  # keep stable visual_id on arrival (no teleport)
             )
             self._lock_node_player(node, group.player_id)
             return {"type": "REINFORCE", "node": group.dst, "player": group.player_id}
@@ -2033,6 +2038,7 @@ class GameEngine:
                     group.units,
                     player_id=group.player_id,
                     entry_side=self._entry_side(group.player_id, group.src, group.dst),
+                    visual_units=group.visual_units,  # keep stable visual_id on arrival
                 )
                 self._lock_node_player(baron_node, group.player_id)
                 return {"type": "REINFORCE", "node": "Baron", "player": group.player_id}
@@ -2077,6 +2083,7 @@ class GameEngine:
             group.units,
             player_id=group.player_id,
             entry_side=self._entry_side(group.player_id, group.src, group.dst),
+            visual_units=group.visual_units,  # keep stable visual_id on arrival
         )
         self._lock_node_player(baron_node, group.player_id)
         return {"type": "MOVE_IN", "node": "Baron", "player": group.player_id}
