@@ -105,10 +105,6 @@ class GameEngine:
         self.record_replay = record_replay
         self.replay_ticks = []
         self._pending_neutral_reengages: list[tuple[str, str]] = []
-        # Replay-only: per visual_id on-screen cursor + recent pace, for smoothing the
-        # representation hand-offs (moving/battle -> stationed/visiting snaps to node centre).
-        self._visual_cursor: dict[str, tuple[float, float]] = {}
-        self._visual_speed: dict[str, float] = {}
         if self.record_replay:
             self._initialize_visual_state()
 
@@ -4383,57 +4379,6 @@ class GameEngine:
                     })
 
         rows.sort(key=lambda item: (item.get("layer", ""), item.get("owner", ""), item.get("id", "")))
-        return self._smooth_visual_positions(rows)
-
-    def _smooth_visual_positions(self, rows: list[dict]) -> list[dict]:
-        """Velocity-clamp each visual_id's on-screen position to its OWN recent pace.
-
-        Cosmetic only — never touches gameplay x/y. Already-smooth motion (small per-tick
-        steps, e.g. constant-speed moving or the battle deploy bridge) passes through
-        unchanged. The representation hand-off that snaps a unit to a node centre
-        (battle/moving -> visiting/stationed, the ~node-distance teleport seen in replays)
-        exceeds the unit's recent pace, so it eases in over a few ticks instead of jumping."""
-        FLOOR = 12.0      # min settle speed (map units/tick) so a stalled unit still eases in
-        FACTOR = 1.7      # allow recent pace + margin before clamping engages
-        ABSOLUTE = 112.0  # hard cap: the fastest unit marches 30*3.6=108/tick, so anything
-                          # above this is non-physical (a projection sprint) -> never allowed
-        cursor = self._visual_cursor
-        speed = self._visual_speed
-        seen: set[str] = set()
-        for row in rows:
-            vid = row.get("id")
-            if not vid:
-                continue
-            seen.add(vid)
-            tx, ty = float(row.get("x", 0.0)), float(row.get("y", 0.0))
-            # fallen units stay where they died — don't ease their corpse around
-            if row.get("dead") or row.get("layer") == "fallen" or row.get("state") == "fallen":
-                cursor[vid] = (tx, ty)
-                continue
-            prev = cursor.get(vid)
-            if prev is None:
-                cursor[vid] = (tx, ty)
-                speed[vid] = FLOOR
-                continue
-            cx, cy = prev
-            dx, dy = tx - cx, ty - cy
-            dist = math.hypot(dx, dy)
-            cap = min(max(speed.get(vid, FLOOR) * FACTOR, FLOOR), ABSOLUTE)
-            if dist <= cap or dist <= 1e-6:
-                nx, ny = tx, ty
-            else:
-                nx = cx + dx / dist * cap
-                ny = cy + dy / dist * cap
-            cursor[vid] = (nx, ny)
-            row["x"] = round(nx, 3)
-            row["y"] = round(ny, 3)
-            # track recent pace; cap the update so one teleport can't inflate it
-            true_step = min(dist, speed.get(vid, FLOOR) * 2.0 + FLOOR)
-            speed[vid] = 0.6 * speed.get(vid, FLOOR) + 0.4 * true_step
-        for vid in list(cursor):
-            if vid not in seen:
-                cursor.pop(vid, None)
-                speed.pop(vid, None)
         return rows
 
     def _visual_rows_from_bucket(
