@@ -90,7 +90,11 @@ def test_engine_replay_uses_compact_battle_tick_summary():
     assert "attacks" in battle_tick["summary"]
     assert "deaths" in battle_tick["summary"]
     if battle_tick["summary"]["attacks"]:
-        assert len(battle_tick["summary"]["attacks"][0]) == 7
+        # 7 core fields + attack-time positions [7..10] (atk_x, atk_y, tgt_x, tgt_y)
+        # so the viewer draws the effect where the units actually were, in range.
+        attack = battle_tick["summary"]["attacks"][0]
+        assert len(attack) == 11
+        assert all(isinstance(v, (int, float)) for v in attack[7:11])
 
 
 def test_active_battle_snapshot_uses_side_summary():

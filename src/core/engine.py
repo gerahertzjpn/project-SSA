@@ -4947,6 +4947,13 @@ class GameEngine:
                         self._unit_type_code(item["type"]),
                         target["team"],
                         self._unit_type_code(target["type"]),
+                        # attack-time combat positions [7..10]: the units were in range
+                        # HERE. The viewer draws the effect at these, not at stale/absent
+                        # sprite positions (which drift apart as the battle resolves).
+                        item.get("x"),
+                        item.get("y"),
+                        target.get("x"),
+                        target.get("y"),
                     ])
 
         return {
