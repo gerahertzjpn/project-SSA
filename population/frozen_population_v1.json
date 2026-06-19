@@ -1,7 +1,7 @@
 {
   "schema": "frozen_population/v1",
   "frozen": true,
-  "frozen_at": 1781861742,
+  "frozen_at": 1781866725,
   "source_run": "training_runs/league_population_v1",
   "total_steps": 185284864,
   "updates_trained": 5660,
@@ -43,7 +43,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_1__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "980c5a2703eea1d1"
+      "checkpoint_sha256_16": "b9c98d28350c000d"
     },
     {
       "net_id": "humans_1__berserker",
@@ -63,7 +63,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_1__berserker/latest.pt",
-      "checkpoint_sha256_16": "687ae8cf1d3b9637"
+      "checkpoint_sha256_16": "975b113724d2d125"
     },
     {
       "net_id": "humans_1__sentinel",
@@ -83,7 +83,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_1__sentinel/latest.pt",
-      "checkpoint_sha256_16": "4ab1d7aa345ae12e"
+      "checkpoint_sha256_16": "2d51fdf59b37726d"
     },
     {
       "net_id": "humans_1__architect",
@@ -103,7 +103,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_1__architect/latest.pt",
-      "checkpoint_sha256_16": "cb514477748c97a9"
+      "checkpoint_sha256_16": "b95fb96e9e4ca2c9"
     },
     {
       "net_id": "humans_1__warden",
@@ -123,7 +123,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_1__warden/latest.pt",
-      "checkpoint_sha256_16": "fbfd1183a95d80a4"
+      "checkpoint_sha256_16": "9457d033b20e3bf6"
     },
     {
       "net_id": "humans_2__skirmisher",
@@ -143,7 +143,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_2__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "e160f5d55b19ab88"
+      "checkpoint_sha256_16": "3c32e84e1ef15fea"
     },
     {
       "net_id": "humans_2__architect",
@@ -163,7 +163,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_2__architect/latest.pt",
-      "checkpoint_sha256_16": "2e5ec9dfc6aa4f3e"
+      "checkpoint_sha256_16": "40d351b34d7f1d72"
     },
     {
       "net_id": "humans_3__skirmisher",
@@ -183,7 +183,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_3__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "31c554cbeeac56db"
+      "checkpoint_sha256_16": "e62e768514458b81"
     },
     {
       "net_id": "humans_3__berserker",
@@ -203,7 +203,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_3__berserker/latest.pt",
-      "checkpoint_sha256_16": "0d7a6d4b31a596e0"
+      "checkpoint_sha256_16": "e34ad68896ce3a43"
     },
     {
       "net_id": "humans_3__sentinel",
@@ -223,7 +223,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_3__sentinel/latest.pt",
-      "checkpoint_sha256_16": "f6807cee074e34dc"
+      "checkpoint_sha256_16": "59efdb01281bfbeb"
     },
     {
       "net_id": "humans_3__architect",
@@ -243,7 +243,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_3__architect/latest.pt",
-      "checkpoint_sha256_16": "728a458f1616e4e7"
+      "checkpoint_sha256_16": "04c7700c5b4e63c5"
     },
     {
       "net_id": "humans_3__warden",
@@ -263,7 +263,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_3__warden/latest.pt",
-      "checkpoint_sha256_16": "27344d4b0e267e42"
+      "checkpoint_sha256_16": "2b396e6926edc6c7"
     },
     {
       "net_id": "humans_4__skirmisher",
@@ -283,7 +283,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_4__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "7489dfe9f0669bc2"
+      "checkpoint_sha256_16": "88b41305189f87bd"
     },
     {
       "net_id": "humans_4__berserker",
@@ -303,7 +303,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_4__berserker/latest.pt",
-      "checkpoint_sha256_16": "16ee8e8dee75f368"
+      "checkpoint_sha256_16": "2e4225b0cb3a9a32"
     },
     {
       "net_id": "humans_4__sentinel",
@@ -323,7 +323,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_4__sentinel/latest.pt",
-      "checkpoint_sha256_16": "ef33cc4b39a25232"
+      "checkpoint_sha256_16": "ad6b852a624baf36"
     },
     {
       "net_id": "humans_5__skirmisher",
@@ -343,7 +343,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_5__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "964047d5b11b572d"
+      "checkpoint_sha256_16": "ee27bd8a795720a7"
     },
     {
       "net_id": "humans_5__sentinel",
@@ -363,7 +363,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_5__sentinel/latest.pt",
-      "checkpoint_sha256_16": "39424cd995e5effb"
+      "checkpoint_sha256_16": "54f765d9145ec790"
     },
     {
       "net_id": "humans_5__architect",
@@ -383,7 +383,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_5__architect/latest.pt",
-      "checkpoint_sha256_16": "afe9aa54478427c5"
+      "checkpoint_sha256_16": "2b9e483e59b0b539"
     },
     {
       "net_id": "humans_5__warden",
@@ -403,7 +403,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_5__warden/latest.pt",
-      "checkpoint_sha256_16": "75b69ecbcb0259d1"
+      "checkpoint_sha256_16": "3b1dbef49f6c6e56"
     },
     {
       "net_id": "humans_6__skirmisher",
@@ -423,7 +423,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_6__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "0d76c499bc31719b"
+      "checkpoint_sha256_16": "4f36d85628a91cf4"
     },
     {
       "net_id": "humans_6__berserker",
@@ -443,7 +443,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_6__berserker/latest.pt",
-      "checkpoint_sha256_16": "b98c94205e9e3629"
+      "checkpoint_sha256_16": "c5d0ad04bf69fb55"
     },
     {
       "net_id": "humans_6__sentinel",
@@ -463,7 +463,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_6__sentinel/latest.pt",
-      "checkpoint_sha256_16": "e8979b8be6cad049"
+      "checkpoint_sha256_16": "131770da9b769a17"
     },
     {
       "net_id": "humans_6__architect",
@@ -483,7 +483,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_6__architect/latest.pt",
-      "checkpoint_sha256_16": "df0cf2acd1c7753d"
+      "checkpoint_sha256_16": "e7afb5a05dbd8e83"
     },
     {
       "net_id": "humans_6__warden",
@@ -503,7 +503,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_6__warden/latest.pt",
-      "checkpoint_sha256_16": "ab9f0745e584e622"
+      "checkpoint_sha256_16": "be74f1019e9f5418"
     },
     {
       "net_id": "infected_1__skirmisher",
@@ -523,7 +523,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_1__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "a90a79eda5ab4c28"
+      "checkpoint_sha256_16": "3bff4819806f9f45"
     },
     {
       "net_id": "infected_1__berserker",
@@ -543,7 +543,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_1__berserker/latest.pt",
-      "checkpoint_sha256_16": "52aabc2f6eab4e0f"
+      "checkpoint_sha256_16": "1d23aed5d3b5e3f7"
     },
     {
       "net_id": "infected_1__sentinel",
@@ -563,7 +563,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_1__sentinel/latest.pt",
-      "checkpoint_sha256_16": "2a2917f6d3d4f6e5"
+      "checkpoint_sha256_16": "b0228897adc60174"
     },
     {
       "net_id": "infected_1__architect",
@@ -583,7 +583,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_1__architect/latest.pt",
-      "checkpoint_sha256_16": "4452538dd02e35e0"
+      "checkpoint_sha256_16": "7c3c3e4ceeb3670a"
     },
     {
       "net_id": "infected_1__warden",
@@ -603,7 +603,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_1__warden/latest.pt",
-      "checkpoint_sha256_16": "3735bc007c5002af"
+      "checkpoint_sha256_16": "1435e5ae36805f63"
     },
     {
       "net_id": "infected_2__berserker",
@@ -623,7 +623,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_2__berserker/latest.pt",
-      "checkpoint_sha256_16": "f4f768cabff953f2"
+      "checkpoint_sha256_16": "10f4f1110b92e299"
     },
     {
       "net_id": "infected_2__sentinel",
@@ -643,7 +643,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_2__sentinel/latest.pt",
-      "checkpoint_sha256_16": "2e3bb51a7ac17ead"
+      "checkpoint_sha256_16": "cd73f984453a2247"
     },
     {
       "net_id": "infected_2__warden",
@@ -663,7 +663,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_2__warden/latest.pt",
-      "checkpoint_sha256_16": "a8f2f9518cb6e9ad"
+      "checkpoint_sha256_16": "8d71c9d614964f90"
     },
     {
       "net_id": "infected_3__skirmisher",
@@ -683,7 +683,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_3__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "66151c377e160f17"
+      "checkpoint_sha256_16": "4f96b1c0fd3dd0e3"
     },
     {
       "net_id": "infected_3__berserker",
@@ -703,7 +703,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_3__berserker/latest.pt",
-      "checkpoint_sha256_16": "0d2daae8a222c48c"
+      "checkpoint_sha256_16": "45e649263e9bb309"
     },
     {
       "net_id": "infected_3__sentinel",
@@ -723,7 +723,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_3__sentinel/latest.pt",
-      "checkpoint_sha256_16": "b18d9a11183387cd"
+      "checkpoint_sha256_16": "53729fd205794845"
     },
     {
       "net_id": "infected_3__architect",
@@ -743,7 +743,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_3__architect/latest.pt",
-      "checkpoint_sha256_16": "747616247ea0c278"
+      "checkpoint_sha256_16": "0507dc010e8327ae"
     },
     {
       "net_id": "infected_3__warden",
@@ -763,7 +763,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_3__warden/latest.pt",
-      "checkpoint_sha256_16": "bfcacb24b70881d4"
+      "checkpoint_sha256_16": "d88d82e127ab82ed"
     },
     {
       "net_id": "infected_4__skirmisher",
@@ -783,7 +783,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_4__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "6908f4fbf1594e7c"
+      "checkpoint_sha256_16": "c0ab51dc84a749a1"
     },
     {
       "net_id": "infected_4__berserker",
@@ -803,7 +803,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_4__berserker/latest.pt",
-      "checkpoint_sha256_16": "1065c045520d26bf"
+      "checkpoint_sha256_16": "98650d4afe099eac"
     },
     {
       "net_id": "infected_4__sentinel",
@@ -823,7 +823,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_4__sentinel/latest.pt",
-      "checkpoint_sha256_16": "338af2de90e55745"
+      "checkpoint_sha256_16": "65d93506727b42c3"
     },
     {
       "net_id": "infected_4__architect",
@@ -843,7 +843,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_4__architect/latest.pt",
-      "checkpoint_sha256_16": "d0dac9f021206b15"
+      "checkpoint_sha256_16": "1e64ac7d1b4535d4"
     },
     {
       "net_id": "infected_5__skirmisher",
@@ -863,7 +863,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_5__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "3a5cfe721d9d57ce"
+      "checkpoint_sha256_16": "ac01103f96cbe85b"
     },
     {
       "net_id": "infected_5__berserker",
@@ -883,7 +883,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_5__berserker/latest.pt",
-      "checkpoint_sha256_16": "a81d68ebf36fe3cb"
+      "checkpoint_sha256_16": "5824148e26768d5d"
     },
     {
       "net_id": "infected_5__sentinel",
@@ -903,7 +903,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_5__sentinel/latest.pt",
-      "checkpoint_sha256_16": "f0ec704e0a7e6c43"
+      "checkpoint_sha256_16": "73f618360373fe6c"
     },
     {
       "net_id": "infected_5__architect",
@@ -923,7 +923,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_5__architect/latest.pt",
-      "checkpoint_sha256_16": "68685cb3344b862e"
+      "checkpoint_sha256_16": "dce017bf15f7c858"
     },
     {
       "net_id": "infected_5__warden",
@@ -943,7 +943,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_5__warden/latest.pt",
-      "checkpoint_sha256_16": "fcd8e46d0038ceca"
+      "checkpoint_sha256_16": "359fc5ce6459baa5"
     },
     {
       "net_id": "infected_6__skirmisher",
@@ -963,7 +963,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_6__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "c2d725acc47659aa"
+      "checkpoint_sha256_16": "b477c086b64ab66b"
     },
     {
       "net_id": "infected_6__berserker",
@@ -983,7 +983,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_6__berserker/latest.pt",
-      "checkpoint_sha256_16": "05d26108988cec25"
+      "checkpoint_sha256_16": "533b99811aca8bd9"
     },
     {
       "net_id": "infected_6__sentinel",
@@ -1003,7 +1003,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_6__sentinel/latest.pt",
-      "checkpoint_sha256_16": "46b5dcf469882611"
+      "checkpoint_sha256_16": "45b3d2a330d4fdfa"
     },
     {
       "net_id": "infected_6__architect",
@@ -1023,7 +1023,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_6__architect/latest.pt",
-      "checkpoint_sha256_16": "81e862c81fd59bb3"
+      "checkpoint_sha256_16": "159b0720a5f2b459"
     },
     {
       "net_id": "infected_6__warden",
@@ -1043,7 +1043,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_6__warden/latest.pt",
-      "checkpoint_sha256_16": "14395e98f527a5da"
+      "checkpoint_sha256_16": "af7e78db4a6506f7"
     },
     {
       "net_id": "robots_1__skirmisher",
@@ -1063,7 +1063,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_1__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "ec2a8951b8f3809c"
+      "checkpoint_sha256_16": "d5267fe282892fcb"
     },
     {
       "net_id": "robots_1__berserker",
@@ -1083,7 +1083,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_1__berserker/latest.pt",
-      "checkpoint_sha256_16": "aac9e11bb2b9fc13"
+      "checkpoint_sha256_16": "6dab831989d00249"
     },
     {
       "net_id": "robots_1__sentinel",
@@ -1103,7 +1103,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_1__sentinel/latest.pt",
-      "checkpoint_sha256_16": "58afebbc1a2b4c62"
+      "checkpoint_sha256_16": "895dcca736e25227"
     },
     {
       "net_id": "robots_1__architect",
@@ -1123,7 +1123,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_1__architect/latest.pt",
-      "checkpoint_sha256_16": "c57930f8161e9251"
+      "checkpoint_sha256_16": "1cd6ba6f3d269c21"
     },
     {
       "net_id": "robots_1__warden",
@@ -1143,7 +1143,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_1__warden/latest.pt",
-      "checkpoint_sha256_16": "0cd80761af93ba76"
+      "checkpoint_sha256_16": "7695c89ff13e0489"
     },
     {
       "net_id": "robots_2__berserker",
@@ -1163,7 +1163,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_2__berserker/latest.pt",
-      "checkpoint_sha256_16": "9ed25e968cd69c94"
+      "checkpoint_sha256_16": "ac05fa809ec047da"
     },
     {
       "net_id": "robots_2__architect",
@@ -1183,7 +1183,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_2__architect/latest.pt",
-      "checkpoint_sha256_16": "454ed2c02394b4bc"
+      "checkpoint_sha256_16": "0c8e2a7c118c2a45"
     },
     {
       "net_id": "robots_2__warden",
@@ -1203,7 +1203,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_2__warden/latest.pt",
-      "checkpoint_sha256_16": "086a4b6f39ba07de"
+      "checkpoint_sha256_16": "bd702ab8c50ea229"
     },
     {
       "net_id": "robots_3__skirmisher",
@@ -1223,7 +1223,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_3__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "55f8fb97442a2b21"
+      "checkpoint_sha256_16": "0e27b7d5b0d66da6"
     },
     {
       "net_id": "robots_3__berserker",
@@ -1243,7 +1243,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_3__berserker/latest.pt",
-      "checkpoint_sha256_16": "6b39d456e51b27c6"
+      "checkpoint_sha256_16": "bacafbc39538bfad"
     },
     {
       "net_id": "robots_3__sentinel",
@@ -1263,7 +1263,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_3__sentinel/latest.pt",
-      "checkpoint_sha256_16": "32d3eeb1175a0c70"
+      "checkpoint_sha256_16": "b4e644bd36bfd87c"
     },
     {
       "net_id": "robots_3__architect",
@@ -1283,7 +1283,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_3__architect/latest.pt",
-      "checkpoint_sha256_16": "ec10473fd4efd0ac"
+      "checkpoint_sha256_16": "508e372ddd74812a"
     },
     {
       "net_id": "robots_3__warden",
@@ -1303,7 +1303,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_3__warden/latest.pt",
-      "checkpoint_sha256_16": "395c5fea9d41f384"
+      "checkpoint_sha256_16": "a22d77d351c29ba2"
     },
     {
       "net_id": "robots_4__skirmisher",
@@ -1323,7 +1323,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_4__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "42505451c70948c9"
+      "checkpoint_sha256_16": "dbc02d3bb67b27e0"
     },
     {
       "net_id": "robots_4__berserker",
@@ -1343,7 +1343,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_4__berserker/latest.pt",
-      "checkpoint_sha256_16": "7cf2a922ac6e0fa1"
+      "checkpoint_sha256_16": "e76475ba9d4bfddc"
     },
     {
       "net_id": "robots_4__sentinel",
@@ -1363,7 +1363,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_4__sentinel/latest.pt",
-      "checkpoint_sha256_16": "bde6b9b667d8d1f3"
+      "checkpoint_sha256_16": "6898a7efddd1ed5c"
     },
     {
       "net_id": "robots_4__warden",
@@ -1383,7 +1383,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_4__warden/latest.pt",
-      "checkpoint_sha256_16": "07a637fb1efe8981"
+      "checkpoint_sha256_16": "df6a038c55b993f8"
     },
     {
       "net_id": "robots_5__skirmisher",
@@ -1403,7 +1403,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_5__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "062c1cb182d0074f"
+      "checkpoint_sha256_16": "c8628eae31e6ee8a"
     },
     {
       "net_id": "robots_5__berserker",
@@ -1423,7 +1423,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_5__berserker/latest.pt",
-      "checkpoint_sha256_16": "a5552138033781bc"
+      "checkpoint_sha256_16": "165824baae905944"
     },
     {
       "net_id": "robots_5__sentinel",
@@ -1443,7 +1443,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_5__sentinel/latest.pt",
-      "checkpoint_sha256_16": "09e2663937818226"
+      "checkpoint_sha256_16": "afaca3bce058fed5"
     },
     {
       "net_id": "robots_5__architect",
@@ -1463,7 +1463,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_5__architect/latest.pt",
-      "checkpoint_sha256_16": "a9a81c6a7f1cc234"
+      "checkpoint_sha256_16": "adaafa7d97ecbe9f"
     },
     {
       "net_id": "robots_5__warden",
@@ -1483,7 +1483,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_5__warden/latest.pt",
-      "checkpoint_sha256_16": "897e7bbae99d1cce"
+      "checkpoint_sha256_16": "d3fa2ed231511380"
     },
     {
       "net_id": "robots_6__skirmisher",
@@ -1503,7 +1503,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_6__skirmisher/latest.pt",
-      "checkpoint_sha256_16": "116ed1a94fcecebd"
+      "checkpoint_sha256_16": "d5516b4c60a479cc"
     },
     {
       "net_id": "robots_6__berserker",
@@ -1523,7 +1523,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_6__berserker/latest.pt",
-      "checkpoint_sha256_16": "6acb1fc1022c9bbe"
+      "checkpoint_sha256_16": "34516bbdf45f6a46"
     },
     {
       "net_id": "robots_6__sentinel",
@@ -1543,7 +1543,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_6__sentinel/latest.pt",
-      "checkpoint_sha256_16": "1f45a23ff287a68e"
+      "checkpoint_sha256_16": "c1ca109ac2590180"
     },
     {
       "net_id": "robots_6__architect",
@@ -1563,7 +1563,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_6__architect/latest.pt",
-      "checkpoint_sha256_16": "b4d39733716c4402"
+      "checkpoint_sha256_16": "193e306109de0def"
     },
     {
       "net_id": "robots_6__warden",
@@ -1583,7 +1583,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_6__warden/latest.pt",
-      "checkpoint_sha256_16": "3007f21ff5f912b9"
+      "checkpoint_sha256_16": "e1e557c0a4da6d2f"
     },
     {
       "net_id": "robots_architect_g2_0",
@@ -1603,7 +1603,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_architect_g2_0/latest.pt",
-      "checkpoint_sha256_16": "b377c636fac94997"
+      "checkpoint_sha256_16": "d15a060c1c96e454"
     },
     {
       "net_id": "robots_skirmisher_g2_1",
@@ -1623,7 +1623,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_skirmisher_g2_1/latest.pt",
-      "checkpoint_sha256_16": "679f5a9e627bac59"
+      "checkpoint_sha256_16": "1b13daa01c1bc698"
     },
     {
       "net_id": "infected_architect_g2_2",
@@ -1643,7 +1643,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_architect_g2_2/latest.pt",
-      "checkpoint_sha256_16": "071e77be8fec438c"
+      "checkpoint_sha256_16": "15dea3ac7303e645"
     },
     {
       "net_id": "infected_skirmisher_g2_3",
@@ -1663,7 +1663,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_skirmisher_g2_3/latest.pt",
-      "checkpoint_sha256_16": "9b33e8e93ed6715f"
+      "checkpoint_sha256_16": "1bc926925c539820"
     },
     {
       "net_id": "robots_berserker_g2_4",
@@ -1683,7 +1683,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/robots_berserker_g2_4/latest.pt",
-      "checkpoint_sha256_16": "d57b2fd325c5f383"
+      "checkpoint_sha256_16": "d3955a84928025a7"
     },
     {
       "net_id": "humans_sentinel_g2_5",
@@ -1703,7 +1703,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_sentinel_g2_5/latest.pt",
-      "checkpoint_sha256_16": "70d4f5ffc060481b"
+      "checkpoint_sha256_16": "46baec91e6e16006"
     },
     {
       "net_id": "humans_sentinel_g2_6",
@@ -1723,7 +1723,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_sentinel_g2_6/latest.pt",
-      "checkpoint_sha256_16": "0588470e9aa94940"
+      "checkpoint_sha256_16": "36e0ef1d44bd9c81"
     },
     {
       "net_id": "humans_sentinel_g2_7",
@@ -1743,7 +1743,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_sentinel_g2_7/latest.pt",
-      "checkpoint_sha256_16": "6259c3207ed09b15"
+      "checkpoint_sha256_16": "f01ef78633a5d02c"
     },
     {
       "net_id": "humans_sentinel_g2_8",
@@ -1763,7 +1763,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_sentinel_g2_8/latest.pt",
-      "checkpoint_sha256_16": "e5b19b3bc565d1e7"
+      "checkpoint_sha256_16": "5d85da5cc02374a6"
     },
     {
       "net_id": "humans_architect_g2_9",
@@ -1783,7 +1783,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_architect_g2_9/latest.pt",
-      "checkpoint_sha256_16": "d13fa7e4c284ee64"
+      "checkpoint_sha256_16": "e7d4c542dc8cddbe"
     },
     {
       "net_id": "humans_architect_g2_10",
@@ -1803,7 +1803,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/humans_architect_g2_10/latest.pt",
-      "checkpoint_sha256_16": "006b8af0a68b223c"
+      "checkpoint_sha256_16": "376152c88ee9d4fe"
     },
     {
       "net_id": "infected_skirmisher_g2_11",
@@ -1823,7 +1823,7 @@
       "plays_league": true,
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_skirmisher_g2_11/latest.pt",
-      "checkpoint_sha256_16": "9217c335a7bf7ccb"
+      "checkpoint_sha256_16": "295295fb59d01d0f"
     }
   ],
   "ancestors": [

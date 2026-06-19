@@ -120,14 +120,22 @@ def make_player(
     parent_id: Optional[str] = None,
     generation: int = 0,
     net_id: Optional[str] = None,
+    faction: Optional[str] = None,
+    archetype: Optional[str] = None,
+    role: str = "pro",
+    signable: bool = True,
 ) -> dict:
     pid = player_id(world_id, index)
     return {
         "player_id": pid,
         "net_id": net_id,                       # shared-pool link; None in foundation
+        # role/signable: "pro" = league player (drafted, signable); "streamer" = permanent
+        # free agent bound to an ancestor net, plays SoloQ only and is NEVER signable.
+        "role": role,
+        "signable": signable,
         "nickname": nickname,
-        "faction": rng.choice(FACTIONS),
-        "archetype": rng.choice(_ARCHETYPES),
+        "faction": faction or rng.choice(FACTIONS),
+        "archetype": archetype or rng.choice(_ARCHETYPES),
         "attributes": _synth_attributes(rng, tier),
         # latent per-position skill multiplier (A1/A2/A3) — fielding a player at a
         # good position boosts strength; the LLM/manager picks positions + subs.
@@ -177,6 +185,41 @@ def make_team(world_id: str, franchise: dict) -> dict:
 # --------------------------------------------------------------------------- #
 # New world
 # --------------------------------------------------------------------------- #
+def seed_population_players(world_id: str, manifest: dict, rng: random.Random):
+    """Build the player pool FROM the frozen population manifest. Returns
+    ``(players, pro_ids, streamer_ids)``:
+
+    - DESCENDANTS -> 'pro' players: signable, draftable to league teams, bound to their net,
+      with the net's real faction + archetype. (soloq_rating starts equal; real SoloQ matches
+      establish it, so the synth attributes are cosmetic/scouting flavour.)
+    - ANCESTORS -> 'streamer' players: permanent free agents bound to an ancestor net, SoloQ
+      only, NEVER signable -> kept OUT of the draftable free-agent pool.
+    """
+    descendants = manifest.get("descendants", [])
+    ancestors = manifest.get("ancestors", [])
+    nicks = _unique_nicknames(len(descendants) + len(ancestors), rng)
+    players: dict[str, dict] = {}
+    pro_ids: list[str] = []
+    streamer_ids: list[str] = []
+    i = 0
+    for e in descendants:
+        tier = (i + 0.5) / max(1, len(descendants))  # cosmetic spread; real strength via matches
+        p = make_player(world_id, i, nicks[i], rng, tier=tier, net_id=e["net_id"],
+                        faction=e["faction"], archetype=e.get("archetype"),
+                        role="pro", signable=True)
+        players[p["player_id"]] = p
+        pro_ids.append(p["player_id"])
+        i += 1
+    for e in ancestors:
+        p = make_player(world_id, i, nicks[i], rng, tier=0.6, net_id=e["net_id"],
+                        faction=e["faction"], archetype=e.get("archetype") or "base",
+                        origin="streamer", role="streamer", signable=False)
+        players[p["player_id"]] = p
+        streamer_ids.append(p["player_id"])
+        i += 1
+    return players, pro_ids, streamer_ids
+
+
 def new_world(
     world_id: str,
     franchises: list[dict],
@@ -185,6 +228,7 @@ def new_world(
     player_pool_size: Optional[int] = None,
     seed: Optional[int] = None,
     config: Optional[dict] = None,
+    population: Optional[str | dict] = None,
 ) -> dict:
     """Create a clean-slate world: a diverse player pool (all free agents) and
     one team per franchise (no league assignment, no money — Season 0 gives
@@ -202,15 +246,31 @@ def new_world(
 
     teams = {t["team_id"]: t for t in (make_team(world_id, fr) for fr in franchises)}
     n_teams = len(teams)
-    pool = player_pool_size if player_pool_size is not None else n_teams * 3 + max(12, n_teams)
+    cfg = dict(config or {})
+    streamers: list[str] = []
 
-    nicks = _unique_nicknames(pool, rng)
-    players: dict[str, dict] = {}
-    for i in range(pool):
-        tier = (i + 0.5) / pool  # even spread of strength across the pool
-        # shuffle tier->index so ids aren't sorted by strength
-        p = make_player(world_id, i, nicks[i], rng, tier=tier)
-        players[p["player_id"]] = p
+    if population is not None:
+        # Seed the pool from the frozen trained population: 90 pros (draftable) + 18
+        # streamers (SoloQ-only free agents). Loaded via plain json so world.py stays
+        # torch-free; the net-backed match_fn (src.world.net_match) is imported only when
+        # matches actually run.
+        manifest = population if isinstance(population, dict) else json.loads(
+            Path(population).read_text(encoding="utf-8"))
+        players, pro_ids, streamers = seed_population_players(world_id, manifest, rng)
+        free_agents = list(pro_ids)
+        cfg.setdefault("population_source", manifest.get("source_run") or str(population))
+        cfg.setdefault("population_manifest",
+                       population if isinstance(population, str) else "population/frozen_population_v1.json")
+    else:
+        pool = player_pool_size if player_pool_size is not None else n_teams * 3 + max(12, n_teams)
+        nicks = _unique_nicknames(pool, rng)
+        players = {}
+        for i in range(pool):
+            tier = (i + 0.5) / pool  # even spread of strength across the pool
+            # shuffle tier->index so ids aren't sorted by strength
+            p = make_player(world_id, i, nicks[i], rng, tier=tier)
+            players[p["player_id"]] = p
+        free_agents = list(players.keys())
 
     return {
         "version": STORE_VERSION,
@@ -220,10 +280,11 @@ def new_world(
         "season": 0,
         "month": 0,
         "phase": "created",          # created | season0 | regular | offseason
-        "config": dict(config or {}),
+        "config": cfg,
         "teams": teams,
         "players": players,
-        "free_agents": list(players.keys()),
+        "free_agents": free_agents,
+        "streamers": streamers,      # ancestor-bound free agents: SoloQ only, never signable
         "rookies_pool": [],
         "calendar": [],
         "history": [],
