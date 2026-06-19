@@ -4354,6 +4354,9 @@ class GameEngine:
                     "hp_ratio": self._visual_hp_ratio(unit.hp, unit.max_hp),
                     "state": "fighting",
                     "layer": "battle",
+                    # per-unit march step: the clamp smooths only non-physical
+                    # re-placement snaps (>vmax), never real combat micro-movement (<=vmax)
+                    "vmax": round(MOVEMENT_MAP_UNITS_PER_TICK * max(0.001, float(unit.speed)), 3),
                     "battle_id": battle.battle_id,
                     "location_kind": battle.location_kind,
                     "location_id": battle.location_id,
@@ -4393,36 +4396,46 @@ class GameEngine:
         return self._settle_visual_positions(rows)
 
     def _settle_visual_positions(self, rows: list[dict]) -> list[dict]:
-        """Ease a unit INTO a node centre over a few ticks when it SETTLES (stationed/
-        visiting/neutral), instead of snapping there from its battle/approach position — that
-        snap is the 'teleport to the point' seen in replays. ONLY node-anchored settle rows
-        are clamped; moving/battle rows render verbatim, so road-following motion is never cut
-        (the bug my earlier blanket clamp caused). The eased step is a straight line from the
-        unit's last position to the node centre, which for a single approach ~= the road in.
-        Cosmetic only — never touches gameplay x/y."""
+        """Velocity-clamp visual jumps that are NOT real movement, so the replay never
+        teleports a unit. Two cases are clamped:
+
+        - SETTLE rows (stationed/visiting/neutral/lord_delay): ease a unit into a node centre
+          over a few ticks instead of snapping there from its battle/approach position.
+        - BATTLE rows: gameplay combat can only move a unit by <= its march step per tick, so
+          any battle-position jump LARGER than that step is a non-physical re-placement snap
+          (edge-battle -> node-battle, win -> reinforce node, formation re-anchor). Clamping to
+          the unit's own ``vmax`` smooths exactly those snaps and never throttles real combat
+          micro-movement (which is always <= vmax). This kills the 'advance to contact, snap
+          back to the node, march out again' artefact seen in every fight.
+
+        MOVING rows render verbatim (road-following must never be cut — the bug my earlier
+        blanket clamp caused). Cosmetic only — never touches gameplay x/y."""
         SETTLE = {"stationed", "visiting", "neutral", "lord_delay"}
-        CAP = 60.0  # walk-in speed (map units/tick): a node-distance settles over ~1-3 ticks
+        SETTLE_CAP = 60.0  # node walk-in speed (map units/tick): settles over ~1-3 ticks
         cursor = self._visual_cursor
         seen: set[str] = set()
         for row in rows:
             vid = row.get("id")
+            vmax = row.pop("vmax", None)  # battle-only hint; never leak into the replay JSON
             if not vid:
                 continue
             seen.add(vid)
             tx, ty = float(row.get("x", 0.0)), float(row.get("y", 0.0))
             layer = row.get("layer") or row.get("state")
+            clamp = layer in SETTLE or (layer == "battle" and vmax is not None)
             prev = cursor.get(vid)
-            if prev is None or layer not in SETTLE:
-                cursor[vid] = (tx, ty)  # moving/battle/new/fallen: verbatim, just track it
+            if prev is None or not clamp:
+                cursor[vid] = (tx, ty)  # moving/new/fallen: verbatim, just track it
                 continue
+            cap = float(vmax) if layer == "battle" else SETTLE_CAP
             cx, cy = prev
             dx, dy = tx - cx, ty - cy
             dist = math.hypot(dx, dy)
-            if dist <= CAP or dist <= 1e-6:
+            if dist <= cap or dist <= 1e-6:
                 nx, ny = tx, ty
             else:
-                nx = cx + dx / dist * CAP
-                ny = cy + dy / dist * CAP
+                nx = cx + dx / dist * cap
+                ny = cy + dy / dist * cap
             cursor[vid] = (nx, ny)
             row["x"] = round(nx, 3)
             row["y"] = round(ny, 3)
