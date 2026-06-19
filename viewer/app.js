@@ -81,7 +81,7 @@ const FALLBACK_MODELS = [
 ];
 const SAMPLE_REPLAYS = Array.from({ length: DEFAULT_UI_RUNS }, (_, index) => ({
   label: `replay_${index}.json`,
-  path: `../replays_viewer_debug_smoke/replay_${index}.json`,
+  path: `../replays/replay_${index}.json`,
 }));
 
 const state = {

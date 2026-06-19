@@ -2,8 +2,8 @@
 Entry point: run one or more matches and save replays.
 
 Usage:
-    python main.py                # one match, saves replay_0.json
-    python main.py --runs 20      # 20 matches, saves replay_0.json ... replay_19.json
+    python main.py                # one match, saves replay_1.json
+    python main.py --runs 20      # 20 matches, saves replay_1.json ... replay_20.json
     python main.py --seed 42      # specific seed
     python main.py --bot scripted # use scripted bots (default: random)
     python main.py --mode training --runs 100  # headless summaries, no replay JSON
@@ -34,7 +34,7 @@ def main():
     winner_types = {}
     for i in range(args.runs):
         seed = args.seed + i
-        path = os.path.join(args.out, f"replay_{i}.json") if profile.save_replay else None
+        path = os.path.join(args.out, f"replay_{i + 1}.json") if profile.save_replay else None  # 1-based
         result = run_match(seed=seed, bot_type=args.bot, replay_path=path, mode=args.mode)
         print(format_match_result(result))
         results[result.winner] = results.get(result.winner, 0) + 1

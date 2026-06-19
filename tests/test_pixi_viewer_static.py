@@ -94,7 +94,7 @@ def test_pixi_viewer_uses_pixi_application_and_replay_positions():
     assert "player_factions" in script
     assert "factions" in script
     assert "maxUiRuns" in script
-    assert "replays_viewer_debug_smoke" in script
+    assert "/replays/replay_" in script
 
 
 def test_pixi_viewer_layout_is_fullscreen_hud():

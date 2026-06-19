@@ -42,7 +42,7 @@ const HANDOFF_DISTANCE = 95;
 const MAX_EXPANDED_UNITS = 220;
 const SAMPLE_REPLAYS = Array.from({ length: 20 }, (_, index) => ({
   label: `replay_${index}.json`,
-  path: `../replays_viewer_debug_smoke/replay_${index}.json`,
+  path: `../replays/replay_${index}.json`,
 }));
 const PLAYER_IDS = ["A1", "A2", "A3", "B1", "B2", "B3"];
 const FALLBACK_MODELS = [

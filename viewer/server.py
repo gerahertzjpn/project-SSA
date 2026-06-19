@@ -165,7 +165,7 @@ def create_world_payload(payload: dict) -> dict:
     }
 
 
-REPLAY_DIR = ROOT / "replays_viewer_debug_smoke"
+REPLAY_DIR = ROOT / "replays"
 MAX_UI_RUNS = 100
 MAX_POLICY_CHECKPOINT_SCAN = 120
 MAX_DISCOVERED_POLICY_MODELS = 30

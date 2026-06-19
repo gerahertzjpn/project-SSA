@@ -105,6 +105,10 @@ class GameEngine:
         self.record_replay = record_replay
         self.replay_ticks = []
         self._pending_neutral_reengages: list[tuple[str, str]] = []
+        # Replay-only: last on-screen position per visual_id, to ease a unit INTO a node
+        # centre over a few ticks when it settles (instead of snapping from its battle/edge
+        # position). Only settle rows are eased; moving/battle render verbatim.
+        self._visual_cursor: dict[str, tuple[float, float]] = {}
         if self.record_replay:
             self._initialize_visual_state()
 
@@ -4379,6 +4383,45 @@ class GameEngine:
                     })
 
         rows.sort(key=lambda item: (item.get("layer", ""), item.get("owner", ""), item.get("id", "")))
+        return self._settle_visual_positions(rows)
+
+    def _settle_visual_positions(self, rows: list[dict]) -> list[dict]:
+        """Ease a unit INTO a node centre over a few ticks when it SETTLES (stationed/
+        visiting/neutral), instead of snapping there from its battle/approach position — that
+        snap is the 'teleport to the point' seen in replays. ONLY node-anchored settle rows
+        are clamped; moving/battle rows render verbatim, so road-following motion is never cut
+        (the bug my earlier blanket clamp caused). The eased step is a straight line from the
+        unit's last position to the node centre, which for a single approach ~= the road in.
+        Cosmetic only — never touches gameplay x/y."""
+        SETTLE = {"stationed", "visiting", "neutral", "lord_delay"}
+        CAP = 60.0  # walk-in speed (map units/tick): a node-distance settles over ~1-3 ticks
+        cursor = self._visual_cursor
+        seen: set[str] = set()
+        for row in rows:
+            vid = row.get("id")
+            if not vid:
+                continue
+            seen.add(vid)
+            tx, ty = float(row.get("x", 0.0)), float(row.get("y", 0.0))
+            layer = row.get("layer") or row.get("state")
+            prev = cursor.get(vid)
+            if prev is None or layer not in SETTLE:
+                cursor[vid] = (tx, ty)  # moving/battle/new/fallen: verbatim, just track it
+                continue
+            cx, cy = prev
+            dx, dy = tx - cx, ty - cy
+            dist = math.hypot(dx, dy)
+            if dist <= CAP or dist <= 1e-6:
+                nx, ny = tx, ty
+            else:
+                nx = cx + dx / dist * CAP
+                ny = cy + dy / dist * CAP
+            cursor[vid] = (nx, ny)
+            row["x"] = round(nx, 3)
+            row["y"] = round(ny, 3)
+        for vid in list(cursor):
+            if vid not in seen:
+                cursor.pop(vid, None)
         return rows
 
     def _visual_rows_from_bucket(
