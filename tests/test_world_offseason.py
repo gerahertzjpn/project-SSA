@@ -1,4 +1,5 @@
 """Off-season orchestration + training preview + feature gating + 800k floor."""
+import contextlib
 import pytest
 
 from src.world import (
@@ -11,32 +12,33 @@ FRANCHISES = [{"franchise_id": f"fr{i:02d}", "name": f"Team {i}", "abbrev": f"T{
               for i in range(22)]
 
 
+@contextlib.contextmanager
+def _flag(name, value):
+    orig = feature_flags.FLAGS[name]["enabled"]
+    feature_flags.FLAGS[name]["enabled"] = value
+    try:
+        yield
+    finally:
+        feature_flags.FLAGS[name]["enabled"] = orig
+
+
 # ----------------------------------------------------------- feature flags- #
-def test_flags_locked_and_marked_in_development():
-    # The training backend + LLM manager stay locked/in-development.
-    for name in ("real_training_backend", "llm_manager"):
+def test_all_features_unlocked():
+    # Owner flipped everything ON ("включи всё"): all four flags are live/selectable.
+    for name in ("real_training_backend", "llm_manager", "ui_world_tab", "live_auction_l2"):
         st = feature_flags.ui_state(name)
-        assert st["locked"] is True and st["selectable"] is False
-        assert st["status"] == "in_development"
-    # The World UI tab is now LIVE (unlocked): create world + leagues/standings + net-real
-    # season advance are wired and selectable.
-    world_tab = feature_flags.ui_state("ui_world_tab")
-    assert world_tab["locked"] is False and world_tab["selectable"] is True
-    # the optional L2 live auction is a secondary, locked-by-default feature
-    assert feature_flags.flag("live_auction_l2")["enabled"] is False
+        assert st["locked"] is False and st["selectable"] is True
+    feature_flags.assert_enabled("real_training_backend")   # no longer raises
 
 
-def test_assert_enabled_raises_when_locked():
-    with pytest.raises(feature_flags.FeatureLocked):
-        feature_flags.assert_enabled("real_training_backend")
-
-
-# ------------------------------------------------------------- backend lock- #
-def test_real_backend_is_wired_but_locked():
+# ------------------------------------------------------------- backend wired #
+def test_real_backend_is_wired_but_unimplemented():
+    # The flag is unlocked, so the gate no longer fires — but the PPO ops are still TODO stubs
+    # (real training is wired as a background job, not a synchronous backend call).
     be = backends.get_backend()
     for method, ctx in (("fork", {"target": {"kind": "parent"}}),
                         ("continue_ppo", {"target": {"kind": "player"}})):
-        with pytest.raises(feature_flags.FeatureLocked):
+        with pytest.raises(NotImplementedError):
             getattr(be, method)({**ctx, "total_steps": 1_000_000})
 
 
@@ -132,10 +134,12 @@ def test_free_agent_budget_smaller_than_rookies():
 
 
 def test_run_offseason_with_locked_backend_records_locked():
-    w = _bootstrapped()
-    jobs = [{"team_id": list(w["teams"])[0], "spend_type": "skill_up",
-             "target": {"kind": "player", "player_id": "p"}, "total_steps": 1_000_000}]
-    rep = offseason.run_offseason(w, training_jobs=jobs, backend=backends.get_backend(), seed=1)
-    exe = rep["stages"]["training"]["execution"]
-    assert exe["executed"] is False
-    assert exe["results"][0]["status"] == "locked"   # FeatureLocked caught, reported honestly
+    with _flag("real_training_backend", False):       # admin-locked training path still works
+        w = _bootstrapped()
+        jobs = [{"team_id": list(w["teams"])[0], "spend_type": "skill_up",
+                 "target": {"kind": "player", "player_id": "p"}, "total_steps": 1_000_000}]
+        rep = offseason.run_offseason(w, training_jobs=jobs,
+                                      backend=backends.get_backend(require_flag=True), seed=1)
+        exe = rep["stages"]["training"]["execution"]
+        assert exe["executed"] is False
+        assert exe["results"][0]["status"] == "locked"   # FeatureLocked caught, reported honestly

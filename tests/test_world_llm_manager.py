@@ -12,12 +12,23 @@ FRANCHISES = [{"franchise_id": f"fr{i:02d}", "name": f"Team {i}", "abbrev": f"T{
 
 
 @contextlib.contextmanager
-def _llm_on():
-    feature_flags.FLAGS["llm_manager"]["enabled"] = True
+def _flag(name, value):
+    """Temporarily force a feature flag, restoring its ORIGINAL value (flags are now ON by
+    default, so a hardcoded reset would pollute other tests)."""
+    orig = feature_flags.FLAGS[name]["enabled"]
+    feature_flags.FLAGS[name]["enabled"] = value
     try:
         yield
     finally:
-        feature_flags.FLAGS["llm_manager"]["enabled"] = False
+        feature_flags.FLAGS[name]["enabled"] = orig
+
+
+def _llm_on():
+    return _flag("llm_manager", True)
+
+
+def _llm_off():
+    return _flag("llm_manager", False)
 
 
 class FakeLLM:
@@ -42,8 +53,8 @@ def _bootstrapped():
 # ----------------------------------------------------------------- gating -- #
 def test_draft_pick_fn_is_none_when_gated():
     w = _bootstrapped()
-    # flag locked by default -> no LLM draft, heuristic is used (None pick_fn)
-    assert llm_manager.draft_pick_fn(w, llm=FakeLLM()) is None
+    with _llm_off():                       # flag OFF -> no LLM draft, heuristic (None pick_fn)
+        assert llm_manager.draft_pick_fn(w, llm=FakeLLM()) is None
 
 
 def test_author_playbook_heuristic_when_gated_emits_event():
@@ -135,18 +146,16 @@ def test_auction_max_bids_reflect_character_and_budget():
 
 
 # ------------------------------------------------- 🔴 L2 live-auction guard -- #
-def test_live_auction_locked_by_default():
-    assert llm_manager.live_auction_available() is False
-    with pytest.raises(feature_flags.FeatureLocked):
-        llm_manager.assert_live_auction(confirmed=True)
+def test_live_auction_locked_when_flag_off():
+    with _flag("live_auction_l2", False):
+        assert llm_manager.live_auction_available() is False
+        with pytest.raises(feature_flags.FeatureLocked):
+            llm_manager.assert_live_auction(confirmed=True)
 
 
 def test_live_auction_requires_explicit_confirmation():
-    feature_flags.FLAGS["live_auction_l2"]["enabled"] = True
-    try:
+    with _flag("live_auction_l2", True):
         with pytest.raises(PermissionError):
             llm_manager.assert_live_auction(confirmed=False)       # must press YES
         msg = llm_manager.assert_live_auction(confirmed=True)
         assert "L2" in msg
-    finally:
-        feature_flags.FLAGS["live_auction_l2"]["enabled"] = False
