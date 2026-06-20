@@ -467,3 +467,15 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .sel-fac { color: #9fb0c2; font-weight: 700; text-align: center; }
 .sel-nm { color: #e6edf4; font-weight: 600; }
 .sel-net { color: #6b7886; font-family: ui-monospace, monospace; font-size: 10px; }
+
+/* SoloQ history in the player detail */
+.pd-soloq { display: flex; flex-direction: column; gap: 3px; }
+.pd-soloq b { font-size: 12px; color: #cdd9e6; margin-bottom: 2px; }
+.sq-game { display: grid; grid-template-columns: 22px 48px 1fr 1fr; gap: 8px; align-items: center;
+  font-size: 11px; padding: 3px 6px; border-radius: 6px; background: #161b22; }
+.sq-game.w { border-left: 2px solid #2e7d52; }
+.sq-game.l { border-left: 2px solid #b3402e; }
+.sq-res { font-weight: 800; color: #cdd9e6; }
+.sq-d.up { color: #6ee7a8; font-weight: 700; }
+.sq-d.down { color: #ff8a8a; font-weight: 700; }
+.sq-with, .sq-vs { color: #8493a4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

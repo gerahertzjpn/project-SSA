@@ -26,6 +26,7 @@ TEAM_SIZE = 3
 BAND_STEP = 100
 DEFAULT_ROUNDS = 10
 K_FACTOR = 32.0
+SOLOQ_MATCH_CAP = 60        # keep the most recent N SoloQ games per player (history, no replays)
 IMPACT_SPREAD = 0.6  # up to ±60% modulation (vs ±20% for official games)
 
 # match_fn(team_a_ids, team_b_ids, ratings, rng) -> (winner: "A"|"B", impacts)
@@ -115,11 +116,13 @@ def simulate_soloq(
     rounds: int = DEFAULT_ROUNDS,
     seed: int = 0,
     match_fn: Optional[MatchFn] = None,
+    record: bool = False,
 ) -> tuple[dict, list[dict]]:
     """Run SoloQ over ``ratings`` (pid -> rating). Returns (new_ratings, log).
 
-    Pure: does not mutate the input dict. ``log`` is per-round stats (matches
-    played, players who skipped) for diagnostics.
+    Pure: does not mutate the input dict. ``log`` is per-round stats (matches played, who skipped).
+    With ``record=True`` each round entry also carries ``player_matches`` = {pid: {teammates,
+    opponents, won, delta}} so the world can build a per-player game history.
     """
     match_fn = match_fn or _default_match_fn
     rng = random.Random(seed)
@@ -129,20 +132,28 @@ def simulate_soloq(
     for rnd in range(rounds):
         matches = _round_matches(cur, rng)
         played = {pid for m in matches for pid in (m[0] + m[1])}
+        pm: dict[str, dict] = {}
         for team_a, team_b in matches:
             avg_a = sum(cur[p] for p in team_a) / len(team_a)
             avg_b = sum(cur[p] for p in team_b) / len(team_b)
             winner, impacts = match_fn(team_a, team_b, cur, rng)
             a_won = winner == "A"
             for pid in team_a:
-                cur[pid] += soloq_rating_delta(cur[pid], avg_b, a_won, impacts.get(pid, 0.5))
+                d = soloq_rating_delta(cur[pid], avg_b, a_won, impacts.get(pid, 0.5))
+                cur[pid] += d
+                if record:
+                    pm[pid] = {"teammates": [p for p in team_a if p != pid],
+                               "opponents": list(team_b), "won": a_won, "delta": round(d, 2)}
             for pid in team_b:
-                cur[pid] += soloq_rating_delta(cur[pid], avg_a, not a_won, impacts.get(pid, 0.5))
-        log.append({
-            "round": rnd,
-            "matches": len(matches),
-            "skipped": sorted(set(cur) - played),
-        })
+                d = soloq_rating_delta(cur[pid], avg_a, not a_won, impacts.get(pid, 0.5))
+                cur[pid] += d
+                if record:
+                    pm[pid] = {"teammates": [p for p in team_b if p != pid],
+                               "opponents": list(team_a), "won": not a_won, "delta": round(d, 2)}
+        entry = {"round": rnd, "matches": len(matches), "skipped": sorted(set(cur) - played)}
+        if record:
+            entry["player_matches"] = pm
+        log.append(entry)
     # Round for stability/serialization.
     cur = {pid: round(r, 2) for pid, r in cur.items()}
     return cur, log
@@ -155,9 +166,18 @@ def apply_soloq(world: dict, *, rounds: int = DEFAULT_ROUNDS, seed: int = 0,
     players = world["players"]
     # Reserves are held OUT of season 0 (not yet debuted) -> they don't play SoloQ until introduced.
     ratings = {pid: p["soloq_rating"] for pid, p in players.items() if p.get("status") != "reserve"}
-    new_ratings, log = simulate_soloq(ratings, rounds=rounds, seed=seed, match_fn=match_fn)
+    new_ratings, log = simulate_soloq(ratings, rounds=rounds, seed=seed, match_fn=match_fn, record=True)
+    season = world.get("season", 0)
     for pid, r in new_ratings.items():
         p = players[pid]
         p["soloq_rating"] = r
         p["soloq_history"].append(r)
+    # per-match history (with/against whom + points delta) — capped to the recent games
+    for entry in log:
+        for pid, m in (entry.get("player_matches") or {}).items():
+            players[pid].setdefault("soloq_matches", []).append({"season": season, "round": entry["round"], **m})
+    for pid in new_ratings:
+        sm = players[pid].get("soloq_matches") or []
+        if len(sm) > SOLOQ_MATCH_CAP:
+            players[pid]["soloq_matches"] = sm[-SOLOQ_MATCH_CAP:]
     return log

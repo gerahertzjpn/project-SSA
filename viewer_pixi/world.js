@@ -266,6 +266,13 @@ function togglePlayerDetail(row) {
     `</div>` +
     `<div class="pd-spark">Динамика рейтинга ${sparkline(p.rating_history, 200, 36)}</div>` +
     (p.trophies && p.trophies.length ? `<div>🏆 ${p.trophies.map((t) => `S${t.season} ${esc(t.title)}`).join(", ")}</div>` : "") +
+    ((p.soloq_games || []).length ? `<div class="pd-soloq"><b>История SoloQ</b>` +
+      p.soloq_games.map((g) =>
+        `<div class="sq-game ${g.won ? "w" : "l"}"><span class="sq-res">${g.won ? "W" : "L"}</span>` +
+        `<span class="sq-d ${g.delta >= 0 ? "up" : "down"}">${g.delta >= 0 ? "+" : ""}${g.delta}</span>` +
+        `<span class="sq-with">с: ${esc((g.teammates || []).join(", "))}</span>` +
+        `<span class="sq-vs">против: ${esc((g.opponents || []).join(", "))}</span></div>`).join("") +
+    `</div>` : "") +
   `</div></td>`;
   row.after(tr);
 }

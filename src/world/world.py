@@ -155,6 +155,7 @@ def make_player(
         "position_stats": {},
         "soloq_rating": START_RATING,
         "soloq_history": [],
+        "soloq_matches": [],                    # recent games: {season,round,teammates,opponents,won,delta}
         "salary": 0.0,                          # set after first played season
         "salary_history": [],
         "status": "free_agent",                 # free_agent | rostered | rookie

@@ -86,6 +86,14 @@ def player_view(world: dict, pid: str) -> dict:
     pos_view = {k: {"games": v.get("games", 0), "wins": v.get("wins", 0),
                     "winrate": round(v["wins"] / v["games"], 3) if v.get("games") else None}
                 for k, v in pos.items()}
+
+    def _nick(x):
+        return world["players"][x]["nickname"] if x in world["players"] else x
+    soloq_games = [{"season": m.get("season"), "round": m.get("round"), "won": m.get("won"),
+                    "delta": m.get("delta"),
+                    "teammates": [_nick(x) for x in (m.get("teammates") or [])],
+                    "opponents": [_nick(x) for x in (m.get("opponents") or [])]}
+                   for m in reversed((p.get("soloq_matches") or [])[-20:])]
     return {
         "player_id": pid,
         "nickname": p.get("nickname", pid),
@@ -106,6 +114,7 @@ def player_view(world: dict, pid: str) -> dict:
         "generation": (p.get("lineage") or {}).get("generation", 0),
         "parent_id": (p.get("lineage") or {}).get("parent_id"),
         "position_stats": pos_view,
+        "soloq_games": soloq_games,
         "trophies": p.get("trophies", []),
     }
 
