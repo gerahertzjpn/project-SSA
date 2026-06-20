@@ -22,14 +22,35 @@ from src.world.world import get_player
 PLAYOFF_STAGE_ORDER = ("lb_r1", "lb_r2", "ub", "lb_final", "grand_final")
 
 
+_MAX_POSITION_BONUS = 80.0
+
+
+def _position_bonus(world: dict, team_id: str) -> float:
+    """A bonus from where the club FINISHED last season (1st = full, last = 0). Rewards league
+    position on top of Elo, normalized by league size so a champion gets the same regardless of
+    league size."""
+    hist = world.get("history") or []
+    if not hist:
+        return 0.0
+    last = hist[-1]
+    for key in ("upper_ranking", "lower_ranking"):
+        rk = last.get(key) or []
+        if team_id in rk and len(rk) > 1:
+            place = rk.index(team_id)
+            return (1.0 - place / (len(rk) - 1)) * _MAX_POSITION_BONUS
+    return 0.0
+
+
 def team_power(world: dict, team: dict) -> int:
-    """Team Power = the team's own RESULTS (Elo), NOTHING ELSE. It must not depend on the players'
-    SoloQ ratings: a club fields many players and can swap them mid-series, so strength is a property
-    of the CLUB's results, not its current roster's individual ratings. Elo is global across leagues
-    because it's one continuous per-club number, seeded at bootstrap from who earned promotion (a
-    result) and carried through promotion/relegation — so upper clubs generally rank above lower
-    ones without that being absolute."""
-    return round(float(team.get("elo", 1000.0)))
+    """Team Power = the club's RESULTS, never its players' ratings (a club fields many players and
+    swaps them mid-series — strength belongs to the CLUB). Two results-based parts:
+      - Elo: opponent-weighted match results — beating a STRONGER club gives more (Elo's
+        expected-score), so the quality of wins already counts;
+      - a league-FINISH bonus from last season's standing (1st > last).
+    Elo is global across leagues (one continuous per-club number, seeded at bootstrap from who
+    earned promotion, carried through promotion/relegation) so upper clubs generally outrank lower
+    ones — not absolutely; a strong lower club can overtake by results."""
+    return round(float(team.get("elo", 1000.0)) + _position_bonus(world, team["team_id"]))
 STAGE_LABEL = {
     "ub": "Верхняя сетка", "lb_r1": "Нижняя сетка — 1", "lb_r2": "Нижняя сетка — 2",
     "lb_final": "Финал нижней сетки", "grand_final": "Гранд-финал", "league": "Регулярка",
