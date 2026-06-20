@@ -278,6 +278,21 @@
       roster: ts.roster.map((pid) => playerView(pById[pid])),
       record: { series_wins: ts.rec.sw, series_losses: ts.rec.sl, maps_won: ts.rec.mw, maps_lost: ts.rec.ml } };
   }
+  function playerPage(pid) {
+    const p = pById[pid]; if (!p) return null;
+    const base = playerView(p);
+    base.team_history = p.teamId
+      ? Array.from({ length: CUR + 1 }, (_, s) => ({ season: s, team_id: p.teamId,
+          team: tname(p.teamId), role: p.role, result: "" }))
+      : [];
+    base.salary = p.teamId ? Math.round((p.base - 860) / 2.2) : 0;
+    base.salary_history = [];
+    base.lineage = { origin: p.role === "streamer" ? "streamer" : "rookie_fork",
+      generation: p.gen, parent_id: null, parent: null };
+    base.official_games = Math.round(p.games * 0.4);
+    base.seasons_played = CUR + 1;
+    return base;
+  }
   function overview() {
     const ids = Object.keys(snap().teamSnap);
     const reserves = players.filter((p) => p.reserve).map(playerView);
@@ -350,6 +365,7 @@
     if (path === "/draft") return draftView();
     if (path === "/training") return { jobs: showTraining ? snaps[Math.max(0, CUR - 1)].training : [] };
     if (path.startsWith("/team/")) return { season: CUR, team: teamView(path.slice("/team/".length)) };
+    if (path.startsWith("/player/")) return { player: playerPage(path.slice("/player/".length)) };
     return {};
   };
 })();

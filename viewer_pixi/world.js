@@ -256,7 +256,7 @@ function renderRatings() {
   el("panel-ratings").querySelectorAll("[data-fac]").forEach((b) =>
     b.addEventListener("click", () => { state.ratingFaction = b.dataset.fac; renderRatings(); }));
   el("panel-ratings").querySelectorAll(".rtrow").forEach((r) =>
-    r.addEventListener("click", () => togglePlayerDetail(r)));
+    r.addEventListener("click", () => openPlayer(r.dataset.pid)));
 }
 function togglePlayerDetail(row) {
   const next = row.nextElementSibling;
@@ -288,6 +288,51 @@ function togglePlayerDetail(row) {
     `</div>` : "") +
   `</div></td>`;
   row.after(tr);
+}
+
+// --------------------------------------------------------------------------- //
+// Player personal page (modal) — full detailed history
+// --------------------------------------------------------------------------- //
+async function openPlayer(pid) {
+  show("playerModal", true);
+  el("plBody").innerHTML = `<div class="muted loading">Загрузка…</div>`;
+  try { renderPlayerPage((await api(`/player/${pid}`)).player); }
+  catch (e) { el("plBody").innerHTML = `<div class="result-error">Ошибка: ${esc(e.message)}</div>`; }
+}
+function renderPlayerPage(p) {
+  const pos = Object.entries(p.position_stats || {}).map(([k, v]) =>
+    `<span class="pp-pos">${k}: <b>${v.winrate != null ? Math.round(v.winrate * 100) + "%" : "—"}</b> <span class="muted">(${v.games}и)</span></span>`).join("");
+  const games = (p.soloq_games || []).map((g) =>
+    `<div class="sq-game ${g.won ? "w" : "l"}"><span class="sq-res">${g.won ? "W" : "L"}</span>` +
+    `<span class="sq-d ${g.delta >= 0 ? "up" : "down"}">${g.delta >= 0 ? "+" : ""}${g.delta}</span>` +
+    `<span class="sq-with">с: ${esc((g.teammates || []).join(", "))}</span>` +
+    `<span class="sq-vs">против: ${esc((g.opponents || []).join(", "))}</span></div>`).join("");
+  const teamHist = (p.team_history || []).length
+    ? `<div class="pp-timeline">${p.team_history.slice().reverse().map((h) =>
+        `<div class="pp-tl"><span class="pp-tl-s">С${h.season}</span>${emblem(h.team_id)}` +
+        `<span>${esc(h.team)}</span>${h.result ? `<span class="muted">· ${esc(h.result)}</span>` : ""}</div>`).join("")}</div>`
+    : `<div class="muted">Пока без клубной истории.</div>`;
+  const troph = (p.trophies || []).length
+    ? `🏆 ${p.trophies.map((t) => `S${t.season} ${esc(t.title)}`).join(", ")}` : "—";
+  el("plBody").innerHTML =
+    `<div class="pp-head">${factionChip(p.faction)}` +
+      `<div><div class="pp-nm">${esc(p.nickname)}</div>` +
+      `<div class="muted">${esc(p.archetype || "")} · ${p.role === "streamer" ? "стример" : "про"} · ${esc(teamLabelFA(p))}</div></div>` +
+      `<div class="pp-rating"><b>${p.rating}</b> ${deltaBadge(p.delta)}<span>рейтинг</span></div></div>` +
+    `<div class="pp-stats">` +
+      `<div class="pp-st"><b>${p.games}</b><span>игр</span></div>` +
+      `<div class="pp-st"><b>${p.official_games || 0}</b><span>офиц.</span></div>` +
+      `<div class="pp-st"><b>${p.seasons_played || 0}</b><span>сезонов</span></div>` +
+      `<div class="pp-st"><b>${p.generation || 0}</b><span>поколение</span></div>` +
+      `<div class="pp-st"><b>${p.salary || 0}</b><span>зарплата</span></div>` +
+    `</div>` +
+    `<div class="pp-row">Рейтинг по сезонам ${sparkline(p.rating_history, 260, 44)}</div>` +
+    `<div class="pp-row"><b>Позиции:</b> ${pos || "—"}</div>` +
+    `<div class="pp-row"><b>Нейронка:</b> <code>${esc(p.net_id || "—")}</code>` +
+      (p.lineage && p.lineage.parent ? ` · форк от ${esc(p.lineage.parent)} (G${p.lineage.generation})` : "") + `</div>` +
+    `<div class="pp-row"><b>Трофеи:</b> ${troph}</div>` +
+    `<h4>Клубная история</h4>${teamHist}` +
+    (games ? `<h4>Последние игры SoloQ</h4><div class="pd-soloq">${games}</div>` : "");
 }
 
 // --------------------------------------------------------------------------- //
@@ -362,7 +407,7 @@ function renderTeamPage(t) {
   if (!page) return;
   const rec = t.record || {};
   const roster = (t.roster || []).map((p) =>
-    `<div class="tp-player">${factionChip(p.faction)}` +
+    `<div class="tp-player" data-pid="${esc(p.player_id)}">${factionChip(p.faction)}` +
       `<span class="tpp-nm">${esc(p.nickname)}</span>` +
       `<span class="tpp-ar">${esc(p.archetype || "")}</span>` +
       `<span class="tpp-rr">${p.rating} ${deltaBadge(p.delta)}</span>` +
@@ -386,6 +431,8 @@ function renderTeamPage(t) {
     (t.trophies && t.trophies.length ? `<div class="tp-trophies">🏆 ${t.trophies.map((x) => `S${x.season} ${esc(x.title)}`).join(", ")}</div>` : "") +
     `<h4>Состав</h4><div class="tp-roster">${roster || "<em>пусто</em>"}</div>`;
   page.querySelector(".tp-close").addEventListener("click", () => page.classList.add("is-hidden"));
+  page.querySelectorAll(".tp-player").forEach((r) =>
+    r.addEventListener("click", () => openPlayer(r.dataset.pid)));
 }
 
 // --------------------------------------------------------------------------- //
@@ -719,6 +766,7 @@ function wireEvents() {
   el("osRun").addEventListener("click", submitOffseason);
   el("osCancel").addEventListener("click", () => show("osModal", false));
   el("chronClose").addEventListener("click", () => show("chronModal", false));
+  el("plClose").addEventListener("click", () => show("playerModal", false));
   ["osRounds", "osSlots", "osSlotS", "osRookN", "osRookS", "osFaN", "osFaS"].forEach((id) =>
     el(id).addEventListener("input", updateEta));
   el("openBtn").addEventListener("click", () => {

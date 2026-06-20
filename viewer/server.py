@@ -256,6 +256,14 @@ def start_world_advance_job(world_id: str) -> dict:
             open_line = commentary.season_open(world, llm=llm)      # 📻 broadcast: season open
             _set_world_job(job_id, phase="Группы + плей-офф (реальные матчи)…")
             summary = world_season.run_regular_season(world, play=play_fn)
+            for t in world["teams"].values():       # record each player's club this season (history)
+                for pid in t.get("roster", []):
+                    p = world["players"].get(pid)
+                    if p is None:
+                        continue
+                    h = p.setdefault("history", [])
+                    if not any(e.get("season") == summary["season"] and e.get("team_id") == t["team_id"] for e in h):
+                        h.append({"season": summary["season"], "team_id": t["team_id"], "role": p.get("role", "pro")})
             close_line = commentary.season_close(world, summary, llm=llm)   # 📻 champions + promo/releg
             # Season just PLAYED. The off-season (which the owner must run next) rolls to the next
             # season — so don't increment here (that was a double-roll). Gate via the phase.
@@ -494,6 +502,14 @@ def world_schedule_payload(world_id: str, season=None) -> dict:
 def world_draft_payload(world_id: str) -> dict:
     from src.world import views
     return views.draft_view(load_world(world_id))
+
+
+def world_player_payload(world_id: str, player_id: str) -> dict:
+    from src.world import views
+    w = load_world(world_id)
+    if player_id not in w["players"]:
+        raise KeyError(f"player {player_id!r} not in world")
+    return {"player": views.player_page(w, player_id)}
 
 
 def world_players_pool_payload() -> dict:
@@ -1149,6 +1165,13 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
         if world_team:
             try:
                 self._send_json(world_team_payload(world_team.group("wid"), world_team.group("tid")))
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error)}, status=404)
+            return
+        world_player = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/player/(?P<pid>[\w-]+)$", path)
+        if world_player:
+            try:
+                self._send_json(world_player_payload(world_player.group("wid"), world_player.group("pid")))
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error)}, status=404)
             return

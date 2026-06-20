@@ -119,6 +119,32 @@ def player_view(world: dict, pid: str) -> dict:
     }
 
 
+def player_page(world: dict, pid: str) -> dict:
+    """Everything for a player's personal page: the full card + his club history (which club each
+    season + result), salary history, lineage, trophies and recent SoloQ games."""
+    base = player_view(world, pid)
+    p = get_player(world, pid)
+
+    def _team(tid):
+        return world["teams"][tid]["name"] if tid in world.get("teams", {}) else tid
+    base["team_history"] = [{"season": h.get("season"), "team_id": h.get("team_id"),
+                             "team": _team(h.get("team_id")), "role": h.get("role"),
+                             "result": h.get("result")}
+                            for h in (p.get("history") or [])]
+    base["salary"] = round(float(p.get("salary", 0)))
+    base["salary_history"] = [round(float(s)) for s in (p.get("salary_history") or [])]
+    lin = p.get("lineage") or {}
+    parent = lin.get("parent_id")
+    base["lineage"] = {"origin": lin.get("origin"), "generation": lin.get("generation", 0),
+                       "parent_id": parent,
+                       "parent": (world["players"][parent]["nickname"]
+                                  if parent in world.get("players", {}) else parent)}
+    base["soloq_games"] = (base.get("soloq_games") or [])     # already last-20 from player_view
+    base["seasons_played"] = p.get("seasons_played", 0)
+    base["official_games"] = p.get("official_games", 0)
+    return base
+
+
 def ranked_players(world: dict, *, role: Optional[str] = None,
                    faction: Optional[str] = None) -> list[dict]:
     """Every player ranked by SoloQ rating (1 = best), with rank + per-season delta.

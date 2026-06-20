@@ -524,6 +524,31 @@ button.ghost.required { border-color: #2f6df0; color: #fff; background: #18222f;
 .dp-sub { color: #8493a4; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dp-rr { color: #8fb8ff; font-weight: 800; }
 
+/* Player personal page (modal) */
+.player-card { width: min(680px, 96vw); max-height: 88vh; overflow-y: auto; position: relative;
+  background: #11161d; border: 1px solid #2a323d; border-radius: 14px; padding: 20px 22px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .6); }
+.pl-close { position: absolute; top: 12px; right: 12px; padding: 4px 10px; }
+.pp-head { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; margin: 0 30px 14px 0; }
+.pp-nm { font-size: 20px; font-weight: 800; color: #fff; }
+.pp-rating { text-align: right; }
+.pp-rating b { font-size: 22px; color: #8fb8ff; }
+.pp-rating span { display: block; color: #8493a4; font-size: 11px; }
+.pp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(80px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.pp-st { background: #161b22; border: 1px solid #222a34; border-radius: 9px; padding: 8px; text-align: center; }
+.pp-st b { display: block; font-size: 16px; color: #8fb8ff; }
+.pp-st span { color: #8493a4; font-size: 10px; }
+.pp-row { font-size: 13px; color: #cdd9e6; margin: 8px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pp-row code { color: #8fb8ff; font-family: ui-monospace, monospace; font-size: 11px; }
+.pp-pos { margin-right: 12px; color: #aeb9c6; }
+.player-card h4 { margin: 14px 0 8px; color: #cdd9e6; }
+.pp-timeline { display: flex; flex-direction: column; gap: 4px; }
+.pp-tl { display: flex; align-items: center; gap: 8px; font-size: 13px; background: #161b22;
+  border-radius: 7px; padding: 6px 9px; }
+.pp-tl-s { color: #6b7886; font-weight: 800; }
+.tp-player { cursor: pointer; }
+.tp-player:hover { border-color: #2f6df0; }
+
 /* Managers tab */
 .mgr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
 .mgr-card { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start;
