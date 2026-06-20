@@ -35,6 +35,9 @@ const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function fetchJson(url, opts) {
+  // PREVIEW MODE: a hardcoded data source (world_preview.js) serves every endpoint, so the exact
+  // same renderers run with zero server / matches / requests. Real World is untouched.
+  if (window.__PREVIEW__) return window.__PREVIEW__(url, opts);
   const r = await fetch(url, opts);
   const body = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
@@ -692,17 +695,7 @@ function applyLock(ui) {
   } else document.body.classList.remove("world-locked");
 }
 
-async function init() {
-  try {
-    const info = await fetchJson("/api/world/info");
-    applyLock(info.ui);
-    const data = await fetchJson("/api/world/franchises");
-    state.cards = data.franchises || [];
-    await refreshWorldList(null);
-  } catch (e) {
-    el("teamGrid").innerHTML = `<div class="result-error">Не удалось загрузить: ${esc(e.message)}</div>`;
-    return;
-  }
+function wireEvents() {
   el("startBtn").addEventListener("click", openSelModal);
   el("selCreate").addEventListener("click", createWithSelection);
   el("selCancel").addEventListener("click", () => show("selModal", false));
@@ -728,6 +721,27 @@ async function init() {
   });
   document.querySelectorAll("#tabbar .tab").forEach((b) =>
     b.addEventListener("click", () => switchTab(b.dataset.tab)));
+}
+
+async function init() {
+  if (window.__PREVIEW__) {                 // hardcoded preview: jump straight into a ready world
+    wireEvents();
+    try { state.cards = (await fetchJson("/api/world/franchises")).franchises || []; } catch (e) { /* ignore */ }
+    show("newSection", false);
+    await openWorld("preview");
+    return;
+  }
+  try {
+    const info = await fetchJson("/api/world/info");
+    applyLock(info.ui);
+    const data = await fetchJson("/api/world/franchises");
+    state.cards = data.franchises || [];
+    await refreshWorldList(null);
+  } catch (e) {
+    el("teamGrid").innerHTML = `<div class="result-error">Не удалось загрузить: ${esc(e.message)}</div>`;
+    return;
+  }
+  wireEvents();
   refreshPicker();
 }
 

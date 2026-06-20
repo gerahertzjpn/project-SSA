@@ -12,17 +12,147 @@
     <header class="world-head">
       <a class="brand-menu" href="./home.html" title="Главное меню" aria-label="Главное меню">☰</a>
       <div class="world-title">
-        <h1>World — предпросмотр <span class="wip-badge">debug</span></h1>
-        <p>Захардкоженный полный цикл (сезоны 0 · 1 · 2). Никаких запросов: LLM, тренировки, аукционы и
-          межсезонья — фиксированные; счёт матчей — случайный. Только чтобы посмотреть, как это выглядит.</p>
+        <h1>World — предпросмотр <span class="wip-badge">demo</span></h1>
+        <p>Полная копия World, всё захардкожено: никаких матчей, запросов и тренировок. Сезоны 0·1·2
+          уже «отыграны», решения приняты за тебя и подсвечены. Жми «Сыграть сезон» / «Межсезонье».</p>
+      </div>
+      <div class="world-open">
+        <select id="worldSelect" class="world-select" title="Открыть существующий мир"></select>
+        <button id="openBtn" class="ghost" disabled>Открыть</button>
+        <button id="newBtn" class="ghost">+ Новый</button>
       </div>
     </header>
 
-    <div id="stageBanner" class="preview-banner"></div>
-    <section id="previewMain" class="preview-main">Загрузка…</section>
-    <div id="previewNav" class="preview-nav"></div>
+    <div class="world-lock" style="background:#14202c;border-color:#244055;color:#bcd2ea">
+      🧪 <strong>Демо-предпросмотр.</strong> Всё фиктивное и случайно сгенерированное «как будто
+      реально просимулировано» — чтобы увидеть, как устроен World. Реальная вкладка работает на нейронках.
+    </div>
+
+    <div id="lockBanner" class="world-lock is-hidden"><span id="lockNote"></span></div>
+
+    <section id="newSection" class="world-new is-hidden">
+      <div class="world-new-head">
+        <h2>Новый World — выбери команды</h2>
+        <div class="world-new-controls">
+          <span id="selCount" class="sel-count">0 / 22</span>
+          <button id="startBtn" class="primary" disabled>Создать World</button>
+        </div>
+      </div>
+      <div id="teamGrid" class="team-grid"></div>
+    </section>
+
+    <section id="jobPanel" class="world-job is-hidden">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="job-text">
+        <strong id="jobTitle">Работаем…</strong>
+        <span id="jobPhase"></span>
+        <span id="jobTimer" class="job-timer"></span>
+      </div>
+    </section>
+
+    <section id="resultPanel" class="world-result is-hidden"></section>
+
+    <section id="worldView" class="world-view is-hidden">
+      <div class="view-head">
+        <div class="view-title">
+          <h2 id="viewName">World</h2>
+          <span id="viewSeason" class="view-season"></span>
+          <span id="viewCounts" class="view-counts"></span>
+        </div>
+        <div class="view-actions">
+          <button id="reservesBtn" class="ghost is-hidden">🎒 Резерв</button>
+          <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
+          <button id="offseasonBtn" class="ghost">⟳ Межсезонье</button>
+        </div>
+      </div>
+
+      <nav id="tabbar" class="tabbar">
+        <button class="tab is-active" data-tab="leagues">🏆 Лиги</button>
+        <button class="tab" data-tab="ratings">📊 Рейтинг</button>
+        <button class="tab" data-tab="schedule">📅 Расписание</button>
+        <button class="tab" data-tab="teams">🛡️ Команды</button>
+        <button class="tab" data-tab="draft">✍️ Драфт</button>
+        <button class="tab" data-tab="broadcast">📻 Эфир</button>
+        <button class="tab" data-tab="history">📜 История</button>
+      </nav>
+
+      <div id="trainingPanel" class="training-panel is-hidden"></div>
+
+      <div class="tab-panels">
+        <div id="panel-leagues" class="tab-panel"></div>
+        <div id="panel-ratings" class="tab-panel is-hidden"></div>
+        <div id="panel-schedule" class="tab-panel is-hidden"></div>
+        <div id="panel-teams" class="tab-panel is-hidden"></div>
+        <div id="panel-draft" class="tab-panel is-hidden"></div>
+        <div id="panel-broadcast" class="tab-panel is-hidden"></div>
+        <div id="panel-history" class="tab-panel is-hidden"></div>
+      </div>
+    </section>
+
+    <div id="osModal" class="os-overlay is-hidden">
+      <div class="os-card">
+        <h3>⟳ Межсезонье — настройки</h3>
+        <p class="muted">В демо настройки уже выбраны за тебя (подсвечено). Жми «Запустить».</p>
+        <div class="os-fields">
+          <label>Раундов SoloQ<input id="osRounds" type="number" min="1" max="30" value="10"></label>
+          <label>Слотов аукциона<input id="osSlots" type="number" min="0" max="20" value="6"></label>
+          <label>Шагов на слот<input id="osSlotS" type="number" min="800000" step="100000" value="1000000"></label>
+          <label>Новичков (форк)<input id="osRookN" type="number" min="0" max="12" value="3"></label>
+          <label>Шагов на новичка<input id="osRookS" type="number" min="800000" step="100000" value="1000000"></label>
+          <label>Свободных агентов<input id="osFaN" type="number" min="0" max="10" value="2"></label>
+          <label>Шагов на агента<input id="osFaS" type="number" min="800000" step="100000" value="800000"></label>
+        </div>
+        <div id="osEta" class="os-eta"></div>
+        <div class="os-actions">
+          <button id="osRun" class="primary">Запустить межсезонье</button>
+          <button id="osCancel" class="ghost">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="selModal" class="os-overlay is-hidden">
+      <div class="os-card sel-card">
+        <h3>Кто выйдет в сезон 0</h3>
+        <p class="muted">В демо выбор сделан за тебя — отмеченные выйдут точно, остальные добраны случайно.</p>
+        <div class="sel-controls">
+          <label>Всего дебютирует (X)<input id="selX" type="number" min="66" max="90" value="78"></label>
+          <span id="selNamed" class="muted">отмечено: 0</span>
+          <span class="muted" id="selHint"></span>
+        </div>
+        <div id="selList" class="sel-list"></div>
+        <div class="os-actions">
+          <button id="selCreate" class="primary">Создать World</button>
+          <button id="selCancel" class="ghost">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="resModal" class="os-overlay is-hidden">
+      <div class="os-card sel-card">
+        <h3>Резерв — ввести новичков</h3>
+        <p class="muted">Отметь резервистов, чтобы ввести их в этом сезоне (попадут в пул новичков).</p>
+        <div id="resList" class="sel-list">—</div>
+        <div class="os-actions">
+          <button id="resIntro" class="primary">Ввести выбранных</button>
+          <button id="resCancel" class="ghost">Закрыть</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="chronModal" class="chron-overlay is-hidden">
+      <div class="chron-card">
+        <div class="chron-head">
+          <strong>📻 Хроника межсезонья</strong>
+          <span class="chron-sim">воспроизведение событий · симуляция</span>
+          <button id="chronClose" class="ghost">✕</button>
+        </div>
+        <div id="chronFeed" class="chron-feed"></div>
+      </div>
+    </div>
   </main>
 
+  <!-- Hardcoded data source FIRST (defines window.__PREVIEW__), then the real renderers. -->
   <script src="./world_preview.js"></script>
+  <script src="./world.js"></script>
 </body>
 </html>
