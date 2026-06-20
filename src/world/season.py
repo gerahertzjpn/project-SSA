@@ -358,10 +358,16 @@ def bootstrap_world(world: dict, *, seed: Optional[int] = None,
                 [r["team_id"] for r in brackets.standings(z_ids, brackets.play_group(z_ids, play))],
                 play)
 
-    # Season 0 does not persist Elo — reset to start.
+    # Season 0 doesn't persist per-series Elo, but the league a club EARNED (promotion IS a result)
+    # seeds its starting Power, so Elo is GLOBAL from day one — promoted (upper) clubs start above
+    # lower ones, then real results refine it. Within a tier it's flat (Season 1+ differentiates).
+    # A strong lower club can still overtake a weak upper one by out-performing (>seed gap) — not
+    # an absolute rule. Power depends ONLY on results, never on player ratings.
+    UPPER_SEED = team_elo.START_ELO + 120.0
     for t in world["teams"].values():
-        t["elo"] = team_elo.START_ELO
-        t["elo_history"] = []
+        seed = UPPER_SEED if t["league"] == "upper" else team_elo.START_ELO
+        t["elo"] = seed
+        t["elo_history"] = [round(seed)]
 
     # Seed treasuries for Season 1.
     for t in world["teams"].values():
