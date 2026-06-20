@@ -163,7 +163,7 @@ function switchTab(name) {
   state.tab = name;
   document.querySelectorAll("#tabbar .tab").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.tab === name));
-  ["leagues", "ratings", "schedule", "teams", "draft", "broadcast", "history"].forEach((t) =>
+  ["leagues", "ratings", "schedule", "teams", "draft", "broadcast", "managers", "history"].forEach((t) =>
     show(`panel-${t}`, t === name));
   loadTab(name);
 }
@@ -171,6 +171,7 @@ async function loadTab(name) {
   const panel = el(`panel-${name}`);
   if (name === "history") return renderHistory(state.world ? state.world.history : []);
   if (name === "broadcast") return renderBroadcast(state.world ? state.world.commentary : []);
+  if (name === "managers") return renderManagers(state.world ? state.world.manager_comments : []);
   panel.innerHTML = `<div class="muted loading">Загрузка…</div>`;
   try {
     if (name === "leagues") renderLeagues((await api("/leagues")).leagues);
@@ -424,6 +425,23 @@ function renderDraft(data) {
       `</div>`).join("")}</div></div>`).join("");
   el("panel-draft").innerHTML =
     `<h3>${kind} <span class="muted">сезон ${data.season} · ${picks.length} пиков</span></h3>${html}`;
+}
+
+// --------------------------------------------------------------------------- //
+// Tab: 💬 Менеджеры (per-manager comments)
+// --------------------------------------------------------------------------- //
+function renderManagers(comments) {
+  comments = comments || [];
+  if (!comments.length) {
+    el("panel-managers").innerHTML = `<div class="muted">Комментарии появятся после межсезонья.</div>`;
+    return;
+  }
+  el("panel-managers").innerHTML =
+    `<h3>Слово менеджеров <span class="muted">межсезонье</span></h3>` +
+    `<div class="mgr-grid">${comments.slice().reverse().map((c) =>
+      `<div class="mgr-card">${emblem(c.team_id, "lg")}` +
+      `<div class="mgr-body"><div class="mgr-head">${esc(c.team)} <span class="muted">· ${esc(c.manager)}</span></div>` +
+      `<div class="mgr-text">«${esc(c.text)}»</div></div></div>`).join("")}</div>`;
 }
 
 // --------------------------------------------------------------------------- //

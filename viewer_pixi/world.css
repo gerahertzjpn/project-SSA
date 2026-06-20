@@ -511,6 +511,13 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .dp-sub { color: #8493a4; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dp-rr { color: #8fb8ff; font-weight: 800; }
 
+/* Managers tab */
+.mgr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; }
+.mgr-card { display: grid; grid-template-columns: 40px 1fr; gap: 12px; align-items: start;
+  background: #161b22; border: 1px solid #222a34; border-radius: 10px; padding: 12px 14px; }
+.mgr-head { font-weight: 800; color: #cdd9e6; font-size: 13px; margin-bottom: 4px; }
+.mgr-text { color: #d6e0ea; font-size: 13px; line-height: 1.5; font-style: italic; }
+
 /* Broadcast (commentator) tab */
 .broadcast { display: flex; flex-direction: column; gap: 8px; }
 .bc-host { color: #ff8a5c; font-weight: 800; font-size: 13px; margin-bottom: 4px; }

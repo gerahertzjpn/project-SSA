@@ -318,6 +318,7 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None) -> di
                 fa_budget=fa_budget, training_config=cfg, auction_slots=slots, soloq_rounds=rounds)
             from src.world import commentary
             commentary.offseason_note(world, report, llm=llm)       # 📻 off-season recap
+            commentary.manager_comments(world, llm=llm)             # 💬 one comment per manager
             save_world(world)
             events = [e for e in (report.get("events") or []) if isinstance(e, dict) and e.get("msg")]
             chronicle = [{"seq": e.get("seq"), "kind": e.get("kind"), "msg": e.get("msg"),
@@ -451,6 +452,7 @@ def world_view_payload(world_id: str) -> dict:
             "phase": w.get("phase"), "upper": upper, "lower": lower, "ladder": ladder,
             "history": history, "reserves": reserves, "emblems": emblems,
             "commentary": (w.get("commentary") or [])[-40:],
+            "manager_comments": (w.get("manager_comments") or [])[-22:],
             "counts": {"players": len(players), "free_agents": len(w.get("free_agents", [])),
                        "streamers": len(w.get("streamers", [])), "rostered": len(pid_team),
                        "reserves": len(reserves)}}

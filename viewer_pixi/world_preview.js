@@ -21,6 +21,16 @@
   const ARCH = ["skirmisher", "architect", "sentinel", "warden", "berserker"];
   const STRAT = ["standard", "core_rush", "all_in", "turtle", "macro", "baron"];
   const OPS = ["skill_up", "meta_adapt", "style_spec", "obedience_tune", "teamplay"];
+  const MGR_T = [
+    "Сезон {s} — наш. Состав готов, верю в {p}. {rival} сильны, но мы дадим бой.",
+    "Делаем ставку на агрессию. {p} в форме, остальные подтянутся.",
+    "Не лучшее межсезонье по деньгам, но цель прежняя — титул. Будем грызть.",
+    "Скаутили {rival} — у них дыры. {p} их разберёт.",
+    "Молодёжь голодная, ветераны злые. Иначе зачем всё это.",
+    "Рынок дорогой. Сохранили костяк, {p} — наш лидер. Идём за результатом.",
+    "Уважаю {rival}, но боюсь только себя. Сезон {s} покажет, кто чего стоит.",
+    "Перестроились. Риск есть, но без риска нет титулов.",
+  ];
   const PRE = ["Ash", "Bly", "Cor", "Dra", "Eko", "Fen", "Gax", "Hel", "Ira", "Jot", "Kor", "Lyx",
     "Mir", "Nyx", "Orb", "Pyr", "Quo", "Rho", "Syl", "Tau", "Umb", "Vex", "Wol", "Xan", "Ymi", "Zed"];
   const SUF = ["an", "ix", "or", "us", "ai", "en", "ra", "os", "yn", "el", "ar", "io", "ux", "is",
@@ -184,9 +194,16 @@
     const training = trainPicks.map((tp, i) => ({ job_id: `s${s}j${i}`, world_id: WID, op: tp.op,
       player: tp.player, done: 1000000, total: 1000000, status: "done" }));
 
+    const managerComments = teams.map((t, i) => {
+      const rp = byId[t.team_id].roster; const star = rp.length ? pById[rp[0]].nickname : "лидер";
+      const rivals = teams.filter((x) => x.league === t.league && x.team_id !== t.team_id);
+      const rival = rivals.length ? rivals[0].name : "соперники";
+      return { season: s, team_id: t.team_id, team: t.name, manager: `Менеджер ${t.abbrev}`,
+        text: MGR_T[(i + s) % MGR_T.length].replace(/\{s\}/g, s).replace(/\{p\}/g, star).replace(/\{rival\}/g, rival) };
+    });
     snaps.push({ num: s, teamSnap, upStand, aStand, zStand, fixtures, bracket: { upper: upPlay.cols, lower: loPlay.cols },
       champ: { upper_champion: upperChamp, lower_champion: lowerChamp, promoted, relegated },
-      commentary, chronicle, training, draft: s === 0 ? { season: 0, kind: "bootstrap", picks: draftPicks.slice() } : null });
+      commentary, chronicle, training, managerComments, draft: s === 0 ? { season: 0, kind: "bootstrap", picks: draftPicks.slice() } : null });
 
     // roll over
     byId[upperChamp].titles++; byId[upperChamp].trophies.push({ season: s, title: "Чемпион верхней" });
@@ -269,8 +286,10 @@
       upper_champion: tname(s.champ.upper_champion), lower_champion: tname(s.champ.lower_champion) }));
     const commentary = [];
     snaps.slice(0, CUR + 1).forEach((s) => { commentary.push(s.commentary[0]); if (s.num < CUR) commentary.push(s.commentary[1]); });
+    const managers = (snaps[Math.max(0, CUR - 1)] || snap()).managerComments || [];
     return { world_id: WID, name: "Demo World", season: CUR, phase: "regular",
       upper: [], lower: [], ladder: [], history, reserves, commentary, emblems: EMBLEMS,
+      manager_comments: CUR > 0 ? managers : [],
       counts: { players: players.length,
         free_agents: players.filter((p) => p.role === "pro" && !p.teamId && !p.reserve).length,
         streamers: players.filter((p) => p.role === "streamer").length,

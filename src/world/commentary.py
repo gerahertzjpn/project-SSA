@@ -66,6 +66,53 @@ def season_close(world: dict, summary: dict, *, llm=None, feed: Optional[list] =
                              f"повышены {promo}, вылетают {releg}."), feed=feed)
 
 
+_MGR_TEMPLATES = [
+    "Сезон {s} — наш. Состав готов, верю в {p}. {rival} сильны, но мы дадим бой.",
+    "Делаем ставку на {trait}. {p} в отличной форме, остальные подтянутся.",
+    "Не лучшее межсезонье по деньгам, но цель прежняя — {goal}. Будем грызть.",
+    "Скаутили {rival} — у них дыры. Подготовим план, {p} их разберёт.",
+    "Молодёжь голодная, ветераны злые. {goal} — иначе зачем всё это.",
+    "Рынок был дорогим. Сохранили костяк, {p} — наш лидер. Идём за результатом.",
+    "Уважаю {rival}, но боюсь только себя. Сезон {s} покажет, кто чего стоит.",
+    "Перестроились под {trait}. Риск есть, но без риска нет титулов.",
+]
+_TRAITS = {"aggression": "агрессию", "frugality": "дисциплину и экономику",
+           "youth_focus": "молодёжь", "patience": "терпеливый контроль", "loyalty": "костяк"}
+
+
+def manager_comments(world: dict, *, llm=None, feed: Optional[list] = None) -> list:
+    """One short comment from each club's manager this off-season (plans / hopes / opinions).
+    Template-driven (varied by the manager's character) + optionally rewritten by the LLM. Stored
+    on world['manager_comments'] for the Менеджеры tab."""
+    from src.world import manager as mgr
+    season = world.get("season", 0)
+    out = []
+    for t in world["teams"].values():
+        if len(t.get("roster", [])) < 3:
+            continue
+        prof = mgr.natural_profile(t["franchise_id"])
+        league = t.get("league")
+        rivals = [x for x in world["teams"].values()
+                  if x.get("league") == league and x["team_id"] != t["team_id"]]
+        rival = (sorted(rivals, key=lambda x: -x.get("elo", 0))[0]["name"] if rivals else "соперники")
+        star = next((world["players"][pid]["nickname"] for pid in t.get("roster", [])
+                     if pid in world["players"]), "наш лидер")
+        trait = _TRAITS[max(_TRAITS, key=lambda k: getattr(prof, k, 0.0))]
+        goal = "титул" if league == "upper" else "повышение в верхнюю лигу"
+        idx = (sum(ord(c) for c in t["team_id"]) + season) % len(_MGR_TEMPLATES)
+        text = _MGR_TEMPLATES[idx].format(s=season, p=star, rival=rival, trait=trait, goal=goal)
+        if llm is not None:
+            try:
+                text = _enhance(llm, text, f"Менеджер клуба {t['name']} перед сезоном {season}. "
+                                f"Звезда: {star}. Главный соперник: {rival}. Уклон: {trait}. Цель: {goal}.")
+            except Exception as exc:
+                events.fallback(feed, f"comment:{t['team_id']}", str(exc))
+        out.append({"season": season, "team_id": t["team_id"], "team": t["name"],
+                    "manager": t.get("manager") or "Менеджер", "text": text})
+    world["manager_comments"] = (world.get("manager_comments", []) + out)[-66:]
+    return out
+
+
 def offseason_note(world: dict, report: dict, *, llm=None, feed: Optional[list] = None) -> str:
     st = report.get("stages", {})
     auc = ((st.get("training", {}) or {}).get("auction") or {}).get("awarded", 0)
