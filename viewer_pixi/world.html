@@ -59,13 +59,17 @@
           <span id="viewCounts" class="view-counts"></span>
         </div>
         <div class="view-actions">
+          <span id="liveProgress" class="live-progress is-hidden"></span>
+          <button id="nextDayBtn" class="primary is-hidden">▶ Следующий день</button>
           <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
+          <button id="liveStartBtn" class="ghost">📅 По дням</button>
           <button id="offseasonBtn" class="ghost">⟳ Межсезонье</button>
         </div>
       </div>
 
       <nav id="tabbar" class="tabbar">
         <button class="tab is-active" data-tab="leagues">🏆 Лиги</button>
+        <button class="tab" data-tab="live">🔴 LIVE</button>
         <button class="tab" data-tab="matrix">🆚 Очные</button>
         <button class="tab" data-tab="ratings">📊 Рейтинг</button>
         <button class="tab" data-tab="schedule">📅 Расписание</button>
@@ -81,6 +85,7 @@
 
       <div class="tab-panels">
         <div id="panel-leagues" class="tab-panel"></div>
+        <div id="panel-live" class="tab-panel is-hidden"></div>
         <div id="panel-matrix" class="tab-panel is-hidden"></div>
         <div id="panel-ratings" class="tab-panel is-hidden"></div>
         <div id="panel-schedule" class="tab-panel is-hidden"></div>

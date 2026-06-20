@@ -559,6 +559,47 @@ button.ghost.required { border-color: #2f6df0; color: #fff; background: #18222f;
 .dp-sub { color: #8493a4; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dp-rr { color: #8fb8ff; font-weight: 800; }
 
+/* Day-by-day LIVE season */
+.live-progress { font-weight: 800; color: #ff8a8a; font-size: 13px; align-self: center;
+  background: rgba(255, 138, 138, .1); border: 1px solid #4a2a2a; border-radius: 999px; padding: 4px 12px; }
+.lv-empty { max-width: 560px; }
+.lv-empty p { color: #cdd9e6; line-height: 1.5; }
+.lv-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 12px 0 4px; }
+.lv-day { font-size: 15px; color: #e6edf4; }
+.lv-day b { color: #ff8a8a; font-size: 18px; }
+.lv-prog { flex: 1; min-width: 160px; height: 8px; background: #161d27; border-radius: 999px; overflow: hidden; }
+.lv-prog-fill { height: 100%; background: linear-gradient(90deg, #2f6df0, #6ee7a8); transition: width .4s; }
+.lv-done { color: #6ee7a8; font-weight: 700; }
+.lv-broadcast:empty { display: none; }
+.lv-broadcast { margin: 10px 0; }
+.bcast { background: #0d1117; border: 1px solid #2a323d; border-radius: 12px; padding: 16px 18px; }
+.bcast-head { color: #cdd9e6; font-size: 14px; margin-bottom: 8px; }
+.bcast-score { font-size: 40px; font-weight: 900; color: #fff; text-align: center; letter-spacing: 4px; }
+.bcast-vs { color: #6b7886; margin: 0 8px; }
+.bcast-maps { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin-top: 10px; }
+.bc-map { font-size: 12px; font-weight: 700; border-radius: 6px; padding: 3px 9px; animation: bcpop .3s ease; }
+.bc-map.h { background: rgba(110, 231, 168, .12); color: #6ee7a8; }
+.bc-map.a { background: rgba(143, 184, 255, .12); color: #8fb8ff; }
+@keyframes bcpop { from { transform: scale(.7); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.bcast-final { text-align: center; margin-top: 12px; font-size: 16px; font-weight: 800; color: #ffd58a; }
+.lv-today { font-size: 12px; margin: 6px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lv-res { background: #161b22; border-radius: 6px; padding: 2px 8px; color: #cdd9e6; }
+.lv-fxs { display: flex; flex-direction: column; gap: 5px; }
+.lv-fx { display: flex; align-items: center; gap: 9px; background: #11161d; border: 1px solid #1a212b;
+  border-radius: 8px; padding: 6px 11px; font-size: 13px; flex-wrap: wrap; }
+.lv-fx-stage { color: #8493a4; font-size: 11px; min-width: 120px; }
+.lv-fx-tm { display: inline-flex; align-items: center; gap: 5px; font-weight: 800; color: #cdd9e6; }
+.lv-fx-tm .tlogo svg { width: 18px; height: 18px; }
+.lv-vs { color: #6b7886; }
+.lv-watch { margin-left: auto; padding: 3px 11px; font-size: 12px; }
+.lv-brackets { display: flex; gap: 20px; flex-wrap: wrap; }
+.br-tbd { color: #3a4654; font-weight: 800; }
+.lv-tbls { display: flex; gap: 16px; flex-wrap: wrap; }
+.lv-tbl { flex: 1; min-width: 230px; }
+.lv-tbl h5, .lv-brackets h5 { margin: 0 0 6px; color: #8493a4; font-size: 12px; }
+.lv-mini { margin-top: 0; }
+.lv-mini td { padding: 5px 7px; }
+
 /* Трансферы — off-season transactions window */
 .tx-head { font-size: 16px; font-weight: 800; color: #e6edf4; margin: 12px 0 6px; }
 .tx-sec { margin-top: 16px; }

@@ -389,6 +389,7 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     cal.skip_month(world, 1)
     world["season"] += 1
     world["phase"] = "regular"
+    world.pop("live_season", None)        # the finished day-by-day season belongs to the past one
     for t in world["teams"].values():
         t["transfer_requests_used"] = 0
     report["stages"]["advance"] = {"month": world["month"], "next_season": world["season"]}

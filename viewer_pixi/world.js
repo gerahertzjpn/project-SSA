@@ -44,6 +44,9 @@ async function fetchJson(url, opts) {
   return body;
 }
 const api = (path) => fetchJson(`/api/world/${state.worldId}${path}`);
+const apiPost = (path, body) => fetchJson(`/api/world/${state.worldId}${path}`,
+  { method: "POST", headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined });
 
 function factionChip(f) {
   const meta = FACTION[f] || { label: f || "—", color: "#9aa7b4" };
@@ -163,13 +166,14 @@ function switchTab(name) {
   state.tab = name;
   document.querySelectorAll("#tabbar .tab").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.tab === name));
-  ["leagues", "matrix", "ratings", "schedule", "teams", "draft", "transfers", "broadcast", "managers", "history"].forEach((t) =>
+  ["leagues", "live", "matrix", "ratings", "schedule", "teams", "draft", "transfers", "broadcast", "managers", "history"].forEach((t) =>
     show(`panel-${t}`, t === name));
   loadTab(name);
 }
 async function loadTab(name) {
   const panel = el(`panel-${name}`);
   if (name === "history") return renderHistory(state.world ? state.world.history : []);
+  if (name === "live") return renderLive(state.world ? state.world.live : null);
   if (name === "transfers") return renderOffseasonTx(state.world ? state.world.last_offseason : null);
   if (name === "broadcast") return renderBroadcast(state.world ? state.world.commentary : []);
   if (name === "managers") return renderManagers(state.world ? state.world.manager_comments : []);
@@ -666,7 +670,18 @@ function renderHeader(w) {
     (c.reserves ? ` · ${c.reserves} в резерве` : "");
   // Off-season is MANDATORY between seasons: after a played season you must run it before the next.
   const due = w.phase === "offseason_due";
+  const live = w.live && w.live.active;        // a day-by-day season is in progress
+  show("nextDayBtn", !!live);
+  show("liveProgress", !!live);
+  show("advanceBtn", !live);
+  show("liveStartBtn", !live && !due);
+  if (live) {
+    const ph = w.live.phase === "playoff" ? "плей-офф" : "регулярка";
+    el("liveProgress").textContent = `🔴 День ${w.live.day}/${w.live.total_days} · ${ph}`;
+    el("nextDayBtn").disabled = state.busy;
+  }
   el("advanceBtn").disabled = state.busy || due;
+  el("liveStartBtn").disabled = state.busy || due;
   el("offseasonBtn").disabled = state.busy || !due;
   el("offseasonBtn").classList.toggle("required", due && !state.busy);
   el("advanceBtn").title = due ? "Сначала проведите межсезонье" : "";
@@ -761,6 +776,156 @@ async function advance() {
   } catch (e) {
     flashResult(`<div class="result-error">Ошибка сезона: ${esc(e.message)}</div>`);
   } finally { el("advanceBtn").disabled = state.busy; }
+}
+
+// --------------------------------------------------------------------------- //
+// Day-by-day LIVE season — play one day at a time + watch a match live (no scrub)
+// --------------------------------------------------------------------------- //
+const STAGE_LBL = { ub: "Верхняя сетка", lb: "Нижняя сетка", lb_r1: "Нижняя · раунд 1",
+  lb_r2: "Нижняя · раунд 2", lb_final: "Финал нижней сетки", grand_final: "Гранд-финал",
+  league: "Регулярка" };
+
+async function startLive() {
+  if (!state.worldId || state.busy) return;
+  state.busy = true; renderHeader(state.world);
+  try {
+    const { live } = await apiPost("/live/start");
+    state.world.live = live; state.world.phase = "live";
+    state.lastBroadcast = null;
+    switchTab("live");
+  } catch (e) { flashResult(`<div class="result-error">${esc(e.message)}</div>`); }
+  finally { state.busy = false; renderHeader(state.world); }
+}
+
+async function playNextDay() {
+  if (state.busy || !state.world || !state.world.live) return;
+  state.busy = true; el("nextDayBtn").disabled = true; renderHeader(state.world);
+  try {
+    const { result, live } = await apiPost("/live/day");
+    state.world.live = live;
+    if (!live.active) {                          // last day played -> season is finalised
+      state.world.phase = "offseason_due";
+      flashResult(`<div class="season-done">Сезон сыгран по дням! 🏆 ${esc((live.done || {}).upper_champion || "")} — пора в межсезонье.</div>`);
+      await openWorld(state.worldId);
+      switchTab("live");
+      return;
+    }
+    renderLive(live, result);
+  } catch (e) { flashResult(`<div class="result-error">${esc(e.message)}</div>`); }
+  finally { state.busy = false; renderHeader(state.world); }
+}
+
+async function watchMatch(home, away) {
+  if (state.busy) return;
+  state.busy = true; renderHeader(state.world);
+  const bc = document.getElementById("liveBroadcast");
+  try {
+    const { result, live } = await apiPost("/live/watch", { home, away });
+    if (bc) await revealMatch(bc, result);
+    state.world.live = live;
+    renderLive(live);                            // keeps the finished broadcast (state.lastBroadcast)
+  } catch (e) {
+    if (bc) bc.innerHTML = `<div class="result-error">${esc(e.message)}</div>`;
+  } finally { state.busy = false; renderHeader(state.world); }
+}
+
+async function revealMatch(bc, r) {
+  const seq = r.sequence || [];
+  const ab = (id) => id === r.home ? r.home_abbrev : r.away_abbrev;
+  bc.innerHTML =
+    `<div class="bcast"><div class="bcast-head">📺 Прямой эфир · <b>${esc(r.home_abbrev)}</b> vs <b>${esc(r.away_abbrev)}</b>` +
+    ` <span class="muted">Bo${r.best_of} · без перемотки</span></div>` +
+    `<div class="bcast-score"><span class="bs-h">0</span><span class="bcast-vs">:</span><span class="bs-a">0</span></div>` +
+    `<div class="bcast-maps"></div></div>`;
+  const card = bc.querySelector(".bcast");
+  let h = 0, a = 0;
+  for (let i = 0; i < seq.length; i++) {
+    await sleep(i === 0 ? 600 : 1900);           // ~2s between maps in a series (no scrub)
+    const homeWon = seq[i] === r.home;
+    homeWon ? h++ : a++;
+    card.querySelector(".bs-h").textContent = h;
+    card.querySelector(".bs-a").textContent = a;
+    card.querySelector(".bcast-maps").innerHTML +=
+      `<span class="bc-map ${homeWon ? "h" : "a"}">Карта ${i + 1}: ${esc(ab(seq[i]))}</span>`;
+  }
+  await sleep(700);
+  const win = r.winner === r.home ? r.home_abbrev : r.away_abbrev;
+  card.innerHTML += `<div class="bcast-final">🏆 ${esc(win)} — ${r.maps_home}:${r.maps_away}</div>`;
+  state.lastBroadcast = bc.innerHTML;
+}
+
+function liveBracketCols(nodes) {
+  if (!nodes || !nodes.length) return "";
+  const byStage = {};
+  nodes.forEach((n) => (byStage[n.stage] = byStage[n.stage] || []).push(n));
+  const order = ["ub", "lb", "lb_r1", "lb_r2", "lb_final", "grand_final"];
+  const slot = (t) => t ? `${emblem(t.team_id)}<span>${esc(t.abbrev)}</span>` : `<span class="br-tbd">—</span>`;
+  return `<div class="bracket">${order.filter((s) => byStage[s]).map((s) =>
+    `<div class="br-col"><div class="br-stage">${esc(STAGE_LBL[s] || s)}</div><div class="br-matches">` +
+    byStage[s].map((n) =>
+      `<div class="mcard ${n.played ? "played" : "upcoming"}">` +
+      `<div class="mc-row${n.played && n.winner === (n.home && n.home.team_id) ? " win" : ""}">${slot(n.home)}` +
+      `<span class="mc-sc">${n.played ? n.maps_home : "·"}</span></div>` +
+      `<div class="mc-row${n.played && n.winner === (n.away && n.away.team_id) ? " win" : ""}">${slot(n.away)}` +
+      `<span class="mc-sc">${n.played ? n.maps_away : "·"}</span></div></div>`).join("") +
+    `</div></div>`).join("")}</div>`;
+}
+
+function liveStandingsMini(rows, title) {
+  const dlt = (d) => `${d > 0 ? "+" : ""}${d}`;
+  return `<div class="lv-tbl"><h5>${esc(title)}</h5><table class="ltable lv-mini"><tbody>${
+    rows.map((t) => `<tr><td class="lt-place">${t.place}</td>` +
+      `<td class="lt-ab">${emblem(t.team_id)}<span>${esc(t.abbrev)}</span></td>` +
+      `<td class="lt-pts">${t.points}</td>` +
+      `<td class="lt-dl ${t.map_diff >= 0 ? "up" : "down"}">${dlt(t.map_diff)}</td>` +
+      `<td class="lt-wl">${t.series_wins}–${t.series_losses}</td></tr>`).join("")
+  }</tbody></table></div>`;
+}
+
+function renderLive(live, dayResult) {
+  const panel = el("panel-live");
+  if (!live || (!live.active && !live.done)) {
+    panel.innerHTML = `<div class="lv-empty"><p class="muted">Сезон по дням ещё не запущен.</p>` +
+      `<p>Нажми <b>«📅 По дням»</b> вверху — сезон пойдёт день за днём, без подсказок о будущем. ` +
+      `Каждый день можно открыть <b>прямой эфир</b> отдельного матча.</p></div>`;
+    return;
+  }
+  const phaseLbl = live.phase === "playoff" ? "Плей-офф" : (live.phase === "done" ? "Сезон сыгран" : "Регулярный сезон");
+  const pct = Math.min(100, Math.round((live.day - 1) / live.total_days * 100));
+  const fixtures = live.active ? (live.next_fixtures || []) : [];
+  const fxCards = fixtures.map((f) =>
+    `<div class="lv-fx"><span class="lv-fx-stage">${esc(STAGE_LBL[f.stage] || f.stage)}</span>` +
+    `<span class="lv-fx-tm">${emblem(f.home)}${esc(f.home_abbrev)}</span><span class="lv-vs">vs</span>` +
+    `<span class="lv-fx-tm">${emblem(f.away)}${esc(f.away_abbrev)}</span>` +
+    `<button class="ghost lv-watch" data-h="${esc(f.home)}" data-a="${esc(f.away)}">📺 Эфир</button></div>`).join("");
+  const playedToday = (dayResult && dayResult.played || []).map((p) =>
+    `<span class="lv-res ${p.winner === p.home ? "h" : "a"}">${esc(p.home_abbrev)} ${p.maps_home}:${p.maps_away} ${esc(p.away_abbrev)}</span>`).join("");
+  const st = live.standings || {};
+  const brk = live.bracket || {};
+  const hasBracket = (brk.upper || []).length || (brk.lower || []).length;
+
+  panel.innerHTML =
+    `<div class="lv-bar"><div class="lv-day">🔴 День <b>${live.day}</b> / ${live.total_days} · ${phaseLbl}</div>` +
+    `<div class="lv-prog"><div class="lv-prog-fill" style="width:${pct}%"></div></div>` +
+    (live.active ? `<button id="lvNext" class="primary">▶ Сыграть день</button>` :
+      `<div class="lv-done">✅ Сезон сыгран — открой «⟳ Межсезонье»</div>`) + `</div>` +
+    `<div id="liveBroadcast" class="lv-broadcast">${state.lastBroadcast || ""}</div>` +
+    (playedToday ? `<div class="lv-today"><span class="muted">Сыграно в этот день:</span> ${playedToday}</div>` : "") +
+    (fixtures.length ? `<h4>Следующие матчи <span class="muted">(можно смотреть в прямом эфире)</span></h4>` +
+      `<div class="lv-fxs">${fxCards}</div>` : "") +
+    (hasBracket ? `<h4>Сетка плей-офф <span class="muted">(заполняется по ходу)</span></h4>` +
+      `<div class="lv-brackets">` +
+      ((brk.upper || []).length ? `<div class="bracket-block"><h5>🏆 Верхняя</h5>${liveBracketCols(brk.upper)}</div>` : "") +
+      ((brk.lower || []).length ? `<div class="bracket-block"><h5>Нижняя</h5>${liveBracketCols(brk.lower)}</div>` : "") +
+      `</div>` : "") +
+    `<h4>Таблицы <span class="muted">(обновляются по ходу)</span></h4>` +
+    `<div class="lv-tbls">${liveStandingsMini(st.upper || [], "Высшая")}` +
+    `${liveStandingsMini(st.lower_A || [], "Низшая · A")}${liveStandingsMini(st.lower_Z || [], "Низшая · Z")}</div>`;
+
+  const nx = document.getElementById("lvNext");
+  if (nx) nx.addEventListener("click", playNextDay);
+  panel.querySelectorAll(".lv-watch").forEach((b) =>
+    b.addEventListener("click", () => watchMatch(b.dataset.h, b.dataset.a)));
 }
 
 // Off-season settings + ETA -------------------------------------------------- //
@@ -875,6 +1040,8 @@ function wireEvents() {
   el("selCancel").addEventListener("click", () => show("selModal", false));
   el("selX").addEventListener("input", updateSelHint);
   el("advanceBtn").addEventListener("click", advance);
+  el("liveStartBtn").addEventListener("click", startLive);
+  el("nextDayBtn").addEventListener("click", playNextDay);
   el("offseasonBtn").addEventListener("click", openOsModal);
   el("osRun").addEventListener("click", submitOffseason);
   el("osCancel").addEventListener("click", () => show("osModal", false));

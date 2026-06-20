@@ -355,9 +355,11 @@
     snaps.slice(0, CUR + 1).forEach((s) => { commentary.push(s.commentary[0]); if (s.num < CUR) commentary.push(s.commentary[1]); });
     const offSnap = snaps[Math.max(0, CUR - 1)] || snap();
     const managers = offSnap.managerComments || [];
-    return { world_id: WID, name: "Demo World", season: CUR, phase: PHASE,
+    const livePhase = LIVE ? (LIVE.phase === "done" ? "offseason_due" : "live") : PHASE;
+    return { world_id: WID, name: "Demo World", season: CUR, phase: livePhase,
       upper: [], lower: [], ladder: [], history, reserves, commentary, emblems: EMBLEMS,
       manager_comments: CUR > 0 ? managers : [],
+      live: LIVE ? lvView() : null,
       last_offseason: CUR > 0 ? { season_ended: offSnap.num, transactions: offSnap.transactions } : null,
       counts: { players: players.length,
         free_agents: players.filter((p) => p.role === "pro" && !p.teamId && !p.reserve).length,
@@ -385,12 +387,168 @@
   }
   function doOffseason() {
     const s = snaps[CUR];
-    showTraining = true; PHASE = "regular";
+    showTraining = true; PHASE = "regular"; LIVE = null;   // the finished live season is now history
     lastSummary = { next_season: Math.min(CUR + 1, 2), rookies: 3, training_auctioned: 6,
       training_launched: Math.min(6, s.training.length), chronicle: s.chronicle,
       log: s.chronicle.map((c) => c.msg).slice(0, 50) };
     if (CUR < 2) CUR++;
     return { job_id: "off", status: "running" };
+  }
+
+  // ---- day-by-day LIVE demo (self-contained mini engine, mirrors live_season.py) ---- //
+  let LIVE = null;
+  function lvRounds(ids) {
+    const a = ids.slice(); if (a.length % 2) a.push(null);
+    const n = a.length, out = []; let arr = a.slice();
+    for (let r = 0; r < n - 1; r++) {
+      const pairs = [];
+      for (let i = 0; i < n / 2; i++) { const x = arr[i], y = arr[n - 1 - i]; if (x && y) pairs.push([x, y]); }
+      out.push(pairs); arr = [arr[0], arr[n - 1]].concat(arr.slice(1, n - 1));
+    }
+    return out;
+  }
+  function lvPlay(home, away, bo) {
+    const need = (bo >> 1) + 1; let mh = 0, ma = 0; const seq = [];
+    const p = 1 / (1 + Math.pow(10, (byId[away].power - byId[home].power) / 250));
+    while (mh < need && ma < need) { if (R() < p) { mh++; seq.push(home); } else { ma++; seq.push(away); } }
+    return { home, away, maps_home: mh, maps_away: ma, winner: mh > ma ? home : away,
+      best_of: bo, sequence: seq, stage: "league" };
+  }
+  function lvStand(ids, results) {
+    const rec = {}; ids.forEach((id) => (rec[id] = { team_id: id, sw: 0, sl: 0, mw: 0, ml: 0 }));
+    results.forEach((r) => { if (!rec[r.home] || !rec[r.away]) return;
+      rec[r.home].mw += r.maps_home; rec[r.home].ml += r.maps_away;
+      rec[r.away].mw += r.maps_away; rec[r.away].ml += r.maps_home;
+      if (r.maps_home > r.maps_away) { rec[r.home].sw++; rec[r.away].sl++; } else { rec[r.away].sw++; rec[r.home].sl++; } });
+    const rows = Object.values(rec).map((x) => ({ ...x, points: x.sw * 3, map_diff: x.mw - x.ml }));
+    rows.sort((p, q) => (q.points - p.points) || (q.map_diff - p.map_diff) || (q.mw - p.mw));
+    rows.forEach((r, i) => (r.place = i + 1));
+    return rows;
+  }
+  const lvRow = (r) => ({ team_id: r.team_id, abbrev: tabbr(r.team_id), name: tname(r.team_id),
+    place: r.place, points: r.points, series_wins: r.sw, series_losses: r.sl, map_diff: r.map_diff });
+  function lvResolve(ref, nodes) {
+    if (typeof ref === "string") return ref;
+    const n = nodes[ref.w || ref.l], res = n && n.result; if (!res) return null;
+    return ("w" in ref) ? res.winner : (res.winner === res.home ? res.away : res.home);
+  }
+  const lvReady = (br) => br.order.filter((k) => { const n = br.nodes[k];
+    return !n.result && lvResolve(n.home, br.nodes) && lvResolve(n.away, br.nodes); });
+  const lvDone = (br) => br.order.every((k) => br.nodes[k].result);
+  function lvBracketPub(br) {
+    if (!br) return [];
+    return br.order.map((k) => { const n = br.nodes[k], h = lvResolve(n.home, br.nodes),
+      a = lvResolve(n.away, br.nodes), res = n.result;
+      return { key: k, stage: n.stage,
+        home: h ? { team_id: h, abbrev: tabbr(h), name: tname(h) } : null,
+        away: a ? { team_id: a, abbrev: tabbr(a), name: tname(a) } : null,
+        played: !!res, maps_home: res ? res.maps_home : null,
+        maps_away: res ? res.maps_away : null, winner: res ? res.winner : null }; });
+  }
+  function lvStart() {
+    const up = teams.filter((t) => t.league === "upper").map((t) => t.team_id);
+    const a = teams.filter((t) => t.league === "lower" && t.group === "A").map((t) => t.team_id);
+    const z = teams.filter((t) => t.league === "lower" && t.group === "Z").map((t) => t.team_id);
+    const rounds = { upper: lvRounds(up), lower_A: lvRounds(a), lower_Z: lvRounds(z) };
+    const nreg = Math.max(rounds.upper.length, rounds.lower_A.length, rounds.lower_Z.length);
+    LIVE = { season: CUR, phase: "regular", day: 1, nreg, rounds, cursor: 0,
+      groups: { upper: up, lower_A: a, lower_Z: z },
+      results: { upper: [], lower_A: [], lower_Z: [] }, playoff: null, done: null };
+    return { live: lvView() };
+  }
+  function lvSeedPlayoffs() {
+    const us = lvStand(LIVE.groups.upper, LIVE.results.upper).map((r) => r.team_id);
+    const as = lvStand(LIVE.groups.lower_A, LIVE.results.lower_A).map((r) => r.team_id);
+    const zs = lvStand(LIVE.groups.lower_Z, LIVE.results.lower_Z).map((r) => r.team_id);
+    LIVE.playoff = {
+      upper: { order: ["ub", "lb", "lbf", "gf"], nodes: {
+        ub: { stage: "ub", home: us[0], away: us[1] }, lb: { stage: "lb", home: us[2], away: us[3] },
+        lbf: { stage: "lb_final", home: { w: "lb" }, away: { l: "ub" } },
+        gf: { stage: "grand_final", home: { w: "ub" }, away: { w: "lbf" } } } },
+      lower: { order: ["ub", "lb1a", "lb1b", "lb2", "lbf", "gf"], nodes: {
+        ub: { stage: "ub", home: as[0], away: zs[0] }, lb1a: { stage: "lb_r1", home: as[1], away: zs[2] },
+        lb1b: { stage: "lb_r1", home: zs[1], away: as[2] }, lb2: { stage: "lb_r2", home: { w: "lb1a" }, away: { w: "lb1b" } },
+        lbf: { stage: "lb_final", home: { w: "lb2" }, away: { l: "ub" } },
+        gf: { stage: "grand_final", home: { w: "ub" }, away: { w: "lbf" } } } } };
+    LIVE.phase = "playoff";
+  }
+  function lvDay() {
+    if (!LIVE || LIVE.phase === "done") throw new Error("нет активного сезона");
+    const played = [];
+    if (LIVE.phase === "regular") {
+      const rnd = LIVE.cursor;
+      ["upper", "lower_A", "lower_Z"].forEach((gk) => {
+        const rounds = LIVE.rounds[gk]; if (rnd >= rounds.length) return;
+        const done = new Set(LIVE.results[gk].map((s) => [s.home, s.away].sort().join("|")));
+        rounds[rnd].forEach(([h, a]) => {
+          if (done.has([h, a].sort().join("|"))) return;
+          const s = lvPlay(h, a, 3); LIVE.results[gk].push(s);
+          played.push({ group: gk, home: h, away: a, home_abbrev: tabbr(h), away_abbrev: tabbr(a),
+            maps_home: s.maps_home, maps_away: s.maps_away, winner: s.winner });
+        });
+      });
+      LIVE.cursor++; const day = LIVE.day; LIVE.day++;
+      if (LIVE.cursor >= LIVE.nreg) lvSeedPlayoffs();
+      return { result: { day, phase: "regular", played }, live: lvView() };
+    }
+    [["upper", LIVE.playoff.upper], ["lower", LIVE.playoff.lower]].forEach(([lg, br]) => {
+      lvReady(br).forEach((k) => { const n = br.nodes[k];
+        const h = lvResolve(n.home, br.nodes), a = lvResolve(n.away, br.nodes);
+        const s = lvPlay(h, a, 5); s.stage = n.stage; n.result = s;
+        played.push({ league: lg, stage: n.stage, home: h, away: a, home_abbrev: tabbr(h),
+          away_abbrev: tabbr(a), maps_home: s.maps_home, maps_away: s.maps_away, winner: s.winner });
+      });
+    });
+    const day = LIVE.day; LIVE.day++;
+    if (lvDone(LIVE.playoff.upper) && lvDone(LIVE.playoff.lower)) {
+      LIVE.phase = "done";
+      LIVE.done = { season: LIVE.season, upper_champion: LIVE.playoff.upper.nodes.gf.result.winner,
+        lower_champion: LIVE.playoff.lower.nodes.gf.result.winner };
+      PHASE = "offseason_due";
+      return { result: { day, phase: "playoff", played, summary: LIVE.done }, live: lvView() };
+    }
+    return { result: { day, phase: "playoff", played }, live: lvView() };
+  }
+  function lvNextFixtures() {
+    const out = [];
+    if (!LIVE || LIVE.phase === "done") return out;
+    if (LIVE.phase === "regular") {
+      const rnd = LIVE.cursor;
+      ["upper", "lower_A", "lower_Z"].forEach((gk) => { const rounds = LIVE.rounds[gk];
+        if (rnd < rounds.length) rounds[rnd].forEach(([h, a]) =>
+          out.push({ group: gk, stage: "league", best_of: 3, home: h, away: a,
+            home_abbrev: tabbr(h), away_abbrev: tabbr(a) })); });
+    } else {
+      [["upper", LIVE.playoff.upper], ["lower", LIVE.playoff.lower]].forEach(([lg, br]) =>
+        lvReady(br).forEach((k) => { const n = br.nodes[k];
+          const h = lvResolve(n.home, br.nodes), a = lvResolve(n.away, br.nodes);
+          out.push({ league: lg, stage: n.stage, best_of: 5, home: h, away: a,
+            home_abbrev: tabbr(h), away_abbrev: tabbr(a) }); }));
+    }
+    return out;
+  }
+  function lvWatch(home, away) {
+    const fx = lvNextFixtures().find((f) => f.home === home && f.away === away);
+    if (!fx) throw new Error("это не ближайший матч");
+    const s = lvPlay(home, away, fx.best_of); s.stage = fx.stage;
+    if (LIVE.phase === "regular") { LIVE.results[fx.group].push(s); }
+    else { const br = LIVE.playoff[fx.league];
+      const k = lvReady(br).find((kk) => lvResolve(br.nodes[kk].home, br.nodes) === home &&
+        lvResolve(br.nodes[kk].away, br.nodes) === away);
+      if (k) br.nodes[k].result = s; }
+    return { result: { home, away, home_abbrev: tabbr(home), away_abbrev: tabbr(away),
+      maps_home: s.maps_home, maps_away: s.maps_away, winner: s.winner, best_of: s.best_of,
+      sequence: s.sequence }, live: lvView() };
+  }
+  function lvView() {
+    if (!LIVE) return { active: false };
+    const st = {};
+    ["upper", "lower_A", "lower_Z"].forEach((k) => (st[k] = lvStand(LIVE.groups[k], LIVE.results[k]).map(lvRow)));
+    return { active: LIVE.phase !== "done", season: LIVE.season, phase: LIVE.phase,
+      day: LIVE.day, total_days: LIVE.nreg + 4, n_regular_days: LIVE.nreg,
+      next_fixtures: lvNextFixtures(), standings: st,
+      bracket: { upper: lvBracketPub((LIVE.playoff || {}).upper), lower: lvBracketPub((LIVE.playoff || {}).lower) },
+      done: LIVE.done };
   }
 
   window.__PREVIEW__ = async function (url, opts) {
@@ -408,12 +566,19 @@
     if (url === "/api/world/players-pool") return playersPool();
     if (url.startsWith("/api/world/job/")) return { status: "done", world_id: WID, phase: "Готово", summary: lastSummary };
     if (method === "POST" && url === "/api/world/create") { CUR = 0; lastSummary = {}; return { job_id: "cr", status: "running" }; }
+    if (method === "POST" && url.endsWith("/live/start")) return lvStart();
+    if (method === "POST" && url.endsWith("/live/day")) return lvDay();
+    if (method === "POST" && url.endsWith("/live/watch")) {
+      const b = opts && opts.body ? JSON.parse(opts.body) : {};
+      return lvWatch(b.home, b.away);
+    }
     if (method === "POST" && url.endsWith("/advance")) return doAdvance();
     if (method === "POST" && url.endsWith("/offseason")) return doOffseason();
     if (method === "POST" && url.endsWith("/introduce")) return { introduced: 0, reserves_left: players.filter((p) => p.reserve).length };
     const path = url.replace(/^\/api\/world\/[^/]+/, "");
     if (path === "") return { world: overview() };       // real /api/world/<id> wraps in {world}
     if (path === "/leagues") return { season: CUR, leagues: leaguesView() };
+    if (path === "/live") return { live: LIVE ? lvView() : { active: false } };
     if (path === "/matrix") return matrixView();
     if (path === "/players") return { season: CUR, players: rankedPlayers() };
     if (path === "/schedule") return { season: CUR, regular: snap().fixtures, bracket: snap().bracket, n_matches: snap().fixtures.length };
