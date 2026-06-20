@@ -30,7 +30,7 @@ from src.core.runner import run_match
 from src.training.spaces import strategy_order_for_slot
 
 MANIFEST = ROOT / "population" / "frozen_population_v1.json"
-OUT = ROOT / "analysis" / "player_cards_v1.json"
+OUT = ROOT / "population" / "player_cards_v1.json"   # World reads cards from here
 LEAGUE_REG = ROOT / "training_runs" / "league_population_v1" / "registry.json"
 
 # ABSOLUTE references (tunable; raw values are saved so re-scaling needs no re-run).
@@ -104,6 +104,8 @@ def main():
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--games", type=int, default=12)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--nets", default="", help="comma net_ids to (re)derive; merges into OUT")
+    ap.add_argument("--alt-cast", action="store_true", help="alternate reference cast (to card the default cast)")
     args = ap.parse_args()
     N = 4 if args.smoke else args.games
     N_c = max(2, N // 3)          # games per opponent-trio for the consistency spread
@@ -117,12 +119,16 @@ def main():
         for e in json.loads(LEAGUE_REG.read_text(encoding="utf-8"))["entries"]:
             steps[e["net_id"]] = int(e.get("steps_trained", 0) or 0)
 
-    teammates = ("humans_4", "infected_4")                 # FIXED mid-strength cast
-    opponents = ("robots_3", "humans_3", "infected_3")
+    DEF_TEAM, DEF_OPP = ("humans_4", "infected_4"), ("robots_3", "humans_3", "infected_3")
+    ALT_TEAM, ALT_OPP = ("humans_5", "infected_5"), ("robots_5", "humans_6", "infected_6")
+    teammates, opponents = (ALT_TEAM, ALT_OPP) if args.alt_cast else (DEF_TEAM, DEF_OPP)
     fixed = set(teammates) | set(opponents)
-    nets = [n for n in idx if n not in fixed]
-    if args.smoke: nets = nets[:6]
-    elif args.limit: nets = nets[:args.limit]
+    if args.nets:
+        nets = [n.strip() for n in args.nets.split(",") if n.strip()]
+    else:
+        nets = [n for n in idx if n not in fixed]
+        if args.smoke: nets = nets[:6]
+        elif args.limit: nets = nets[:args.limit]
 
     print(f"deriving {len(nets)} cards — N={N}/order (Олл-ин/Черепаха/free) vs fixed cast ...")
     cards, t0 = {}, time.time()
@@ -161,6 +167,13 @@ def main():
                   f"atk{c['attack']:>3} def{c['defense']:>3} eco{c['economy']:>3} "
                   f"tmp{c['tempo']:>3} con{c['consistency']:>3} pot{c['potential']:>3}  {time.time()-t0:.0f}s")
 
+    out_cards = cards
+    if args.nets and OUT.exists():                 # partial (re)derive -> merge into existing
+        try:
+            out_cards = json.loads(OUT.read_text(encoding="utf-8")).get("cards", {})
+        except (OSError, ValueError):
+            out_cards = {}
+        out_cards.update(cards)                     # re-derived nets override
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps({
         "schema": "player_cards/v1",
@@ -169,9 +182,9 @@ def main():
         "absolute_refs": {"attack_dmg": REF_ATTACK, "own_core": REF_OWN_CORE,
                           "tempo_rate": REF_TEMPO_RATE, "eco_buildings": REF_ECO_BLD, "resources": REF_RES,
                           "potential_steps": [POT_MIN_STEPS, POT_MAX_STEPS]},
-        "cards": cards,
+        "cards": out_cards,
     }, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\nwrote {len(cards)} cards -> {OUT.relative_to(ROOT)}  ({time.time()-t0:.0f}s)")
+    print(f"\nwrote {len(out_cards)} cards (+{len(cards)} this run) -> {OUT.relative_to(ROOT)}  ({time.time()-t0:.0f}s)")
 
 
 if __name__ == "__main__":

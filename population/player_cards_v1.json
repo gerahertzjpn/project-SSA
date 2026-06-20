@@ -1,0 +1,2511 @@
+{
+  "schema": "player_cards/v1",
+  "method": "order-conditioned gauntlet, GLOBAL + ABSOLUTE scales",
+  "games_per_order": 12,
+  "reference_teammates": [
+    "humans_5",
+    "infected_5"
+  ],
+  "reference_opponents": [
+    "robots_5",
+    "humans_6",
+    "infected_6"
+  ],
+  "absolute_refs": {
+    "attack_dmg": 150.0,
+    "own_core": 80.0,
+    "tempo_rate": 1.5,
+    "eco_buildings": 3.0,
+    "resources": 30.0,
+    "potential_steps": [
+      1000000.0,
+      200000000.0
+    ]
+  },
+  "cards": {
+    "humans_1__skirmisher": {
+      "attack": 38,
+      "defense": 74,
+      "economy": 35,
+      "tempo": 35,
+      "consistency": 35,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 57.2,
+        "defense_hp": 59.5,
+        "tempo_rate": 0.522,
+        "tech_ww": 0.458,
+        "eco_bld": 0.58,
+        "res": 8.9,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 2334722
+      }
+    },
+    "humans_1__berserker": {
+      "attack": 54,
+      "defense": 83,
+      "economy": 60,
+      "tempo": 47,
+      "consistency": 39,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 81.5,
+        "defense_hp": 66.7,
+        "tempo_rate": 0.707,
+        "tech_ww": 0.375,
+        "eco_bld": 0.58,
+        "res": 52.8,
+        "trio_winrates": [
+          1.0,
+          0.5,
+          0.25,
+          0.25
+        ],
+        "steps": 2265706
+      }
+    },
+    "humans_1__sentinel": {
+      "attack": 54,
+      "defense": 50,
+      "economy": 28,
+      "tempo": 53,
+      "consistency": 35,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 80.7,
+        "defense_hp": 40.0,
+        "tempo_rate": 0.798,
+        "tech_ww": 0.167,
+        "eco_bld": 0.42,
+        "res": 22.6,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 2214827
+      }
+    },
+    "humans_1__architect": {
+      "attack": 31,
+      "defense": 80,
+      "economy": 100,
+      "tempo": 30,
+      "consistency": 59,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 46.7,
+        "defense_hp": 64.1,
+        "tempo_rate": 0.444,
+        "tech_ww": 0.5,
+        "eco_bld": 1,
+        "res": 98.7,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.5,
+          0.5
+        ],
+        "steps": 2127851
+      }
+    },
+    "humans_1__warden": {
+      "attack": 76,
+      "defense": 61,
+      "economy": 83,
+      "tempo": 72,
+      "consistency": 59,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 113.3,
+        "defense_hp": 48.8,
+        "tempo_rate": 1.073,
+        "tech_ww": 0.375,
+        "eco_bld": 0.83,
+        "res": 83.9,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.75,
+          0.5
+        ],
+        "steps": 2345678
+      }
+    },
+    "humans_2__skirmisher": {
+      "attack": 9,
+      "defense": 92,
+      "economy": 52,
+      "tempo": 8,
+      "consistency": 78,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 13.3,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.121,
+        "tech_ww": 0.583,
+        "eco_bld": 0.83,
+        "res": 22.4,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.75,
+          1.0
+        ],
+        "steps": 2093757
+      }
+    },
+    "humans_2__architect": {
+      "attack": 84,
+      "defense": 75,
+      "economy": 48,
+      "tempo": 75,
+      "consistency": 21,
+      "potential": 87,
+      "raw": {
+        "attack_dmg": 126.1,
+        "defense_hp": 60.0,
+        "tempo_rate": 1.131,
+        "tech_ww": 0.167,
+        "eco_bld": 0.42,
+        "res": 52.7,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.0,
+          0.25
+        ],
+        "steps": 1986981
+      }
+    },
+    "humans_3__skirmisher": {
+      "attack": 40,
+      "defense": 75,
+      "economy": 16,
+      "tempo": 35,
+      "consistency": 50,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 60.0,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.529,
+        "tech_ww": 0.042,
+        "eco_bld": 0.08,
+        "res": 20.0,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 2257006
+      }
+    },
+    "humans_3__berserker": {
+      "attack": 36,
+      "defense": 63,
+      "economy": 13,
+      "tempo": 39,
+      "consistency": 26,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 54.2,
+        "defense_hp": 50.2,
+        "tempo_rate": 0.586,
+        "tech_ww": 0.0,
+        "eco_bld": 0.17,
+        "res": 17.0,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.0,
+          0.5
+        ],
+        "steps": 2307089
+      }
+    },
+    "humans_3__sentinel": {
+      "attack": 5,
+      "defense": 67,
+      "economy": 33,
+      "tempo": 5,
+      "consistency": 39,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 8.0,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.076,
+        "tech_ww": 0.25,
+        "eco_bld": 0.67,
+        "res": 20.7,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.75,
+          0.25
+        ],
+        "steps": 2276289
+      }
+    },
+    "humans_3__architect": {
+      "attack": 22,
+      "defense": 85,
+      "economy": 10,
+      "tempo": 26,
+      "consistency": 35,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 33.4,
+        "defense_hp": 67.8,
+        "tempo_rate": 0.39,
+        "tech_ww": 0.083,
+        "eco_bld": 0.17,
+        "res": 6.9,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.25
+        ],
+        "steps": 2175284
+      }
+    },
+    "humans_3__warden": {
+      "attack": 56,
+      "defense": 67,
+      "economy": 22,
+      "tempo": 48,
+      "consistency": 75,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 83.8,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.716,
+        "tech_ww": 0.083,
+        "eco_bld": 0.67,
+        "res": 17.2,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.5,
+          0.5
+        ],
+        "steps": 2323903
+      }
+    },
+    "humans_4__skirmisher": {
+      "attack": 9,
+      "defense": 83,
+      "economy": 33,
+      "tempo": 12,
+      "consistency": 44,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 13.8,
+        "defense_hp": 66.7,
+        "tempo_rate": 0.175,
+        "tech_ww": 0.417,
+        "eco_bld": 0.83,
+        "res": 5.2,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 2342589
+      }
+    },
+    "humans_4__berserker": {
+      "attack": 34,
+      "defense": 83,
+      "economy": 39,
+      "tempo": 32,
+      "consistency": 39,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 50.8,
+        "defense_hp": 66.7,
+        "tempo_rate": 0.483,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 10.3,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.75,
+          0.25
+        ],
+        "steps": 2323508
+      }
+    },
+    "humans_4__sentinel": {
+      "attack": 27,
+      "defense": 89,
+      "economy": 37,
+      "tempo": 29,
+      "consistency": 46,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 40.5,
+        "defense_hp": 70.9,
+        "tempo_rate": 0.433,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 7.1,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.75,
+          0.25
+        ],
+        "steps": 2204749
+      }
+    },
+    "humans_5__skirmisher": {
+      "attack": 42,
+      "defense": 75,
+      "economy": 47,
+      "tempo": 48,
+      "consistency": 78,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 63.5,
+        "defense_hp": 60.2,
+        "tempo_rate": 0.716,
+        "tech_ww": 0.208,
+        "eco_bld": 1,
+        "res": 40.2,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.75,
+          0.5
+        ],
+        "steps": 2226315
+      }
+    },
+    "humans_5__sentinel": {
+      "attack": 40,
+      "defense": 84,
+      "economy": 39,
+      "tempo": 55,
+      "consistency": 59,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 60.0,
+        "defense_hp": 66.9,
+        "tempo_rate": 0.821,
+        "tech_ww": 0.333,
+        "eco_bld": 0.67,
+        "res": 24.1,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.5,
+          0.5
+        ],
+        "steps": 2207100
+      }
+    },
+    "humans_5__architect": {
+      "attack": 22,
+      "defense": 75,
+      "economy": 95,
+      "tempo": 22,
+      "consistency": 59,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 33.8,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.336,
+        "tech_ww": 0.375,
+        "eco_bld": 0.75,
+        "res": 102.9,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          1.0,
+          0.5
+        ],
+        "steps": 2176423
+      }
+    },
+    "humans_5__warden": {
+      "attack": 21,
+      "defense": 64,
+      "economy": 27,
+      "tempo": 20,
+      "consistency": 25,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 32.1,
+        "defense_hp": 51.2,
+        "tempo_rate": 0.304,
+        "tech_ww": 0.125,
+        "eco_bld": 0.25,
+        "res": 27.4,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2238968
+      }
+    },
+    "humans_6__skirmisher": {
+      "attack": 14,
+      "defense": 87,
+      "economy": 87,
+      "tempo": 14,
+      "consistency": 44,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 21.8,
+        "defense_hp": 69.2,
+        "tempo_rate": 0.205,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 82.1,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 2087464
+      }
+    },
+    "humans_6__berserker": {
+      "attack": 27,
+      "defense": 83,
+      "economy": 67,
+      "tempo": 31,
+      "consistency": 59,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 40.8,
+        "defense_hp": 66.7,
+        "tempo_rate": 0.458,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 51.9,
+        "trio_winrates": [
+          1.0,
+          0.5,
+          0.5,
+          0.75
+        ],
+        "steps": 2266383
+      }
+    },
+    "humans_6__sentinel": {
+      "attack": 32,
+      "defense": 92,
+      "economy": 60,
+      "tempo": 35,
+      "consistency": 75,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 48.1,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.53,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 42.4,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.75,
+          1.0
+        ],
+        "steps": 2218045
+      }
+    },
+    "humans_6__architect": {
+      "attack": 24,
+      "defense": 92,
+      "economy": 39,
+      "tempo": 26,
+      "consistency": 65,
+      "potential": 87,
+      "raw": {
+        "attack_dmg": 36.2,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.396,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 11.0,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.75,
+          0.5
+        ],
+        "steps": 2020484
+      }
+    },
+    "humans_6__warden": {
+      "attack": 30,
+      "defense": 83,
+      "economy": 58,
+      "tempo": 27,
+      "consistency": 57,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 44.2,
+        "defense_hp": 66.7,
+        "tempo_rate": 0.403,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 38.8,
+        "trio_winrates": [
+          1.0,
+          0.5,
+          0.5,
+          0.5
+        ],
+        "steps": 2230430
+      }
+    },
+    "infected_1__skirmisher": {
+      "attack": 54,
+      "defense": 75,
+      "economy": 35,
+      "tempo": 50,
+      "consistency": 46,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 81.5,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.757,
+        "tech_ww": 0.042,
+        "eco_bld": 0.25,
+        "res": 45.1,
+        "trio_winrates": [
+          0.5,
+          1.0,
+          0.5,
+          0.25
+        ],
+        "steps": 2334722
+      }
+    },
+    "infected_1__berserker": {
+      "attack": 18,
+      "defense": 75,
+      "economy": 31,
+      "tempo": 15,
+      "consistency": 18,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 27.5,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.224,
+        "tech_ww": 0.208,
+        "eco_bld": 0,
+        "res": 31.3,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.75,
+          0.0
+        ],
+        "steps": 2265706
+      }
+    },
+    "infected_1__sentinel": {
+      "attack": 9,
+      "defense": 75,
+      "economy": 40,
+      "tempo": 5,
+      "consistency": 35,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 13.3,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.082,
+        "tech_ww": 0.25,
+        "eco_bld": 0,
+        "res": 41.7,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.25,
+          0.5
+        ],
+        "steps": 2214827
+      }
+    },
+    "infected_1__architect": {
+      "attack": 27,
+      "defense": 86,
+      "economy": 5,
+      "tempo": 32,
+      "consistency": 59,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 40.8,
+        "defense_hp": 68.4,
+        "tempo_rate": 0.473,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 7.9,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 2127851
+      }
+    },
+    "infected_1__warden": {
+      "attack": 62,
+      "defense": 67,
+      "economy": 44,
+      "tempo": 48,
+      "consistency": 35,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 93.3,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.714,
+        "tech_ww": 0.333,
+        "eco_bld": 0,
+        "res": 41.7,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2345678
+      }
+    },
+    "infected_2__berserker": {
+      "attack": 18,
+      "defense": 58,
+      "economy": 10,
+      "tempo": 15,
+      "consistency": 50,
+      "potential": 87,
+      "raw": {
+        "attack_dmg": 26.7,
+        "defense_hp": 46.7,
+        "tempo_rate": 0.227,
+        "tech_ww": 0.125,
+        "eco_bld": 0.08,
+        "res": 3.9,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.5
+        ],
+        "steps": 2021478
+      }
+    },
+    "infected_2__sentinel": {
+      "attack": 33,
+      "defense": 87,
+      "economy": 17,
+      "tempo": 40,
+      "consistency": 35,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 49.5,
+        "defense_hp": 69.2,
+        "tempo_rate": 0.602,
+        "tech_ww": 0.208,
+        "eco_bld": 0.08,
+        "res": 8.7,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.25
+        ],
+        "steps": 2066083
+      }
+    },
+    "infected_2__warden": {
+      "attack": 60,
+      "defense": 73,
+      "economy": 17,
+      "tempo": 55,
+      "consistency": 75,
+      "potential": 87,
+      "raw": {
+        "attack_dmg": 89.3,
+        "defense_hp": 58.2,
+        "tempo_rate": 0.832,
+        "tech_ww": 0.083,
+        "eco_bld": 0,
+        "res": 19.8,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.5,
+          0.5
+        ],
+        "steps": 1990829
+      }
+    },
+    "infected_3__skirmisher": {
+      "attack": 44,
+      "defense": 50,
+      "economy": 44,
+      "tempo": 42,
+      "consistency": 21,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 66.7,
+        "defense_hp": 40.0,
+        "tempo_rate": 0.637,
+        "tech_ww": 0.125,
+        "eco_bld": 0.08,
+        "res": 56.0,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.0,
+          0.25
+        ],
+        "steps": 2305688
+      }
+    },
+    "infected_3__berserker": {
+      "attack": 67,
+      "defense": 64,
+      "economy": 5,
+      "tempo": 56,
+      "consistency": 35,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 100.0,
+        "defense_hp": 51.1,
+        "tempo_rate": 0.834,
+        "tech_ww": 0.042,
+        "eco_bld": 0,
+        "res": 4.4,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2347518
+      }
+    },
+    "infected_3__sentinel": {
+      "attack": 60,
+      "defense": 70,
+      "economy": 14,
+      "tempo": 54,
+      "consistency": 44,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 89.2,
+        "defense_hp": 55.8,
+        "tempo_rate": 0.81,
+        "tech_ww": 0.208,
+        "eco_bld": 0,
+        "res": 6.1,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.25,
+          0.5
+        ],
+        "steps": 2209226
+      }
+    },
+    "infected_3__architect": {
+      "attack": 48,
+      "defense": 83,
+      "economy": 29,
+      "tempo": 42,
+      "consistency": 44,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 72.4,
+        "defense_hp": 66.7,
+        "tempo_rate": 0.632,
+        "tech_ww": 0.167,
+        "eco_bld": 0.08,
+        "res": 29.0,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.25,
+          0.5
+        ],
+        "steps": 2274543
+      }
+    },
+    "infected_3__warden": {
+      "attack": 77,
+      "defense": 55,
+      "economy": 43,
+      "tempo": 68,
+      "consistency": 46,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 115.6,
+        "defense_hp": 43.7,
+        "tempo_rate": 1.027,
+        "tech_ww": 0.375,
+        "eco_bld": 0.25,
+        "res": 33.3,
+        "trio_winrates": [
+          1.0,
+          0.5,
+          0.5,
+          0.25
+        ],
+        "steps": 2342210
+      }
+    },
+    "infected_4__skirmisher": {
+      "attack": 13,
+      "defense": 53,
+      "economy": 27,
+      "tempo": 8,
+      "consistency": 44,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 20.0,
+        "defense_hp": 42.2,
+        "tempo_rate": 0.116,
+        "tech_ww": 0.167,
+        "eco_bld": 0,
+        "res": 27.8,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.5,
+          0.25
+        ],
+        "steps": 2375800
+      }
+    },
+    "infected_4__berserker": {
+      "attack": 67,
+      "defense": 58,
+      "economy": 2,
+      "tempo": 59,
+      "consistency": 29,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 100.0,
+        "defense_hp": 46.7,
+        "tempo_rate": 0.892,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 3.0,
+        "trio_winrates": [
+          0.5,
+          1.0,
+          0.5,
+          0.0
+        ],
+        "steps": 2292266
+      }
+    },
+    "infected_4__sentinel": {
+      "attack": 76,
+      "defense": 67,
+      "economy": 26,
+      "tempo": 65,
+      "consistency": 59,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 113.3,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.97,
+        "tech_ww": 0.417,
+        "eco_bld": 0,
+        "res": 8.4,
+        "trio_winrates": [
+          0.75,
+          0.5,
+          0.25,
+          0.25
+        ],
+        "steps": 2153163
+      }
+    },
+    "infected_4__architect": {
+      "attack": 49,
+      "defense": 73,
+      "economy": 20,
+      "tempo": 43,
+      "consistency": 39,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 74.0,
+        "defense_hp": 58.1,
+        "tempo_rate": 0.648,
+        "tech_ww": 0.292,
+        "eco_bld": 0,
+        "res": 8.7,
+        "trio_winrates": [
+          0.5,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2385456
+      }
+    },
+    "infected_5__skirmisher": {
+      "attack": 46,
+      "defense": 81,
+      "economy": 20,
+      "tempo": 46,
+      "consistency": 29,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 68.7,
+        "defense_hp": 65.0,
+        "tempo_rate": 0.685,
+        "tech_ww": 0.167,
+        "eco_bld": 0.08,
+        "res": 16.6,
+        "trio_winrates": [
+          0.5,
+          1.0,
+          0.0,
+          0.5
+        ],
+        "steps": 2275980
+      }
+    },
+    "infected_5__berserker": {
+      "attack": 17,
+      "defense": 67,
+      "economy": 56,
+      "tempo": 18,
+      "consistency": 25,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 25.9,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.277,
+        "tech_ww": 0.167,
+        "eco_bld": 0.33,
+        "res": 66.9,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2269594
+      }
+    },
+    "infected_5__sentinel": {
+      "attack": 29,
+      "defense": 82,
+      "economy": 11,
+      "tempo": 25,
+      "consistency": 39,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 44.1,
+        "defense_hp": 65.4,
+        "tempo_rate": 0.374,
+        "tech_ww": 0.083,
+        "eco_bld": 0,
+        "res": 10.4,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.0,
+          0.5
+        ],
+        "steps": 2052937
+      }
+    },
+    "infected_5__architect": {
+      "attack": 34,
+      "defense": 92,
+      "economy": 33,
+      "tempo": 32,
+      "consistency": 39,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 51.5,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.481,
+        "tech_ww": 0.333,
+        "eco_bld": 0.42,
+        "res": 18.6,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.75,
+          0.25
+        ],
+        "steps": 2200309
+      }
+    },
+    "infected_5__warden": {
+      "attack": 35,
+      "defense": 75,
+      "economy": 27,
+      "tempo": 29,
+      "consistency": 35,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 52.2,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.433,
+        "tech_ww": 0.125,
+        "eco_bld": 0,
+        "res": 31.3,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2216476
+      }
+    },
+    "infected_6__skirmisher": {
+      "attack": 22,
+      "defense": 91,
+      "economy": 6,
+      "tempo": 21,
+      "consistency": 50,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 32.9,
+        "defense_hp": 72.6,
+        "tempo_rate": 0.309,
+        "tech_ww": 0.042,
+        "eco_bld": 0.08,
+        "res": 5.0,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 2103612
+      }
+    },
+    "infected_6__berserker": {
+      "attack": 12,
+      "defense": 90,
+      "economy": 15,
+      "tempo": 13,
+      "consistency": 25,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 17.8,
+        "defense_hp": 72.1,
+        "tempo_rate": 0.19,
+        "tech_ww": 0.125,
+        "eco_bld": 0,
+        "res": 12.9,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2261058
+      }
+    },
+    "infected_6__sentinel": {
+      "attack": 13,
+      "defense": 67,
+      "economy": 22,
+      "tempo": 16,
+      "consistency": 21,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 19.4,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.246,
+        "tech_ww": 0.208,
+        "eco_bld": 0.42,
+        "res": 11.2,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.0,
+          0.25
+        ],
+        "steps": 2205739
+      }
+    },
+    "infected_6__architect": {
+      "attack": 65,
+      "defense": 67,
+      "economy": 51,
+      "tempo": 65,
+      "consistency": 44,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 98.0,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.974,
+        "tech_ww": 0.292,
+        "eco_bld": 0.5,
+        "res": 47.0,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 2058408
+      }
+    },
+    "infected_6__warden": {
+      "attack": 15,
+      "defense": 82,
+      "economy": 4,
+      "tempo": 14,
+      "consistency": 50,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 22.1,
+        "defense_hp": 65.8,
+        "tempo_rate": 0.21,
+        "tech_ww": 0.042,
+        "eco_bld": 0,
+        "res": 3.0,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.5
+        ],
+        "steps": 2176734
+      }
+    },
+    "robots_1__skirmisher": {
+      "attack": 46,
+      "defense": 67,
+      "economy": 15,
+      "tempo": 37,
+      "consistency": 78,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 69.1,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.561,
+        "tech_ww": 0.208,
+        "eco_bld": 0,
+        "res": 6.5,
+        "trio_winrates": [
+          0.5,
+          0.5,
+          0.5,
+          0.25
+        ],
+        "steps": 2334722
+      }
+    },
+    "robots_1__berserker": {
+      "attack": 19,
+      "defense": 75,
+      "economy": 12,
+      "tempo": 18,
+      "consistency": 59,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 29.2,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.272,
+        "tech_ww": 0.125,
+        "eco_bld": 0,
+        "res": 8.0,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.25,
+          0.5
+        ],
+        "steps": 2265706
+      }
+    },
+    "robots_1__sentinel": {
+      "attack": 68,
+      "defense": 67,
+      "economy": 4,
+      "tempo": 66,
+      "consistency": 39,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 101.2,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.991,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 5.3,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.75,
+          0.25
+        ],
+        "steps": 2214827
+      }
+    },
+    "robots_1__architect": {
+      "attack": 75,
+      "defense": 58,
+      "economy": 2,
+      "tempo": 81,
+      "consistency": 50,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 113.0,
+        "defense_hp": 46.7,
+        "tempo_rate": 1.221,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 3.4,
+        "trio_winrates": [
+          0.25,
+          0.75,
+          0.75,
+          0.25
+        ],
+        "steps": 2127851
+      }
+    },
+    "robots_1__warden": {
+      "attack": 27,
+      "defense": 72,
+      "economy": 3,
+      "tempo": 28,
+      "consistency": 59,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 40.8,
+        "defense_hp": 57.5,
+        "tempo_rate": 0.427,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 3.9,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.5,
+          0.5
+        ],
+        "steps": 2345678
+      }
+    },
+    "robots_2__berserker": {
+      "attack": 25,
+      "defense": 67,
+      "economy": 2,
+      "tempo": 27,
+      "consistency": 44,
+      "potential": 87,
+      "raw": {
+        "attack_dmg": 37.2,
+        "defense_hp": 53.7,
+        "tempo_rate": 0.404,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 3.4,
+        "trio_winrates": [
+          0.5,
+          0.75,
+          0.25,
+          0.0
+        ],
+        "steps": 2027146
+      }
+    },
+    "robots_2__architect": {
+      "attack": 21,
+      "defense": 83,
+      "economy": 49,
+      "tempo": 24,
+      "consistency": 26,
+      "potential": 87,
+      "raw": {
+        "attack_dmg": 31.0,
+        "defense_hp": 66.7,
+        "tempo_rate": 0.353,
+        "tech_ww": 0.417,
+        "eco_bld": 0.75,
+        "res": 31.4,
+        "trio_winrates": [
+          1.0,
+          0.5,
+          0.25,
+          0.0
+        ],
+        "steps": 1986981
+      }
+    },
+    "robots_2__warden": {
+      "attack": 25,
+      "defense": 67,
+      "economy": 39,
+      "tempo": 19,
+      "consistency": 11,
+      "potential": 87,
+      "raw": {
+        "attack_dmg": 36.8,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.282,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 10.9,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.0,
+          0.0
+        ],
+        "steps": 1990829
+      }
+    },
+    "robots_3__skirmisher": {
+      "attack": 33,
+      "defense": 75,
+      "economy": 19,
+      "tempo": 31,
+      "consistency": 44,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 49.2,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.469,
+        "tech_ww": 0.125,
+        "eco_bld": 0,
+        "res": 19.4,
+        "trio_winrates": [
+          0.5,
+          0.75,
+          0.25,
+          0.0
+        ],
+        "steps": 2305688
+      }
+    },
+    "robots_3__berserker": {
+      "attack": 31,
+      "defense": 67,
+      "economy": 4,
+      "tempo": 18,
+      "consistency": 59,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 46.8,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.275,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 5.6,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 2347518
+      }
+    },
+    "robots_3__sentinel": {
+      "attack": 49,
+      "defense": 87,
+      "economy": 2,
+      "tempo": 47,
+      "consistency": 44,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 73.3,
+        "defense_hp": 69.8,
+        "tempo_rate": 0.707,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 2.8,
+        "trio_winrates": [
+          0.25,
+          0.75,
+          0.5,
+          0.0
+        ],
+        "steps": 2209226
+      }
+    },
+    "robots_3__architect": {
+      "attack": 16,
+      "defense": 97,
+      "economy": 23,
+      "tempo": 13,
+      "consistency": 78,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 23.6,
+        "defense_hp": 77.5,
+        "tempo_rate": 0.189,
+        "tech_ww": 0.083,
+        "eco_bld": 0,
+        "res": 28.8,
+        "trio_winrates": [
+          0.5,
+          0.75,
+          0.5,
+          0.5
+        ],
+        "steps": 2274543
+      }
+    },
+    "robots_3__warden": {
+      "attack": 22,
+      "defense": 83,
+      "economy": 11,
+      "tempo": 17,
+      "consistency": 44,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 33.3,
+        "defense_hp": 66.3,
+        "tempo_rate": 0.251,
+        "tech_ww": 0.083,
+        "eco_bld": 0.08,
+        "res": 9.4,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 2342210
+      }
+    },
+    "robots_4__skirmisher": {
+      "attack": 38,
+      "defense": 81,
+      "economy": 3,
+      "tempo": 43,
+      "consistency": 25,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 57.6,
+        "defense_hp": 64.8,
+        "tempo_rate": 0.639,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 3.8,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2284279
+      }
+    },
+    "robots_4__berserker": {
+      "attack": 26,
+      "defense": 85,
+      "economy": 3,
+      "tempo": 35,
+      "consistency": 50,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 38.9,
+        "defense_hp": 67.8,
+        "tempo_rate": 0.529,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 3.9,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 2285542
+      }
+    },
+    "robots_4__sentinel": {
+      "attack": 62,
+      "defense": 75,
+      "economy": 7,
+      "tempo": 52,
+      "consistency": 75,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 92.8,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.778,
+        "tech_ww": 0.083,
+        "eco_bld": 0,
+        "res": 4.8,
+        "trio_winrates": [
+          0.5,
+          0.5,
+          0.25,
+          0.25
+        ],
+        "steps": 2211473
+      }
+    },
+    "robots_4__warden": {
+      "attack": 27,
+      "defense": 67,
+      "economy": 10,
+      "tempo": 38,
+      "consistency": 50,
+      "potential": 83,
+      "raw": {
+        "attack_dmg": 40.0,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.569,
+        "tech_ww": 0.125,
+        "eco_bld": 0,
+        "res": 6.0,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.5
+        ],
+        "steps": 2437003
+      }
+    },
+    "robots_5__skirmisher": {
+      "attack": 41,
+      "defense": 66,
+      "economy": 10,
+      "tempo": 38,
+      "consistency": 59,
+      "potential": 84,
+      "raw": {
+        "attack_dmg": 61.0,
+        "defense_hp": 53.0,
+        "tempo_rate": 0.572,
+        "tech_ww": 0.125,
+        "eco_bld": 0,
+        "res": 6.1,
+        "trio_winrates": [
+          0.5,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 2275980
+      }
+    },
+    "robots_5__berserker": {
+      "attack": 26,
+      "defense": 69,
+      "economy": 28,
+      "tempo": 23,
+      "consistency": 59,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 38.8,
+        "defense_hp": 54.9,
+        "tempo_rate": 0.341,
+        "tech_ww": 0.083,
+        "eco_bld": 0.08,
+        "res": 34.9,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.75
+        ],
+        "steps": 2269594
+      }
+    },
+    "robots_5__sentinel": {
+      "attack": 44,
+      "defense": 92,
+      "economy": 21,
+      "tempo": 41,
+      "consistency": 50,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 66.7,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.615,
+        "tech_ww": 0.208,
+        "eco_bld": 0.08,
+        "res": 14.5,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.5
+        ],
+        "steps": 2052937
+      }
+    },
+    "robots_5__architect": {
+      "attack": 20,
+      "defense": 67,
+      "economy": 5,
+      "tempo": 21,
+      "consistency": 11,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 29.9,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.315,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 7.1,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.25,
+          0.0
+        ],
+        "steps": 2200309
+      }
+    },
+    "robots_5__warden": {
+      "attack": 36,
+      "defense": 83,
+      "economy": 14,
+      "tempo": 37,
+      "consistency": 25,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 54.3,
+        "defense_hp": 66.7,
+        "tempo_rate": 0.55,
+        "tech_ww": 0.125,
+        "eco_bld": 0,
+        "res": 11.0,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.25,
+          0.25
+        ],
+        "steps": 2216476
+      }
+    },
+    "robots_6__skirmisher": {
+      "attack": 23,
+      "defense": 75,
+      "economy": 13,
+      "tempo": 24,
+      "consistency": 44,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 35.0,
+        "defense_hp": 59.7,
+        "tempo_rate": 0.365,
+        "tech_ww": 0.167,
+        "eco_bld": 0,
+        "res": 6.6,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.25,
+          0.5
+        ],
+        "steps": 2103612
+      }
+    },
+    "robots_6__berserker": {
+      "attack": 17,
+      "defense": 75,
+      "economy": 2,
+      "tempo": 17,
+      "consistency": 65,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 25.4,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.261,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 3.1,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.5,
+          0.75
+        ],
+        "steps": 2261058
+      }
+    },
+    "robots_6__sentinel": {
+      "attack": 18,
+      "defense": 75,
+      "economy": 46,
+      "tempo": 18,
+      "consistency": 59,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 26.8,
+        "defense_hp": 60.0,
+        "tempo_rate": 0.276,
+        "tech_ww": 0.125,
+        "eco_bld": 0.58,
+        "res": 51.4,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.5,
+          0.5
+        ],
+        "steps": 2205739
+      }
+    },
+    "robots_6__architect": {
+      "attack": 62,
+      "defense": 67,
+      "economy": 3,
+      "tempo": 55,
+      "consistency": 17,
+      "potential": 86,
+      "raw": {
+        "attack_dmg": 93.3,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.826,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 4.7,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.0,
+          0.5
+        ],
+        "steps": 2058408
+      }
+    },
+    "robots_6__warden": {
+      "attack": 17,
+      "defense": 50,
+      "economy": 4,
+      "tempo": 12,
+      "consistency": 26,
+      "potential": 85,
+      "raw": {
+        "attack_dmg": 25.6,
+        "defense_hp": 40.0,
+        "tempo_rate": 0.18,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 5.8,
+        "trio_winrates": [
+          0.5,
+          1.0,
+          0.75,
+          0.0
+        ],
+        "steps": 2176734
+      }
+    },
+    "robots_architect_g2_0": {
+      "attack": 43,
+      "defense": 79,
+      "economy": 25,
+      "tempo": 48,
+      "consistency": 35,
+      "potential": 100,
+      "raw": {
+        "attack_dmg": 64.2,
+        "defense_hp": 63.3,
+        "tempo_rate": 0.72,
+        "tech_ww": 0.375,
+        "eco_bld": 0,
+        "res": 8.9,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 1000119
+      }
+    },
+    "robots_skirmisher_g2_1": {
+      "attack": 18,
+      "defense": 81,
+      "economy": 8,
+      "tempo": 20,
+      "consistency": 65,
+      "potential": 99,
+      "raw": {
+        "attack_dmg": 26.7,
+        "defense_hp": 64.4,
+        "tempo_rate": 0.296,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 12.7,
+        "trio_winrates": [
+          0.5,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 1052987
+      }
+    },
+    "infected_architect_g2_2": {
+      "attack": 83,
+      "defense": 67,
+      "economy": 10,
+      "tempo": 63,
+      "consistency": 35,
+      "potential": 100,
+      "raw": {
+        "attack_dmg": 125.1,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.945,
+        "tech_ww": 0.042,
+        "eco_bld": 0,
+        "res": 11.3,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.25
+        ],
+        "steps": 1000119
+      }
+    },
+    "infected_skirmisher_g2_3": {
+      "attack": 71,
+      "defense": 69,
+      "economy": 32,
+      "tempo": 66,
+      "consistency": 50,
+      "potential": 99,
+      "raw": {
+        "attack_dmg": 107.2,
+        "defense_hp": 55.3,
+        "tempo_rate": 0.993,
+        "tech_ww": 0.333,
+        "eco_bld": 0.33,
+        "res": 17.9,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 1052987
+      }
+    },
+    "robots_berserker_g2_4": {
+      "attack": 47,
+      "defense": 65,
+      "economy": 3,
+      "tempo": 48,
+      "consistency": 65,
+      "potential": 99,
+      "raw": {
+        "attack_dmg": 69.9,
+        "defense_hp": 51.7,
+        "tempo_rate": 0.724,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 4.5,
+        "trio_winrates": [
+          0.5,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 1038974
+      }
+    },
+    "humans_sentinel_g2_5": {
+      "attack": 51,
+      "defense": 58,
+      "economy": 48,
+      "tempo": 49,
+      "consistency": 35,
+      "potential": 99,
+      "raw": {
+        "attack_dmg": 75.9,
+        "defense_hp": 46.5,
+        "tempo_rate": 0.742,
+        "tech_ww": 0.333,
+        "eco_bld": 0.67,
+        "res": 37.3,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 1031679
+      }
+    },
+    "humans_sentinel_g2_6": {
+      "attack": 25,
+      "defense": 92,
+      "economy": 71,
+      "tempo": 30,
+      "consistency": 46,
+      "potential": 100,
+      "raw": {
+        "attack_dmg": 37.4,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.446,
+        "tech_ww": 0.458,
+        "eco_bld": 0.83,
+        "res": 59.8,
+        "trio_winrates": [
+          1.0,
+          0.5,
+          0.5,
+          0.25
+        ],
+        "steps": 1000119
+      }
+    },
+    "humans_sentinel_g2_7": {
+      "attack": 28,
+      "defense": 92,
+      "economy": 48,
+      "tempo": 31,
+      "consistency": 59,
+      "potential": 99,
+      "raw": {
+        "attack_dmg": 41.4,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.471,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 24.4,
+        "trio_winrates": [
+          1.0,
+          0.5,
+          0.5,
+          0.75
+        ],
+        "steps": 1038974
+      }
+    },
+    "humans_sentinel_g2_8": {
+      "attack": 8,
+      "defense": 89,
+      "economy": 36,
+      "tempo": 12,
+      "consistency": 75,
+      "potential": 99,
+      "raw": {
+        "attack_dmg": 12.1,
+        "defense_hp": 70.9,
+        "tempo_rate": 0.178,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 5.9,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          1.0,
+          0.75
+        ],
+        "steps": 1052987
+      }
+    },
+    "humans_architect_g2_9": {
+      "attack": 78,
+      "defense": 83,
+      "economy": 45,
+      "tempo": 76,
+      "consistency": 46,
+      "potential": 100,
+      "raw": {
+        "attack_dmg": 117.5,
+        "defense_hp": 66.7,
+        "tempo_rate": 1.141,
+        "tech_ww": 0.25,
+        "eco_bld": 0.5,
+        "res": 40.6,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.75,
+          0.25
+        ],
+        "steps": 1008579
+      }
+    },
+    "humans_architect_g2_10": {
+      "attack": 26,
+      "defense": 72,
+      "economy": 31,
+      "tempo": 29,
+      "consistency": 35,
+      "potential": 99,
+      "raw": {
+        "attack_dmg": 39.2,
+        "defense_hp": 58.0,
+        "tempo_rate": 0.441,
+        "tech_ww": 0.125,
+        "eco_bld": 0.25,
+        "res": 33.5,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.25
+        ],
+        "steps": 1030855
+      }
+    },
+    "infected_skirmisher_g2_11": {
+      "attack": 29,
+      "defense": 87,
+      "economy": 27,
+      "tempo": 29,
+      "consistency": 11,
+      "potential": 99,
+      "raw": {
+        "attack_dmg": 43.1,
+        "defense_hp": 69.8,
+        "tempo_rate": 0.44,
+        "tech_ww": 0.292,
+        "eco_bld": 0.08,
+        "res": 17.0,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.25,
+          0.0
+        ],
+        "steps": 1038974
+      }
+    },
+    "humans_1": {
+      "attack": 38,
+      "defense": 77,
+      "economy": 8,
+      "tempo": 37,
+      "consistency": 44,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 56.3,
+        "defense_hp": 61.5,
+        "tempo_rate": 0.56,
+        "tech_ww": 0.083,
+        "eco_bld": 0.25,
+        "res": 1.5,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "humans_2": {
+      "attack": 4,
+      "defense": 100,
+      "economy": 39,
+      "tempo": 6,
+      "consistency": 75,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 6.7,
+        "defense_hp": 80.0,
+        "tempo_rate": 0.094,
+        "tech_ww": 0.5,
+        "eco_bld": 1,
+        "res": 5.6,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.75,
+          1.0
+        ],
+        "steps": 200000000
+      }
+    },
+    "humans_5": {
+      "attack": 14,
+      "defense": 67,
+      "economy": 66,
+      "tempo": 18,
+      "consistency": 65,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 20.6,
+        "defense_hp": 53.3,
+        "tempo_rate": 0.264,
+        "tech_ww": 0.375,
+        "eco_bld": 0.75,
+        "res": 59.7,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.75,
+          0.5
+        ],
+        "steps": 200000000
+      }
+    },
+    "humans_6": {
+      "attack": 14,
+      "defense": 85,
+      "economy": 85,
+      "tempo": 19,
+      "consistency": 78,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 21.7,
+        "defense_hp": 67.8,
+        "tempo_rate": 0.286,
+        "tech_ww": 0.458,
+        "eco_bld": 0.75,
+        "res": 81.4,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.75,
+          0.5
+        ],
+        "steps": 200000000
+      }
+    },
+    "infected_1": {
+      "attack": 9,
+      "defense": 50,
+      "economy": 42,
+      "tempo": 12,
+      "consistency": 46,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 13.3,
+        "defense_hp": 40.0,
+        "tempo_rate": 0.174,
+        "tech_ww": 0.25,
+        "eco_bld": 0.08,
+        "res": 43.4,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.25,
+          0.75
+        ],
+        "steps": 200000000
+      }
+    },
+    "infected_2": {
+      "attack": 23,
+      "defense": 92,
+      "economy": 23,
+      "tempo": 29,
+      "consistency": 39,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 34.3,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.438,
+        "tech_ww": 0.292,
+        "eco_bld": 0,
+        "res": 12.0,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.75,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "infected_5": {
+      "attack": 19,
+      "defense": 92,
+      "economy": 58,
+      "tempo": 22,
+      "consistency": 50,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 29.0,
+        "defense_hp": 73.3,
+        "tempo_rate": 0.331,
+        "tech_ww": 0.083,
+        "eco_bld": 0.42,
+        "res": 73.9,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "infected_6": {
+      "attack": 45,
+      "defense": 74,
+      "economy": 29,
+      "tempo": 53,
+      "consistency": 59,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 67.0,
+        "defense_hp": 58.9,
+        "tempo_rate": 0.794,
+        "tech_ww": 0.25,
+        "eco_bld": 0.5,
+        "res": 17.2,
+        "trio_winrates": [
+          0.75,
+          0.75,
+          0.5,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "robots_1": {
+      "attack": 57,
+      "defense": 42,
+      "economy": 4,
+      "tempo": 45,
+      "consistency": 35,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 86.2,
+        "defense_hp": 33.3,
+        "tempo_rate": 0.675,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 6.2,
+        "trio_winrates": [
+          1.0,
+          1.0,
+          0.5,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "robots_2": {
+      "attack": 29,
+      "defense": 71,
+      "economy": 42,
+      "tempo": 30,
+      "consistency": 35,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 43.5,
+        "defense_hp": 57.2,
+        "tempo_rate": 0.447,
+        "tech_ww": 0.458,
+        "eco_bld": 0.92,
+        "res": 15.0,
+        "trio_winrates": [
+          1.0,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "robots_4": {
+      "attack": 87,
+      "defense": 57,
+      "economy": 2,
+      "tempo": 79,
+      "consistency": 25,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 130.8,
+        "defense_hp": 45.8,
+        "tempo_rate": 1.18,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 2.4,
+        "trio_winrates": [
+          0.25,
+          1.0,
+          0.0,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "robots_5": {
+      "attack": 60,
+      "defense": 56,
+      "economy": 15,
+      "tempo": 53,
+      "consistency": 44,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 90.7,
+        "defense_hp": 45.0,
+        "tempo_rate": 0.798,
+        "tech_ww": 0.083,
+        "eco_bld": 0,
+        "res": 16.4,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.25,
+          0.5
+        ],
+        "steps": 200000000
+      }
+    },
+    "robots_6": {
+      "attack": 33,
+      "defense": 74,
+      "economy": 7,
+      "tempo": 44,
+      "consistency": 59,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 48.9,
+        "defense_hp": 58.8,
+        "tempo_rate": 0.655,
+        "tech_ww": 0.0,
+        "eco_bld": 0.17,
+        "res": 8.4,
+        "trio_winrates": [
+          0.75,
+          1.0,
+          0.5,
+          0.5
+        ],
+        "steps": 200000000
+      }
+    },
+    "humans_3": {
+      "attack": 100,
+      "defense": 8,
+      "economy": 6,
+      "tempo": 100,
+      "consistency": 57,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 203.3,
+        "defense_hp": 6.7,
+        "tempo_rate": 2.448,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 9.4,
+        "trio_winrates": [
+          0.25,
+          0.75,
+          0.25,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "humans_4": {
+      "attack": 100,
+      "defense": 25,
+      "economy": 4,
+      "tempo": 100,
+      "consistency": 59,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 168.3,
+        "defense_hp": 20.0,
+        "tempo_rate": 2.235,
+        "tech_ww": 0.0,
+        "eco_bld": 0,
+        "res": 5.6,
+        "trio_winrates": [
+          0.75,
+          0.25,
+          0.5,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "infected_3": {
+      "attack": 100,
+      "defense": 8,
+      "economy": 16,
+      "tempo": 100,
+      "consistency": 75,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 186.3,
+        "defense_hp": 6.7,
+        "tempo_rate": 2.172,
+        "tech_ww": 0.0,
+        "eco_bld": 0.08,
+        "res": 22.4,
+        "trio_winrates": [
+          0.5,
+          0.5,
+          0.25,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "infected_4": {
+      "attack": 100,
+      "defense": 25,
+      "economy": 4,
+      "tempo": 94,
+      "consistency": 78,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 153.3,
+        "defense_hp": 20.0,
+        "tempo_rate": 1.411,
+        "tech_ww": 0.042,
+        "eco_bld": 0,
+        "res": 3.4,
+        "trio_winrates": [
+          0.5,
+          0.5,
+          0.5,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    },
+    "robots_3": {
+      "attack": 100,
+      "defense": 8,
+      "economy": 8,
+      "tempo": 100,
+      "consistency": 44,
+      "potential": 0,
+      "raw": {
+        "attack_dmg": 155.7,
+        "defense_hp": 6.7,
+        "tempo_rate": 1.801,
+        "tech_ww": 0.042,
+        "eco_bld": 0,
+        "res": 9.5,
+        "trio_winrates": [
+          0.75,
+          0.5,
+          0.0,
+          0.25
+        ],
+        "steps": 200000000
+      }
+    }
+  }
+}

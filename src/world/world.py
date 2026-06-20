@@ -124,8 +124,13 @@ def make_player(
     archetype: Optional[str] = None,
     role: str = "pro",
     signable: bool = True,
+    card: Optional[dict] = None,
 ) -> dict:
     pid = player_id(world_id, index)
+    # Real card (derived from the net's measured play, scripts/derive_player_cards.py) when the
+    # player is net-bound; else synthesise from tier (foundation / nets without a card yet).
+    attributes = ({k: int(card[k]) for k in ATTR_KEYS if k in card}
+                  if card else _synth_attributes(rng, tier))
     return {
         "player_id": pid,
         "net_id": net_id,                       # shared-pool link; None in foundation
@@ -136,7 +141,7 @@ def make_player(
         "nickname": nickname,
         "faction": faction or rng.choice(FACTIONS),
         "archetype": archetype or rng.choice(_ARCHETYPES),
-        "attributes": _synth_attributes(rng, tier),
+        "attributes": attributes,
         # latent per-position skill multiplier (A1/A2/A3) — fielding a player at a
         # good position boosts strength; the LLM/manager picks positions + subs.
         "position_affinity": _synth_position_affinity(rng),
@@ -197,6 +202,7 @@ def seed_population_players(world_id: str, manifest: dict, rng: random.Random):
     """
     descendants = manifest.get("descendants", [])
     ancestors = manifest.get("ancestors", [])
+    cards = _load_player_cards()                  # net_id -> {attack, defense, ...} or {}
     nicks = _unique_nicknames(len(descendants) + len(ancestors), rng)
     players: dict[str, dict] = {}
     pro_ids: list[str] = []
@@ -206,18 +212,34 @@ def seed_population_players(world_id: str, manifest: dict, rng: random.Random):
         tier = (i + 0.5) / max(1, len(descendants))  # cosmetic spread; real strength via matches
         p = make_player(world_id, i, nicks[i], rng, tier=tier, net_id=e["net_id"],
                         faction=e["faction"], archetype=e.get("archetype"),
-                        role="pro", signable=True)
+                        role="pro", signable=True, card=cards.get(e["net_id"]))
         players[p["player_id"]] = p
         pro_ids.append(p["player_id"])
         i += 1
     for e in ancestors:
         p = make_player(world_id, i, nicks[i], rng, tier=0.6, net_id=e["net_id"],
                         faction=e["faction"], archetype=e.get("archetype") or "base",
-                        origin="streamer", role="streamer", signable=False)
+                        origin="streamer", role="streamer", signable=False,
+                        card=cards.get(e["net_id"]))
         players[p["player_id"]] = p
         streamer_ids.append(p["player_id"])
         i += 1
     return players, pro_ids, streamer_ids
+
+
+_PLAYER_CARDS_PATH = ROOT / "population" / "player_cards_v1.json"
+_PLAYER_CARDS_CACHE: Optional[dict] = None
+
+
+def _load_player_cards() -> dict:
+    """net_id -> 6-attribute card derived from the net's measured play; {} if absent."""
+    global _PLAYER_CARDS_CACHE
+    if _PLAYER_CARDS_CACHE is None:
+        try:
+            _PLAYER_CARDS_CACHE = json.loads(_PLAYER_CARDS_PATH.read_text(encoding="utf-8")).get("cards", {})
+        except (OSError, ValueError):
+            _PLAYER_CARDS_CACHE = {}
+    return _PLAYER_CARDS_CACHE
 
 
 def new_world(
