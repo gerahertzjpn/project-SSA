@@ -153,7 +153,8 @@ def apply_soloq(world: dict, *, rounds: int = DEFAULT_ROUNDS, seed: int = 0,
     """Run SoloQ over the world's players and write back ratings + history.
     Returns the per-round log. Only SoloQ persists during Season 0."""
     players = world["players"]
-    ratings = {pid: p["soloq_rating"] for pid, p in players.items()}
+    # Reserves are held OUT of season 0 (not yet debuted) -> they don't play SoloQ until introduced.
+    ratings = {pid: p["soloq_rating"] for pid, p in players.items() if p.get("status") != "reserve"}
     new_ratings, log = simulate_soloq(ratings, rounds=rounds, seed=seed, match_fn=match_fn)
     for pid, r in new_ratings.items():
         p = players[pid]

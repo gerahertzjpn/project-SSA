@@ -44,6 +44,31 @@ def test_real_backend_training_ops_state():
         be.cotrain({"target": {"kind": "team"}})        # no net_ids
 
 
+def test_season0_selection_holds_back_reserves_and_introduces_later():
+    import json
+    import pathlib
+    from src.world.world import introduce_reserves
+    mpath = pathlib.Path("population/frozen_population_v1.json")
+    if not mpath.exists():
+        pytest.skip("frozen population manifest not present")
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    nets = [e["net_id"] for e in manifest["descendants"]]
+    # owner NAMES 4 pros + wants 70 to debut -> 66 random-filled; the other 20 are reserves
+    w = new_world("w-s0", FRANCHISES, seed=1, population=manifest,
+                  entered_net_ids=nets[:4], n_enter=70)
+    assert len(w["free_agents"]) == 70 and len(w["reserves"]) == 20
+    entered_nets = {w["players"][pid]["net_id"] for pid in w["free_agents"]}
+    assert set(nets[:4]) <= entered_nets                       # the named ones debut
+    season.bootstrap_world(w, seed=1)
+    # reserves sat out Season 0 entirely (no SoloQ history, still held)
+    assert all(w["players"][pid]["status"] == "reserve" for pid in w["reserves"])
+    assert all(not w["players"][pid]["soloq_history"] for pid in w["reserves"])
+    # introduce some reserves later -> they join the rookies pool (debut as rookies)
+    intro = introduce_reserves(w, w["reserves"][:5])
+    assert len(intro) == 5 and all(pid in w["rookies_pool"] for pid in intro)
+    assert len(w["reserves"]) == 15
+
+
 def test_offseason_depth_signings_build_benches():
     import json
     import pathlib

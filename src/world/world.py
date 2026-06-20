@@ -247,6 +247,38 @@ def _load_player_cards() -> dict:
     return _PLAYER_CARDS_CACHE
 
 
+def _resolve_entered(pro_ids: list[str], entered_ids, n_enter, n_teams: int,
+                     rng: random.Random) -> list[str]:
+    """Which pros DEBUT in Season 0. The owner names some (``entered_ids``) and/or a total
+    (``n_enter`` = X); the rest of X is RANDOM-FILLED. Always >= n_teams*STARTERS so the draft can
+    fill rosters. None/None -> everyone debuts (legacy)."""
+    pro_set = set(pro_ids)
+    chosen = list(dict.fromkeys(pid for pid in (entered_ids or []) if pid in pro_set))  # de-dup, keep order
+    target = int(n_enter) if n_enter else (len(chosen) if chosen else len(pro_ids))
+    target = max(target, n_teams * STARTERS)        # must be enough to field every club
+    target = min(target, len(pro_ids))
+    if len(chosen) >= target:
+        return chosen[:target]
+    rest = [pid for pid in pro_ids if pid not in set(chosen)]
+    rng.shuffle(rest)
+    return chosen + rest[: target - len(chosen)]
+
+
+def introduce_reserves(world: dict, player_ids: list[str]) -> list[str]:
+    """Debut held-out RESERVE players later (at the start of ANY season): move them into the
+    rookies pool so they get drafted — IN ADDITION to forked/trained rookies. Returns the ids
+    actually introduced."""
+    reserve_set = set(world.get("reserves", []))
+    intro = [pid for pid in player_ids if pid in reserve_set and pid in world["players"]]
+    for pid in intro:
+        world["players"][pid]["status"] = "rookie"     # debut via the rookie draft
+        if pid not in world.setdefault("rookies_pool", []):
+            world["rookies_pool"].append(pid)
+    introduced = set(intro)
+    world["reserves"] = [pid for pid in world.get("reserves", []) if pid not in introduced]
+    return intro
+
+
 def new_world(
     world_id: str,
     franchises: list[dict],
@@ -256,6 +288,8 @@ def new_world(
     seed: Optional[int] = None,
     config: Optional[dict] = None,
     population: Optional[str | dict] = None,
+    entered_net_ids: Optional[list[str]] = None,
+    n_enter: Optional[int] = None,
 ) -> dict:
     """Create a clean-slate world: a diverse player pool (all free agents) and
     one team per franchise (no league assignment, no money — Season 0 gives
@@ -275,6 +309,7 @@ def new_world(
     n_teams = len(teams)
     cfg = dict(config or {})
     streamers: list[str] = []
+    reserves: list[str] = []          # pros held out of Season 0 (debut later via introduce_reserves)
 
     if population is not None:
         # Seed the pool from the frozen trained population: 90 pros (draftable) + 18
@@ -284,7 +319,17 @@ def new_world(
         manifest = population if isinstance(population, dict) else json.loads(
             Path(population).read_text(encoding="utf-8"))
         players, pro_ids, streamers = seed_population_players(world_id, manifest, rng)
-        free_agents = list(pro_ids)
+        # Season-0 SELECTION: the owner names which pros debut now (by NET id, stable across worlds)
+        # + a total X (random-fill the rest); the others become RESERVES held out of S0 (no SoloQ,
+        # undraftable) until introduced later.
+        net_to_pid = {players[pid].get("net_id"): pid for pid in pro_ids}
+        named_pids = [net_to_pid[nid] for nid in (entered_net_ids or []) if nid in net_to_pid]
+        entered = _resolve_entered(pro_ids, named_pids, n_enter, n_teams, rng)
+        entered_set = set(entered)
+        reserves = [pid for pid in pro_ids if pid not in entered_set]
+        for pid in reserves:
+            players[pid]["status"] = "reserve"
+        free_agents = list(entered)
         cfg.setdefault("population_source", manifest.get("source_run") or str(population))
         cfg.setdefault("population_manifest",
                        population if isinstance(population, str) else "population/frozen_population_v1.json")
@@ -312,6 +357,7 @@ def new_world(
         "players": players,
         "free_agents": free_agents,
         "streamers": streamers,      # ancestor-bound free agents: SoloQ only, never signable
+        "reserves": reserves,        # pros held out of S0; debut later via introduce_reserves
         "rookies_pool": [],
         "calendar": [],
         "history": [],
