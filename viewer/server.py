@@ -289,12 +289,20 @@ def start_world_offseason_job(world_id: str) -> dict:
             lines = [str(e.get("text") or e.get("message") or e.get("note") or "")
                      for e in events if isinstance(e, dict)]
             st = report.get("stages", {})
-            # NOTE: the offseason will launch REAL background training here (start_training_job)
-            # once the single-net PPO loop is wired (backends.train_one_net); the tracker
-            # (TRAINING_JOBS + /api/world/<id>/training + the UI panel) is already in place.
+            # Launch REAL background PPO (backends.train_one_net) for the season's training picks —
+            # the lowest-rated rostered pros — each tracked for progress; a player's card re-derives
+            # when its job finishes. Runs in background threads, so the offseason returns immediately.
+            rostered = {pid for t in world["teams"].values() for pid in t.get("roster", [])}
+            picks = sorted((p for p in world["players"].values()
+                            if p.get("role") == "pro" and p.get("net_id") and p["player_id"] in rostered),
+                           key=lambda p: p.get("soloq_rating", 0))[:3]
+            steps = int((report.get("config") or {}).get("training_steps") or 200_000)
+            launched = [start_training_job(world_id, p["net_id"], p.get("nickname", p["player_id"]),
+                                           steps, "skill_up") for p in picks]
             _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
                 "next_season": report.get("next_season"),
                 "rookies": (st.get("rookie_draft") or {}).get("n", 0),
+                "training_launched": len(launched),
                 "log": [ln for ln in lines if ln][:40],
             })
         except Exception as error:  # noqa: BLE001

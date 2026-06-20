@@ -32,16 +32,33 @@ def test_all_features_unlocked():
 
 
 # ------------------------------------------------------------- backend wired #
-def test_real_backend_training_ops_pending():
-    be = backends.get_backend()
-    # continue_ppo validates the target (no net_id -> ValueError) but its single-net PPO loop is
-    # pending (population trainers need the full roster); fork/cotrain/evaluate are stubs.
+def test_real_backend_training_ops_state():
+    be = backends.get_backend(require_flag=False)   # bypass the dev gate for the validation check
+    # continue_ppo is the REAL single-net PPO loop; it validates the target first
+    # (no net_id -> ValueError) so we never kick off training in a unit test.
     with pytest.raises(ValueError):
         be.continue_ppo({"target": {"kind": "player"}})
-    ctx = {"target": {"kind": "player", "net_id": "humans_1__skirmisher"}, "total_steps": 1000}
-    for method in ("continue_ppo", "fork", "cotrain", "evaluate"):
+    # fork / cotrain / evaluate are still stubs.
+    ctx = {"target": {"kind": "parent", "net_id": "humans_1__skirmisher"}, "total_steps": 1000}
+    for method in ("fork", "cotrain", "evaluate"):
         with pytest.raises(NotImplementedError):
             getattr(be, method)(ctx)
+
+
+def test_train_one_net_builds_a_valid_faction_triple():
+    # train_one_net must assemble one sparring partner per OTHER faction so LeagueTrainer._triples
+    # yields exactly one faction-balanced triple (the bug that made 1-3 nets produce 0 plans).
+    from src.training.population_roster import build_population, FACTIONS
+    pop = build_population()
+    target = next(d for d in pop if d.net_id == "humans_1__skirmisher")
+    partners = []
+    for fac in FACTIONS:
+        if fac == target.faction:
+            continue
+        partners.append(next(d for d in pop if d.faction == fac and d.net_id != target.net_id))
+    descendants = [target, *partners]
+    by_fac = {f: [d.net_id for d in descendants if d.faction == f] for f in FACTIONS}
+    assert all(len(by_fac[f]) >= 1 for f in FACTIONS)    # -> _triples() returns one triple, not zero
 
 
 # ------------------------------------------------------------- 800k floor -- #

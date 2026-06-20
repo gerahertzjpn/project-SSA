@@ -59,21 +59,77 @@ def _rederive_card(net_id: str) -> None:
 
 
 def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None) -> dict:
-    """REAL single-net PPO — continue training ONE population net for ~steps_goal steps, then
-    save its checkpoint + re-derive its card.
+    """REAL single-net PPO — continue training ONE population net for ~steps_goal steps vs the
+    league opponent mix (frozen ancestors + co-evo snapshot + scripted), then save ONLY this net's
+    checkpoint, merge its registry row, and re-derive its card.
 
-    IN PROGRESS: the existing LeagueTrainer / PopulationTrainer plan-builders require the FULL
-    faction-locked roster (verified: 1 and even 3 nets -> 0 episode plans), so they cannot train
-    a single net. The real implementation is a custom self-play loop — place the target net in all
-    three controlled slots vs the frozen opponent pool via population._run_episode_collect, then
-    population.update_policy on the merged rollout — checkpoint/registry/card-rederive helpers below
-    are ready (_merge_registry_steps, _rederive_card). Wiring that loop is the next step."""
+    The LeagueTrainer schedules controlled play in faction-balanced TRIPLES (one net per faction;
+    `_triples()` needs >=1 descendant per faction or it yields zero plans). So to continue-train a
+    single target we add ONE sparring partner from each OTHER faction — that forms exactly one valid
+    triple. The target trains faction-locked in its slot; the two partners co-train in-memory only and
+    are DISCARDED (never saved), so their on-disk checkpoints are untouched. Faithful to the original
+    league recipe, and it isolates the write to the target alone."""
+    import torch
+    from pathlib import Path
+    from src.training.league_trainer import LeagueTrainer, LeagueConfig, FACTIONS
     from src.training.population_roster import build_population
-    if not any(d.net_id == net_id for d in build_population()):
+    from src.training.policy import to_cpu_state_dict
+
+    pop = build_population()
+    target = next((d for d in pop if d.net_id == net_id), None)
+    if target is None:
         raise ValueError(f"net {net_id!r} is not in the population roster")
-    raise NotImplementedError(
-        "single-net PPO loop pending: population trainers need the full roster (1-3 nets -> 0 plans); "
-        f"a custom self-play loop for {net_id} (target x3 vs frozen pool) is the next build")
+
+    # one sparring partner per OTHER faction -> exactly one faction-balanced triple
+    partners = []
+    for fac in FACTIONS:
+        if fac == target.faction:
+            continue
+        cand = next((d for d in pop if d.faction == fac and d.net_id != net_id), None)
+        if cand is None:
+            raise RuntimeError(f"no sparring partner available for faction {fac!r}")
+        partners.append(cand)
+    descendants = [target, *partners]
+
+    # target_steps_per_net is effectively unbounded here; we stop on the target's own step delta.
+    # No co-evo descendant opponents: the only descendants loaded are the controlled triple itself,
+    # so the "descendants" opponent branch would have nobody to draw -> train vs frozen ancestors
+    # (the rush pressure) + scripted baselines, which is the faithful single-net opponent mix.
+    cfg = LeagueConfig(run_dir=run_dir, workers=1, episodes_per_triple=2,
+                       target_steps_per_net=1_000_000_000_000,
+                       ancestor_opponent_prob=0.7, descendant_opponent_prob=0.0)
+    trainer = LeagueTrainer(cfg, descendants=descendants)   # auto-resumes the 3 nets + builds a pool
+    fresh_pool = getattr(trainer, "pool_path", None)        # the pool_v0 we just created (cleanup later)
+
+    start = int(trainer.steps_by_net[net_id])
+    update = 0
+    try:
+        while int(trainer.steps_by_net[net_id]) - start < steps_goal:
+            update += 1
+            trainer.run_update(update, pool=None)
+            if progress_cb:
+                progress_cb(min(steps_goal, int(trainer.steps_by_net[net_id]) - start), steps_goal)
+
+        # save ONLY the target (mirror LeagueTrainer.save_checkpoints for one net) — never the partners
+        net = trainer.nets[net_id]
+        net_dir = Path(run_dir) / "nets" / net_id
+        net_dir.mkdir(parents=True, exist_ok=True)
+        torch.save({"policy_state": to_cpu_state_dict(net), "update": update, "net_id": net_id,
+                    "genotype_hash": target.genotype_hash(),
+                    "steps_trained": int(trainer.steps_by_net[net_id])}, net_dir / "latest.pt")
+        _merge_registry_steps(run_dir, net_id, int(trainer.steps_by_net[net_id]), update)
+        _rederive_card(net_id)
+    finally:
+        # drop the transient pool we wrote in __init__ so the canonical run dir stays clean
+        if fresh_pool and Path(fresh_pool).name.startswith("pool_v0") and Path(fresh_pool).exists():
+            try:
+                Path(fresh_pool).unlink()
+            except OSError:
+                pass
+
+    return {"net_id": net_id, "updates": update,
+            "steps_added": int(trainer.steps_by_net[net_id]) - start,
+            "steps_trained": int(trainer.steps_by_net[net_id])}
 
 
 class RealTrainingBackend(training_ops.TrainingBackend):
