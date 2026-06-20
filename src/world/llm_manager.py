@@ -300,9 +300,9 @@ def _llm_auction_bid(world: dict, team: dict, llm, item_value: int, profile) -> 
     roster = ", ".join(f"{world['players'][pid]['nickname']}"
                        f"(SoloQ{int(world['players'][pid]['soloq_rating'])})"
                        for pid in team["roster"]) or "пусто"
+    # NB: the structured-output API rejects "minimum"/"maximum" on integer — clamp in code instead.
     schema = {"type": "object", "additionalProperties": False,
-              "properties": {"max_bid": {"type": "integer", "minimum": 0},
-                             "reason": {"type": "string"}},
+              "properties": {"max_bid": {"type": "integer"}, "reason": {"type": "string"}},
               "required": ["max_bid"]}
     prompt = (f"Аукцион тренировок. Клуб {team['name']}. Казна: {team['treasury']}. "
               f"Состав: {roster}. Ориентир стоимости слота: ~{item_value} "

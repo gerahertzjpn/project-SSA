@@ -478,20 +478,78 @@ async function advance() {
   } finally { el("advanceBtn").disabled = state.busy; }
 }
 
-async function offseason() {
+// Off-season settings + ETA -------------------------------------------------- //
+const STEPS_PER_SEC = 300;   // ~26 воркеров (оценка); серийно (один тяжёлый запуск за раз)
+const LAUNCH_CAP = 6;        // server TRAINING_LAUNCH_CAP
+function fmtMin(min) {
+  if (min < 1) return "<1 мин";
+  if (min < 90) return `≈ ${Math.round(min)} мин`;
+  return `≈ ${(min / 60).toFixed(1)} ч`;
+}
+function osSettings() {
+  const v = (id) => Math.max(0, parseInt(el(id).value || "0", 10) || 0);
+  return {
+    soloq_rounds: v("osRounds"),
+    auction: { slots: v("osSlots"), steps_per_slot: v("osSlotS") },
+    rookies: { n: v("osRookN"), steps: v("osRookS") },
+    free_agents: { max: v("osFaN"), steps: v("osFaS") },
+  };
+}
+function updateEta() {
+  const s = osSettings();
+  const jobs = Math.min(s.auction.slots, LAUNCH_CAP);
+  const totalSteps = jobs * s.auction.steps_per_slot;           // launched serially after the off-season
+  const min = totalSteps / STEPS_PER_SEC / 60;
+  el("osEta").innerHTML =
+    `⏱ Тренировки нейронок: до <b>${jobs}</b> запусков × ${s.auction.steps_per_slot.toLocaleString("ru")} шагов ` +
+    `<b>${fmtMin(min)}</b> <span class="muted">(серийно, в фоне после межсезонья — можно следить в трекере)</span>` +
+    (s.rookies.n ? `<br>👶 ${s.rookies.n} новичков (форк) — карточки создаются сразу` : "") +
+    (s.auction.slots > LAUNCH_CAP ? `<br><span class="muted">Аукцион разыграет ${s.auction.slots} слотов, но запустится максимум ${LAUNCH_CAP} тренировок (остальное в очередь/банк).</span>` : "");
+}
+function openOsModal() {
   if (!state.worldId || state.busy) return;
+  updateEta();
+  show("osModal", true);
+}
+async function submitOffseason() {
+  show("osModal", false);
   el("offseasonBtn").disabled = true;
   try {
-    const job = await runJob(`/api/world/${state.worldId}/offseason`, { method: "POST" },
-      "Межсезонье — SoloQ, аукцион, трансферы");
+    const job = await runJob(`/api/world/${state.worldId}/offseason`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(osSettings()),
+    }, "Межсезонье — SoloQ, аукцион, трансферы");
     const s = job.summary || {};
     flashResult(`<div class="season-done">Межсезонье закрыто → сезон <strong>${s.next_season}</strong>. ` +
-      `Новичков: ${s.rookies || 0}. Аукцион: ${s.training_auctioned || 0} слотов, запущено тренировок: ${s.training_launched || 0}.</div>` +
-      ((s.log || []).length ? `<div class="offseason-log">${s.log.map((l) => `<div>· ${esc(l)}</div>`).join("")}</div>` : ""));
+      `Новичков: ${s.rookies || 0}. Аукцион: ${s.training_auctioned || 0} слотов, запущено тренировок: ${s.training_launched || 0}.</div>`);
+    if ((s.chronicle || []).length) replayChronicle(s.chronicle);
     await openWorld(state.worldId);
   } catch (e) {
     flashResult(`<div class="result-error">Ошибка межсезонья: ${esc(e.message)}</div>`);
   } finally { el("offseasonBtn").disabled = state.busy; }
+}
+
+// Off-season chronicle replay (simulation of what happened) ------------------- //
+const KIND_ICON = { stage: "🗓️", train: "🏋️", draft: "✍️", playbook: "📋", fallback: "⚠️",
+  transfer: "🔁", training: "🏋️" };
+function replayChronicle(chronicle) {
+  const feed = el("chronFeed");
+  feed.innerHTML = "";
+  show("chronModal", true);
+  let i = 0;
+  const step = () => {
+    if (i >= chronicle.length) return;
+    const e = chronicle[i++];
+    const row = document.createElement("div");
+    row.className = "chron-row" + (e.source === "ЛЛМ" ? " llm" : "") + (e.kind === "fallback" ? " warn" : "");
+    row.innerHTML = `<span class="cr-ic">${KIND_ICON[e.kind] || "•"}</span>` +
+      `<span class="cr-msg">${esc(e.msg)}</span>` +
+      (e.source ? `<span class="cr-src">${esc(e.source)}</span>` : "");
+    feed.appendChild(row);
+    feed.scrollTop = feed.scrollHeight;
+    setTimeout(step, 220);
+  };
+  step();
 }
 
 async function refreshWorldList(selectId) {
@@ -531,7 +589,12 @@ async function init() {
   }
   el("startBtn").addEventListener("click", start);
   el("advanceBtn").addEventListener("click", advance);
-  el("offseasonBtn").addEventListener("click", offseason);
+  el("offseasonBtn").addEventListener("click", openOsModal);
+  el("osRun").addEventListener("click", submitOffseason);
+  el("osCancel").addEventListener("click", () => show("osModal", false));
+  el("chronClose").addEventListener("click", () => show("chronModal", false));
+  ["osRounds", "osSlots", "osSlotS", "osRookN", "osRookS", "osFaN", "osFaS"].forEach((id) =>
+    el(id).addEventListener("input", updateEta));
   el("openBtn").addEventListener("click", () => {
     const wid = el("worldSelect").value;
     if (wid) openWorld(wid);

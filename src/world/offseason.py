@@ -173,7 +173,7 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
                   fa_budget: freeagents.FreeAgentBudget | None = None,
                   training_config: training_auction.TrainingConfig | None = None,
                   backend=None, llm=None, seed: Optional[int] = None,
-                  soloq_match_fn=None,
+                  soloq_match_fn=None, auction_slots: int | None = None,
                   soloq_rounds: int = soloq.DEFAULT_ROUNDS) -> dict:
     """Run the off-season stages and return a structured report (incl. a step-by-step
     event feed). The training stage previews the COMBINED launch (team + rookies +
@@ -216,7 +216,8 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     #    team_jobs are produced by the market unless the caller injected them (tests/owner). Then the
     #    combined queue (team + rookie + free-agent) is previewed; execution is gated on a backend.
     if training_jobs is None:
-        team_jobs, auction = run_training_market(world, cfg, llm=llm, feed=feed, seed=sp.seed())
+        team_jobs, auction = run_training_market(world, cfg, llm=llm, feed=feed, seed=sp.seed(),
+                                                 n_slots=auction_slots)
     else:
         team_jobs, auction = list(training_jobs), None
     queue = build_training_queue(team_jobs, rookie_jobs, fa_jobs)

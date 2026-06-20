@@ -82,6 +82,41 @@
         <div id="panel-history" class="tab-panel is-hidden"></div>
       </div>
     </section>
+
+    <!-- Off-season settings -->
+    <div id="osModal" class="os-overlay is-hidden">
+      <div class="os-card">
+        <h3>⟳ Межсезонье — настройки</h3>
+        <p class="muted">Задай бюджеты и параметры. Менеджеры (LLM) сами решают ставки на аукционе
+          и как тратить выигранные сертификаты.</p>
+        <div class="os-fields">
+          <label>Раундов SoloQ<input id="osRounds" type="number" min="1" max="30" value="10"></label>
+          <label>Слотов аукциона<input id="osSlots" type="number" min="0" max="20" value="6"></label>
+          <label>Шагов на слот<input id="osSlotS" type="number" min="800000" step="100000" value="1000000"></label>
+          <label>Новичков (форк)<input id="osRookN" type="number" min="0" max="12" value="0"></label>
+          <label>Шагов на новичка<input id="osRookS" type="number" min="800000" step="100000" value="1000000"></label>
+          <label>Свободных агентов<input id="osFaN" type="number" min="0" max="10" value="0"></label>
+          <label>Шагов на агента<input id="osFaS" type="number" min="800000" step="100000" value="800000"></label>
+        </div>
+        <div id="osEta" class="os-eta"></div>
+        <div class="os-actions">
+          <button id="osRun" class="primary">Запустить межсезонье</button>
+          <button id="osCancel" class="ghost">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Off-season chronicle replay (SIMULATION of what happened) -->
+    <div id="chronModal" class="chron-overlay is-hidden">
+      <div class="chron-card">
+        <div class="chron-head">
+          <strong>📻 Хроника межсезонья</strong>
+          <span class="chron-sim">воспроизведение событий · симуляция</span>
+          <button id="chronClose" class="ghost">✕</button>
+        </div>
+        <div id="chronFeed" class="chron-feed"></div>
+      </div>
+    </div>
   </main>
 
   <script src="./world.js"></script>

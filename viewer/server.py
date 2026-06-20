@@ -266,11 +266,30 @@ def start_world_advance_job(world_id: str) -> dict:
     return {"job_id": job_id, "status": "running"}
 
 
-def start_world_offseason_job(world_id: str) -> dict:
-    """Run the OFF-SEASON on a worker thread: SoloQ (net-real) + transfers + rookies + training
-    preview, then roll to the next season + save. Returns a job_id. (Real PPO training stays
-    gated behind real_training_backend; until it's on, training is previewed, not executed -> a
-    net's card only changes once training actually runs.)"""
+def _offseason_budgets(settings: dict):
+    """Build the owner-set off-season knobs (rookies / free agents / auction / SoloQ rounds) from
+    the UI settings payload. Empty/zero sections -> None (that stage trains nobody)."""
+    from src.world import freeagents as fa, rookies as rk, soloq as sq, training_auction as ta
+    from src.world.training_ops import MIN_TRAINING_STEPS as FLOOR
+    s = settings or {}
+    rs, fs, asec = s.get("rookies") or {}, s.get("free_agents") or {}, s.get("auction") or {}
+    rookie_budget = (rk.RookieBudget(n_rookies=int(rs["n"]),
+                                     steps_per_rookie=max(FLOOR, int(rs.get("steps") or FLOOR)))
+                     if int(rs.get("n", 0)) > 0 else None)
+    fa_budget = (fa.FreeAgentBudget(max_agents=int(fs["max"]),
+                                    steps_per_agent=max(FLOOR, int(fs.get("steps") or FLOOR)))
+                 if int(fs.get("max", 0)) > 0 else None)
+    cfg = ta.TrainingConfig(steps_per_slot=max(FLOOR, int(asec.get("steps_per_slot") or ta.DEFAULT_SLOT_STEPS)))
+    slots = int(asec["slots"]) if asec.get("slots") else None
+    rounds = int(s.get("soloq_rounds") or sq.DEFAULT_ROUNDS)
+    return rookie_budget, fa_budget, cfg, slots, rounds
+
+
+def start_world_offseason_job(world_id: str, settings: dict | None = None) -> dict:
+    """Run the OFF-SEASON on a worker thread with the OWNER's settings (rookie/free-agent budgets,
+    auction slot count + size, SoloQ rounds): SoloQ -> rookies -> auction (LLM bids) -> spend ->
+    transfers -> draft -> playbooks, then roll to the next season + save. Launches the won training
+    jobs (tracked) and returns the full event CHRONICLE for the live-replay panel."""
     world_flags.assert_enabled("ui_world_tab")
     job_id = uuid.uuid4().hex
     with WORLD_JOBS_LOCK:
@@ -282,27 +301,27 @@ def start_world_offseason_job(world_id: str) -> dict:
             from src.world import offseason
             world = load_world(world_id)
             soloq_mf, _ = _world_net_fns(world)
-            _set_world_job(job_id, phase="SoloQ + трансферы + рукизы (LLM-менеджер)…")
-            report = offseason.run_offseason(world, soloq_match_fn=soloq_mf, llm=_world_llm())
+            rookie_budget, fa_budget, cfg, slots, rounds = _offseason_budgets(settings)
+            _set_world_job(job_id, phase="SoloQ + аукцион + трансферы (LLM-менеджер)…")
+            report = offseason.run_offseason(
+                world, soloq_match_fn=soloq_mf, llm=_world_llm(), rookie_budget=rookie_budget,
+                fa_budget=fa_budget, training_config=cfg, auction_slots=slots, soloq_rounds=rounds)
             save_world(world)
-            events = report.get("events", []) or []
-            lines = [str(e.get("msg") or e.get("text") or e.get("message") or e.get("note") or "")
-                     for e in events if isinstance(e, dict)]
+            events = [e for e in (report.get("events") or []) if isinstance(e, dict) and e.get("msg")]
+            chronicle = [{"seq": e.get("seq"), "kind": e.get("kind"), "msg": e.get("msg"),
+                          "source": e.get("source"), "team": e.get("team_id")} for e in events][:200]
             st = report.get("stages", {})
-            # run_offseason already ran the TRAINING AUCTION (managers bid via the LLM) -> certificates
-            # -> SPEND (LLM picks op + target), producing the pending team jobs. Launch them as REAL
-            # background training, capped so the serialized queue stays sane; the rest are reported as
-            # skipped (no silent truncation). The tracker shows live progress.
             train_jobs = (st.get("training", {}) or {}).get("jobs", []) or []
             launched = [start_training_job(world_id, j, j.get("player_name"))
                         for j in train_jobs[:TRAINING_LAUNCH_CAP]]
             _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
                 "next_season": report.get("next_season"),
-                "rookies": (st.get("rookie_draft") or {}).get("n", 0),
+                "rookies": (st.get("rookies") or {}).get("n", 0),
                 "training_auctioned": ((st.get("training", {}) or {}).get("auction") or {}).get("awarded", 0),
                 "training_launched": len(launched),
                 "training_skipped": max(0, len(train_jobs) - len(launched)),
-                "log": [ln for ln in lines if ln][:50],
+                "chronicle": chronicle,
+                "log": [e["msg"] for e in events][:50],
             })
         except Exception as error:  # noqa: BLE001
             traceback.print_exc()
@@ -1184,10 +1203,13 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             return
         world_post = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/(?P<action>advance|offseason)$", path)
         if world_post:
-            starter = (start_world_advance_job if world_post.group("action") == "advance"
-                       else start_world_offseason_job)
+            action = world_post.group("action")
             try:
-                self._send_json(starter(world_post.group("wid")))
+                if action == "offseason":
+                    settings = self._read_json() if int(self.headers.get("Content-Length") or 0) else None
+                    self._send_json(start_world_offseason_job(world_post.group("wid"), settings))
+                else:
+                    self._send_json(start_world_advance_job(world_post.group("wid")))
             except world_flags.FeatureLocked as error:
                 self._send_json({"error": str(error), "locked": True,
                                  "server": server_info()}, status=403)
