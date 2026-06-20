@@ -163,7 +163,7 @@ function switchTab(name) {
   state.tab = name;
   document.querySelectorAll("#tabbar .tab").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.tab === name));
-  ["leagues", "ratings", "schedule", "teams", "draft", "broadcast", "managers", "history"].forEach((t) =>
+  ["leagues", "matrix", "ratings", "schedule", "teams", "draft", "broadcast", "managers", "history"].forEach((t) =>
     show(`panel-${t}`, t === name));
   loadTab(name);
 }
@@ -175,6 +175,7 @@ async function loadTab(name) {
   panel.innerHTML = `<div class="muted loading">Загрузка…</div>`;
   try {
     if (name === "leagues") renderLeagues((await api("/leagues")).leagues);
+    else if (name === "matrix") renderMatrix(await api("/matrix"));
     else if (name === "ratings") { state.players = (await api("/players")).players; renderRatings(); }
     else if (name === "schedule") renderSchedule(await api("/schedule"));
     else if (name === "draft") renderDraft(await api("/draft"));
@@ -198,26 +199,69 @@ const LEAGUE_TABS = [
 function renderLeagues(leagues) {
   state._leagues = leagues;
   if (!LEAGUE_TABS.some((t) => t.key === state.leagueKey)) state.leagueKey = "upper";
+  const dlt = (d) => `${d > 0 ? "+" : ""}${d}`;
   const rows = (leagues[state.leagueKey] || []).map((t) =>
     `<tr class="ltrow" data-team="${esc(t.team_id)}">` +
       `<td class="lt-place">${t.place}</td>` +
       `<td class="lt-ab">${emblem(t.team_id)}<span>${esc(t.abbrev)}</span></td>` +
       `<td class="lt-nm">${esc(t.name)}</td>` +
-      `<td class="lt-roster">${(t.roster || []).map(esc).join(" · ")}</td>` +
+      `<td class="lt-wl">${t.series_wins}<span class="muted">–</span>${t.series_losses}</td>` +
+      `<td class="lt-dl ${t.map_diff >= 0 ? "up" : "down"}">${dlt(t.map_diff)}</td>` +
+      `<td class="lt-pts">${t.points}</td>` +
       `<td class="lt-pw">${t.power}</td>` +
-      `<td class="lt-ti">${"★".repeat(Math.min(5, t.titles || 0)) || "—"}</td>` +
+      `<td class="lt-roster">${(t.roster || []).map(esc).join(" · ")}</td>` +
     `</tr>`).join("");
   el("panel-leagues").innerHTML =
     `<div class="seg">${LEAGUE_TABS.map((t) =>
       `<button class="seg-btn${t.key === state.leagueKey ? " is-active" : ""}" data-lg="${t.key}">` +
       `${esc(t.label)}<small>${esc(t.sub)}</small></button>`).join("")}</div>` +
     `<table class="ltable"><thead><tr>` +
-      `<th>#</th><th>Аб.</th><th>Команда</th><th>Состав</th><th>Power</th><th>Титулы</th>` +
+      `<th>#</th><th>Аб.</th><th>Команда</th><th title="Победы–поражения в сериях">В–П</th>` +
+      `<th title="Дельта выигранных карт">Δ</th><th title="Очки за победы в сериях">Очки</th>` +
+      `<th>Power</th><th>Состав</th>` +
     `</tr></thead><tbody>${rows}</tbody></table>`;
   el("panel-leagues").querySelectorAll(".seg-btn").forEach((b) =>
     b.addEventListener("click", () => { state.leagueKey = b.dataset.lg; renderLeagues(state._leagues); }));
   el("panel-leagues").querySelectorAll(".ltrow").forEach((r) =>
     r.addEventListener("click", () => openTeam(r.dataset.team)));
+}
+
+// --------------------------------------------------------------------------- //
+// Tab: Очные — H2H matrix (who-beat-whom + score) + current positions
+// --------------------------------------------------------------------------- //
+function renderMatrix(data) {
+  const groups = (data && data.groups) || [];
+  const dlt = (d) => `${d > 0 ? "+" : ""}${d}`;
+  const anyPlayed = groups.some((g) => (g.cells || []).some((row) => row.some((c) => c)));
+  const block = (g) => {
+    const ids = g.teams.map((t) => t.team_id);
+    const cols = g.teams.map((t) =>
+      `<th class="mx-col" title="${esc(t.name)}">${emblem(t.team_id, "sm")}</th>`).join("");
+    const body = g.teams.map((t, i) => {
+      const cells = (g.cells[i] || []).map((c, j) => {
+        if (i === j) return `<td class="mx-self">—</td>`;
+        if (!c) return `<td class="mx-na" title="${esc(g.teams[j].name)}">·</td>`;
+        return `<td class="mx-cell ${c.won ? "w" : "l"}" title="${esc(t.abbrev)} ${c.for}:${c.against} ${esc(g.teams[j].abbrev)}">${c.for}:${c.against}</td>`;
+      }).join("");
+      return `<tr class="mx-tr" data-team="${esc(t.team_id)}">` +
+        `<th class="mx-row"><span class="mx-pl">${t.place}</span>${emblem(t.team_id)}` +
+          `<span class="mx-ab">${esc(t.abbrev)}</span></th>${cells}` +
+        `<td class="mx-pts"><b>${t.points}</b></td>` +
+        `<td class="mx-wl">${t.series_wins}–${t.series_losses}</td>` +
+        `<td class="mx-dl ${t.map_diff >= 0 ? "up" : "down"}">${dlt(t.map_diff)}</td></tr>`;
+    }).join("");
+    return `<div class="mx-group"><h3>${esc(g.label)}</h3><div class="mx-wrap">` +
+      `<table class="mx-grid"><thead><tr><th class="mx-corner">#</th>${cols}` +
+      `<th class="mx-h">Очки</th><th class="mx-h">В–П</th><th class="mx-h">Δ</th></tr></thead>` +
+      `<tbody>${body}</tbody></table></div></div>`;
+  };
+  el("panel-matrix").innerHTML =
+    `<div class="mx-cap">Сезон ${data.season} · кто кого обыграл и с каким счётом. ` +
+      `Позиция в лиге: очки → дельта карт → жребий.</div>` +
+    (anyPlayed ? "" : `<div class="muted" style="margin:8px 0">Сезон ещё не сыгран — сыграй сезон, чтобы увидеть очные встречи.</div>`) +
+    groups.map(block).join("");
+  el("panel-matrix").querySelectorAll(".mx-tr").forEach((r) =>
+    r.querySelector(".mx-row").addEventListener("click", () => openTeam(r.dataset.team)));
 }
 
 // --------------------------------------------------------------------------- //

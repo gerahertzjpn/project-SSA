@@ -327,6 +327,12 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .lt-roster { color: #8493a4; font-size: 12px; }
 .lt-pw, .rt-rr { text-align: right; font-weight: 800; color: #8fb8ff; }
 .lt-ti { color: #ffd58a; }
+.lt-wl { font-weight: 700; color: #cdd9e6; text-align: center; width: 56px; white-space: nowrap; }
+.lt-wl .muted { margin: 0 2px; }
+.lt-dl { text-align: center; font-weight: 800; width: 44px; }
+.lt-dl.up { color: #6ee7a8; }
+.lt-dl.down { color: #ff8a8a; }
+.lt-pts { text-align: center; font-weight: 900; color: #ffd58a; font-size: 15px; width: 52px; }
 .rt-ar { color: #8fb8ff; font-size: 12px; }
 .rt-tm { color: #aeb9c6; }
 
@@ -510,6 +516,35 @@ button.ghost.required { border-color: #2f6df0; color: #fff; background: #18222f;
 .tlogo svg { width: 22px; height: 22px; display: block; border-radius: 5px; }
 .tlogo.lg svg { width: 40px; height: 40px; border-radius: 8px; }
 .tlogo.xl svg { width: 56px; height: 56px; border-radius: 10px; }
+.tlogo.sm svg { width: 16px; height: 16px; border-radius: 4px; }
+
+/* Очные — H2H matrix */
+.mx-cap { color: #8493a4; font-size: 12px; margin: 12px 0 4px; }
+.mx-group { margin-top: 18px; }
+.mx-group h3 { margin: 0 0 8px; color: #cdd9e6; font-size: 14px; }
+.mx-wrap { overflow-x: auto; border: 1px solid #1c2530; border-radius: 10px; }
+.mx-grid { border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+.mx-grid th, .mx-grid td { border: 1px solid #161d27; text-align: center; }
+.mx-corner { background: #11161d; width: 116px; color: #6b7886; font-weight: 800; }
+.mx-col { background: #11161d; padding: 5px 4px; width: 30px; }
+.mx-col .tlogo { vertical-align: middle; }
+.mx-h { background: #11161d; color: #8493a4; font-weight: 700; padding: 4px 7px; font-size: 11px; }
+.mx-row { background: #11161d; cursor: pointer; padding: 5px 8px; text-align: left;
+  min-width: 116px; white-space: nowrap; }
+.mx-row:hover { background: #161f2b; }
+.mx-row .tlogo { vertical-align: middle; margin: 0 5px; }
+.mx-pl { color: #6b7886; font-weight: 800; display: inline-block; min-width: 16px; text-align: right; }
+.mx-ab { font-weight: 800; color: #cdd9e6; vertical-align: middle; }
+.mx-self { background: #0d1117; color: #2f3946; }
+.mx-na { color: #3a4654; }
+.mx-cell { font-weight: 700; padding: 5px 6px; }
+.mx-cell.w { color: #6ee7a8; background: rgba(110, 231, 168, .07); }
+.mx-cell.l { color: #ff8a8a; background: rgba(255, 138, 138, .05); }
+.mx-pts { font-weight: 900; color: #ffd58a; padding: 0 9px; }
+.mx-wl { color: #cdd9e6; font-weight: 700; padding: 0 7px; }
+.mx-dl { font-weight: 800; padding: 0 8px; }
+.mx-dl.up { color: #6ee7a8; }
+.mx-dl.down { color: #ff8a8a; }
 
 /* Draft board — grouped by round, with logos */
 .draft-round { margin-bottom: 18px; }

@@ -233,8 +233,11 @@
   const snap = () => snaps[CUR];
   function teamRow(id) {
     const ts = snap().teamSnap[id];
+    const r = ts.rec;
     return { team_id: id, name: tname(id), abbrev: tabbr(id), league: ts.league, group: ts.group,
       power: Math.round(ts.power), titles: ts.titles, treasury: Math.round(ts.treasury), place: ts.place,
+      points: r.sw * 3, series_wins: r.sw, series_losses: r.sl,
+      maps_won: r.mw, maps_lost: r.ml, map_diff: r.mw - r.ml,
       roster: ts.roster.map((pid) => pById[pid].nickname), elo: Math.round(ts.power) };
   }
   function leaguesView() {
@@ -244,6 +247,29 @@
       .sort((a, b) => snap().teamSnap[a].place - snap().teamSnap[b].place)
       .map((id, i) => ({ ...teamRow(id), place: i + 1 }));
     return { upper: f("upper"), lower_A: f("lower", "A"), lower_Z: f("lower", "Z") };
+  }
+  function matrixView() {
+    const lv = leaguesView();
+    const grid = (teamsRows, label) => {
+      const ids = teamsRows.map((t) => t.team_id);
+      const idset = new Set(ids);
+      const h2h = {};
+      snap().fixtures.forEach((e) => {
+        if (e.stage !== "league" || !idset.has(e.home) || !idset.has(e.away)) return;
+        h2h[`${e.home}|${e.away}`] = { for: e.maps_home, against: e.maps_away, won: e.winner === e.home };
+        h2h[`${e.away}|${e.home}`] = { for: e.maps_away, against: e.maps_home, won: e.winner === e.away };
+      });
+      const cells = ids.map((r) => ids.map((c) => (r === c ? null : (h2h[`${r}|${c}`] || null))));
+      const teams = teamsRows.map((t) => ({ team_id: t.team_id, abbrev: t.abbrev, name: t.name,
+        place: t.place, points: t.points, map_diff: t.map_diff,
+        series_wins: t.series_wins, series_losses: t.series_losses }));
+      return { league: teamsRows[0] ? teamsRows[0].league : null, label, teams, cells };
+    };
+    return { season: CUR, groups: [
+      grid(lv.upper, "Высшая лига"),
+      grid(lv.lower_A, "Низшая · группа A"),
+      grid(lv.lower_Z, "Низшая · группа Z"),
+    ] };
   }
   function playerView(p) {
     const hist = p.ratingHist.slice(0, CUR + 2).map(Math.round);
@@ -360,6 +386,7 @@
     const path = url.replace(/^\/api\/world\/[^/]+/, "");
     if (path === "") return { world: overview() };       // real /api/world/<id> wraps in {world}
     if (path === "/leagues") return { season: CUR, leagues: leaguesView() };
+    if (path === "/matrix") return matrixView();
     if (path === "/players") return { season: CUR, players: rankedPlayers() };
     if (path === "/schedule") return { season: CUR, regular: snap().fixtures, bracket: snap().bracket, n_matches: snap().fixtures.length };
     if (path === "/draft") return draftView();

@@ -64,14 +64,17 @@ def make_play_fn(world: dict, seed: Optional[int] = None, *,
         p_home = expected_score(sh, sa)
         need = best_of // 2 + 1
         mh = ma = 0
+        cores_h = cores_a = 0          # hidden granular stat: cores smashed per map won
         while mh < need and ma < need:
             if rng.random() < p_home:
                 mh += 1
+                cores_h += rng.randint(1, 3)
             else:
                 ma += 1
+                cores_a += rng.randint(1, 3)
         winner = home if mh > ma else away
         result = {"home": home, "away": away, "maps_home": mh, "maps_away": ma,
-                  "winner": winner}
+                  "winner": winner, "cores_home": cores_h, "cores_away": cores_a}
         if meta:
             result["playbook"] = meta
             if record_positions:   # attribute the series to each starter's position
@@ -180,6 +183,16 @@ def _lower_final_ranking(champ: str, finalists: list[str],
     return head + [r["team_id"] for r in rest]
 
 
+_PUBLIC_STANDING_KEYS = ("series_wins", "series_losses", "maps_won", "maps_lost",
+                         "map_diff", "points", "place")
+
+
+def _public_standings(rows: list[dict]) -> dict:
+    """Standings keyed by team_id with only the PUBLIC columns — cores_destroyed
+    (the hidden tiebreaker) is intentionally excluded so it never reaches the UI."""
+    return {r["team_id"]: {k: r[k] for k in _PUBLIC_STANDING_KEYS} for r in rows}
+
+
 def run_regular_season(world: dict, play: Optional[PlayFn] = None, *,
                        seed: Optional[int] = None,
                        settle_economy: bool = True, record: bool = True) -> dict:
@@ -251,6 +264,13 @@ def run_regular_season(world: dict, play: Optional[PlayFn] = None, *,
         "lower_champion": lo_play["champion"],
         "promoted": promoted,
         "relegated": relegated,
+        # group standings the Leagues/Table tabs read — points + map delta are PUBLIC,
+        # cores_destroyed is the hidden tiebreaker and is deliberately dropped here.
+        "standings": {
+            "upper": _public_standings(up_rows),
+            "lower_A": _public_standings(a_rows),
+            "lower_Z": _public_standings(z_rows),
+        },
     }
     world.setdefault("history", []).append(summary)
     return summary

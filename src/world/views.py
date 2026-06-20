@@ -172,29 +172,56 @@ def _last_ranking(world: dict, league: str) -> Optional[list]:
     return hist[-1].get("upper_ranking" if league == "upper" else "lower_ranking")
 
 
-def _team_row(world: dict, t: dict, place: int) -> dict:
+def _standings_key(league: str, group: Optional[str]) -> str:
+    return "upper" if league == "upper" else f"lower_{group}"
+
+
+def _last_standings(world: dict, league: str, group: Optional[str]) -> dict:
+    """The most recent season's group standings (points/record/place) keyed by
+    team_id, or empty before any season has been played."""
+    hist = world.get("history") or []
+    if not hist:
+        return {}
+    return (hist[-1].get("standings") or {}).get(_standings_key(league, group), {})
+
+
+def _team_row(world: dict, t: dict, place: int, stand: Optional[dict] = None) -> dict:
+    s = stand or {}
     return {
         "team_id": t["team_id"], "name": t["name"], "abbrev": t["abbrev"],
         "league": t.get("league"), "group": t.get("group"),
         "power": team_power(world, t), "elo": round(float(t.get("elo", 0))),
         "titles": t.get("titles", 0),
         "treasury": round(float(t.get("treasury", 0))), "place": place,
+        # points + map delta are visible; cores (the hidden tiebreaker) never appear
+        "points": s.get("points", 0),
+        "series_wins": s.get("series_wins", 0), "series_losses": s.get("series_losses", 0),
+        "maps_won": s.get("maps_won", 0), "maps_lost": s.get("maps_lost", 0),
+        "map_diff": s.get("map_diff", 0),
         "roster": [world["players"][pid]["nickname"]
                    for pid in t.get("roster", []) if pid in world["players"]],
     }
 
 
 def _table(world: dict, league: str, group: Optional[str]) -> list[dict]:
+    standings = _last_standings(world, league, group)
+    if standings:
+        # Promotion/relegation is applied as soon as a season ends, so CURRENT league
+        # membership already differs from who actually played. Drive the table off the
+        # recorded participants (in their final places) so points/positions are coherent.
+        ordered = sorted(standings.items(), key=lambda kv: kv[1].get("place", 99))
+        rows = []
+        for i, (tid, s) in enumerate(ordered):
+            if tid not in world["teams"]:
+                continue
+            row = _team_row(world, world["teams"][tid], i + 1, s)
+            row["league"], row["group"] = league, group   # the campaign's slot, not the post-promo one
+            rows.append(row)
+        return rows
+    # No season played yet -> current membership ordered by global power.
     teams = [t for t in world["teams"].values()
              if t.get("league") == league and (group is None or t.get("group") == group)]
-    ranking = _last_ranking(world, league)
-
-    def place_key(t):
-        if ranking and t["team_id"] in ranking:
-            return (0, ranking.index(t["team_id"]))
-        return (1, -team_power(world, t))         # no ranking yet -> by global power
-
-    teams.sort(key=place_key)
+    teams.sort(key=lambda t: -team_power(world, t))
     return [_team_row(world, t, i + 1) for i, t in enumerate(teams)]
 
 
@@ -315,3 +342,44 @@ def schedule_view(world: dict, season: Optional[int] = None) -> dict:
                        for s in PLAYOFF_STAGE_ORDER if s in by_stage]
     return {"season": season, "regular": regular, "bracket": bracket,
             "n_matches": len(evs)}
+
+
+# --------------------------------------------------------------------------- #
+# League table tab — H2H matrix (who-beat-whom + score) + current positions
+# --------------------------------------------------------------------------- #
+def league_matrix(world: dict, season: Optional[int] = None) -> dict:
+    """For the 'Таблица' tab: per group, a square head-to-head grid (cell = the
+    series score from the row team's view) plus the current standings (place +
+    points + map delta). Built from the recorded group-stage calendar; the hidden
+    cores tiebreaker is never exposed — only the resulting place is."""
+    hist = world.get("history") or []
+    if season is None:
+        season = hist[-1]["season"] if hist else world.get("season", 0)
+
+    def grid(league: str, group: Optional[str], label: str) -> dict:
+        rows = _table(world, league, group)              # ordered by place, with points
+        ids = [r["team_id"] for r in rows]
+        idset = set(ids)
+        h2h: dict = {}
+        for e in world.get("calendar", []):
+            if e.get("season") != season or e.get("stage") != "league" or not e.get("played"):
+                continue
+            h, a = e.get("home"), e.get("away")
+            if h not in idset or a not in idset:
+                continue
+            mh, ma = int(e.get("maps_home") or 0), int(e.get("maps_away") or 0)
+            h2h[(h, a)] = {"for": mh, "against": ma, "won": e.get("winner") == h}
+            h2h[(a, h)] = {"for": ma, "against": mh, "won": e.get("winner") == a}
+        cells = [[None if r == c else h2h.get((r, c)) for c in ids] for r in ids]
+        teams = [{"team_id": r["team_id"], "abbrev": r["abbrev"], "name": r["name"],
+                  "place": r["place"], "points": r["points"], "map_diff": r["map_diff"],
+                  "series_wins": r["series_wins"], "series_losses": r["series_losses"]}
+                 for r in rows]
+        return {"league": league, "group": group, "label": label,
+                "teams": teams, "cells": cells}
+
+    return {"season": season, "groups": [
+        grid("upper", None, "Высшая лига"),
+        grid("lower", "A", "Низшая · группа A"),
+        grid("lower", "Z", "Низшая · группа Z"),
+    ]}

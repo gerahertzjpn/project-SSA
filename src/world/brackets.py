@@ -9,12 +9,21 @@ or a deterministic test stub.
 """
 from __future__ import annotations
 
+import hashlib
 from typing import Callable
 
 PlayFn = Callable[[str, str, int], dict]
 
 LEAGUE_BEST_OF = 3
 PLAYOFF_BEST_OF = 5
+POINTS_PER_WIN = 3       # league points awarded for a series win (no draws in Bo-N)
+
+
+def _stable_tiebreak(team_id: str) -> int:
+    """A deterministic-but-arbitrary per-team value used as the FINAL standings
+    tiebreaker — when points, map delta AND cores destroyed all tie, 'random'
+    decides (we make it reproducible from the id so a season replays identically)."""
+    return int(hashlib.sha1(team_id.encode("utf-8")).hexdigest()[:8], 16)
 
 
 # --------------------------------------------------------------------------- #
@@ -34,13 +43,17 @@ def play_group(team_ids: list[str], play: PlayFn, best_of: int = LEAGUE_BEST_OF)
 
 
 def standings(team_ids: list[str], results: list[dict]) -> list[dict]:
-    """Rank a group. Sort key: series wins, then map differential, then maps won.
+    """Rank a group. The position is decided, in order:
+      1. ``points`` (POINTS_PER_WIN per series win)
+      2. map differential (the visible 'дельта' tiebreaker)
+      3. ``cores_destroyed`` — a HIDDEN granular stat (cores smashed across won maps)
+      4. a stable pseudo-random value (when all three tie, 'random' decides)
 
     Returns rows ``{team_id, series_wins, series_losses, maps_won, maps_lost,
-    map_diff, place}`` in finishing order.
-    """
+    map_diff, points, cores_destroyed, place}`` in finishing order. ``cores_destroyed``
+    is computed but must NOT be surfaced to the user (it only breaks ties)."""
     rec = {tid: {"team_id": tid, "series_wins": 0, "series_losses": 0,
-                 "maps_won": 0, "maps_lost": 0} for tid in team_ids}
+                 "maps_won": 0, "maps_lost": 0, "cores_destroyed": 0} for tid in team_ids}
     for r in results:
         h, a = r["home"], r["away"]
         if h not in rec or a not in rec:
@@ -49,6 +62,8 @@ def standings(team_ids: list[str], results: list[dict]) -> list[dict]:
         rec[h]["maps_lost"] += r["maps_away"]
         rec[a]["maps_won"] += r["maps_away"]
         rec[a]["maps_lost"] += r["maps_home"]
+        rec[h]["cores_destroyed"] += int(r.get("cores_home", 0) or 0)
+        rec[a]["cores_destroyed"] += int(r.get("cores_away", 0) or 0)
         if r["maps_home"] > r["maps_away"]:
             rec[h]["series_wins"] += 1
             rec[a]["series_losses"] += 1
@@ -58,7 +73,9 @@ def standings(team_ids: list[str], results: list[dict]) -> list[dict]:
     rows = list(rec.values())
     for row in rows:
         row["map_diff"] = row["maps_won"] - row["maps_lost"]
-    rows.sort(key=lambda x: (-x["series_wins"], -x["map_diff"], -x["maps_won"], x["team_id"]))
+        row["points"] = row["series_wins"] * POINTS_PER_WIN
+    rows.sort(key=lambda x: (-x["points"], -x["map_diff"], -x["cores_destroyed"],
+                             _stable_tiebreak(x["team_id"])))
     for i, row in enumerate(rows):
         row["place"] = i + 1
     return rows
