@@ -243,6 +243,42 @@ def start_world_advance_job(world_id: str) -> dict:
     return {"job_id": job_id, "status": "running"}
 
 
+def start_world_offseason_job(world_id: str) -> dict:
+    """Run the OFF-SEASON on a worker thread: SoloQ (net-real) + transfers + rookies + training
+    preview, then roll to the next season + save. Returns a job_id. (Real PPO training stays
+    gated behind real_training_backend; until it's on, training is previewed, not executed -> a
+    net's card only changes once training actually runs.)"""
+    world_flags.assert_enabled("ui_world_tab")
+    job_id = uuid.uuid4().hex
+    with WORLD_JOBS_LOCK:
+        WORLD_JOBS[job_id] = {"status": "running", "kind": "offseason", "world_id": world_id,
+                              "phase": "Межсезонье…", "summary": None, "error": None}
+
+    def worker() -> None:
+        try:
+            from src.world import offseason
+            world = load_world(world_id)
+            soloq_mf, _ = _world_net_fns(world)
+            _set_world_job(job_id, phase="SoloQ + трансферы + рукизы…")
+            report = offseason.run_offseason(world, soloq_match_fn=soloq_mf)
+            save_world(world)
+            events = report.get("events", []) or []
+            lines = [str(e.get("text") or e.get("message") or e.get("note") or "")
+                     for e in events if isinstance(e, dict)]
+            st = report.get("stages", {})
+            _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
+                "next_season": report.get("next_season"),
+                "rookies": (st.get("rookie_draft") or {}).get("n", 0),
+                "log": [ln for ln in lines if ln][:40],
+            })
+        except Exception as error:  # noqa: BLE001
+            traceback.print_exc()
+            _set_world_job(job_id, status="error", error=str(error))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {"job_id": job_id, "status": "running"}
+
+
 def world_job_status(job_id: str) -> dict:
     with WORLD_JOBS_LOCK:
         job = WORLD_JOBS.get(job_id)
@@ -998,10 +1034,12 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error), "server": server_info()}, status=400)
             return
-        world_advance = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/advance$", path)
-        if world_advance:
+        world_post = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/(?P<action>advance|offseason)$", path)
+        if world_post:
+            starter = (start_world_advance_job if world_post.group("action") == "advance"
+                       else start_world_offseason_job)
             try:
-                self._send_json(start_world_advance_job(world_advance.group("wid")))
+                self._send_json(starter(world_post.group("wid")))
             except world_flags.FeatureLocked as error:
                 self._send_json({"error": str(error), "locked": True,
                                  "server": server_info()}, status=403)

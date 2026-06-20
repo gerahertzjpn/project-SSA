@@ -208,6 +208,7 @@ function renderView(w) {
   renderHistory(w.history || []);
   show("rosterPanel", false);
   el("advanceBtn").disabled = state.busy;
+  el("offseasonBtn").disabled = state.busy;
 }
 
 async function openWorld(worldId) {
@@ -263,6 +264,27 @@ async function advance() {
   }
 }
 
+async function offseason() {
+  if (!state.worldId || state.busy) return;
+  el("offseasonBtn").disabled = true;
+  try {
+    const job = await runJob(`/api/world/${state.worldId}/offseason`, { method: "POST" },
+      "Межсезонье — SoloQ, трансферы, рукизы");
+    const s = job.summary || {};
+    el("resultPanel").classList.remove("is-hidden");
+    el("resultPanel").innerHTML =
+      `<div class="season-done">Межсезонье закрыто → сезон <strong>${s.next_season}</strong>. ` +
+      `Новичков: ${s.rookies || 0}.</div>` +
+      ((s.log || []).length ? `<div class="offseason-log">${s.log.map((l) => `<div>· ${l}</div>`).join("")}</div>` : "");
+    await openWorld(state.worldId);
+  } catch (e) {
+    el("resultPanel").classList.remove("is-hidden");
+    el("resultPanel").innerHTML = `<div class="result-error">Ошибка межсезонья: ${e.message}</div>`;
+  } finally {
+    el("offseasonBtn").disabled = state.busy;
+  }
+}
+
 async function refreshWorldList(selectId) {
   try {
     const info = await fetchJson("/api/world/info");
@@ -302,6 +324,7 @@ async function init() {
   }
   el("startBtn").addEventListener("click", start);
   el("advanceBtn").addEventListener("click", advance);
+  el("offseasonBtn").addEventListener("click", offseason);
   el("openBtn").addEventListener("click", () => {
     const wid = el("worldSelect").value;
     if (wid) openWorld(wid);
