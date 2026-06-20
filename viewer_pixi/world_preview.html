@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World — предпросмотр · 3v3 Autobattler</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./world.css" />
+</head>
+<body>
+  <main class="world">
+    <header class="world-head">
+      <a class="brand-menu" href="./home.html" title="Главное меню" aria-label="Главное меню">☰</a>
+      <div class="world-title">
+        <h1>World — предпросмотр <span class="wip-badge">debug</span></h1>
+        <p>Захардкоженный полный цикл (сезоны 0 · 1 · 2). Никаких запросов: LLM, тренировки, аукционы и
+          межсезонья — фиксированные; счёт матчей — случайный. Только чтобы посмотреть, как это выглядит.</p>
+      </div>
+    </header>
+
+    <div id="stageBanner" class="preview-banner"></div>
+    <section id="previewMain" class="preview-main">Загрузка…</section>
+    <div id="previewNav" class="preview-nav"></div>
+  </main>
+
+  <script src="./world_preview.js"></script>
+</body>
+</html>
