@@ -419,6 +419,33 @@ def world_view_payload(world_id: str) -> dict:
                        "streamers": len(w.get("streamers", [])), "rostered": len(pid_team)}}
 
 
+# -- tabbed-UI read models (src/world/views.py) ---------------------------------- #
+def world_players_payload(world_id: str) -> dict:
+    from src.world import views
+    w = load_world(world_id)
+    return {"season": w["season"], "players": views.ranked_players(w)}
+
+
+def world_leagues_payload(world_id: str) -> dict:
+    from src.world import views
+    w = load_world(world_id)
+    return {"season": w["season"], "leagues": views.league_tables(w)}
+
+
+def world_team_payload(world_id: str, team_id: str) -> dict:
+    from src.world import views
+    w = load_world(world_id)
+    if team_id not in w["teams"]:
+        raise KeyError(f"team {team_id!r} not in world")
+    return {"season": w["season"], "team": views.team_view(w, team_id)}
+
+
+def world_schedule_payload(world_id: str, season=None) -> dict:
+    from src.world import views
+    w = load_world(world_id)
+    return views.schedule_view(w, season)
+
+
 REPLAY_DIR = ROOT / "replays"
 MAX_UI_RUNS = 100
 MAX_POLICY_CHECKPOINT_SCAN = 120
@@ -1021,6 +1048,25 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
         world_train = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/training$", path)
         if world_train:
             self._send_json(training_jobs_status(world_train.group("wid")))
+            return
+        for pat, fn in (
+            (r"^/api/world/(?P<wid>world-[0-9a-f]+)/players$", world_players_payload),
+            (r"^/api/world/(?P<wid>world-[0-9a-f]+)/leagues$", world_leagues_payload),
+            (r"^/api/world/(?P<wid>world-[0-9a-f]+)/schedule$", world_schedule_payload),
+        ):
+            m = re.match(pat, path)
+            if m:
+                try:
+                    self._send_json(fn(m.group("wid")))
+                except Exception as error:  # noqa: BLE001
+                    self._send_json({"error": str(error)}, status=404)
+                return
+        world_team = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/team/(?P<tid>[\w-]+)$", path)
+        if world_team:
+            try:
+                self._send_json(world_team_payload(world_team.group("wid"), world_team.group("tid")))
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error)}, status=404)
             return
         if path.startswith("/api/world/"):
             wid = path[len("/api/world/"):]
