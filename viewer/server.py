@@ -459,6 +459,10 @@ def world_view_payload(world_id: str) -> dict:
                 "lower_champion": _team_name(w, s["lower_champion"])}
                for s in w.get("history", [])[-10:]]
     reserves = [pcard(pid) for pid in w.get("reserves", []) if pid in players]
+    live = None
+    if w.get("live_season"):
+        from src.world import live_season
+        live = live_season.view(w)
     fr_by_id = {f["franchise_id"]: f for f in franchise_specs()}
     emblems = {t["team_id"]: emblem_svg(fr_by_id[t["franchise_id"]])
                for t in w["teams"].values() if t.get("franchise_id") in fr_by_id}
@@ -468,6 +472,7 @@ def world_view_payload(world_id: str) -> dict:
             "commentary": (w.get("commentary") or [])[-40:],
             "manager_comments": (w.get("manager_comments") or [])[-22:],
             "last_offseason": w.get("last_offseason"),
+            "live": live,
             "counts": {"players": len(players), "free_agents": len(w.get("free_agents", [])),
                        "streamers": len(w.get("streamers", [])), "rostered": len(pid_team),
                        "reserves": len(reserves)}}
@@ -504,6 +509,45 @@ def world_matrix_payload(world_id: str, season=None) -> dict:
     from src.world import views
     w = load_world(world_id)
     return views.league_matrix(w, season)
+
+
+# --- day-by-day live season (synchronous; fast league sim for a responsive reveal) ----- #
+def world_live_view_payload(world_id: str) -> dict:
+    from src.world import live_season
+    return {"live": live_season.view(load_world(world_id))}
+
+
+def world_live_start(world_id: str) -> dict:
+    """Begin a day-by-day season. Allowed only when a fresh season is ready to play
+    (phase 'regular'/unset) — never while an off-season is still due."""
+    world_flags.assert_enabled("ui_world_tab")
+    from src.world import live_season
+    w = load_world(world_id)
+    if w.get("phase") in ("offseason_due",):
+        raise ValueError("сначала проведи межсезонье")
+    if live_season.is_live(w):
+        return {"live": live_season.view(w)}
+    live_season.start(w)
+    save_world(w)
+    return {"live": live_season.view(w)}
+
+
+def world_live_play_day(world_id: str) -> dict:
+    from src.world import live_season
+    w = load_world(world_id)
+    result = live_season.play_day(w)
+    save_world(w)
+    return {"result": result, "live": live_season.view(w)}
+
+
+def world_live_watch(world_id: str, body: dict) -> dict:
+    """Play ONE upcoming fixture as the official result and return its per-map sequence
+    (the no-scrub live broadcast). The UI reveals the maps with a short delay between them."""
+    from src.world import live_season
+    w = load_world(world_id)
+    result = live_season.play_series_live(w, body.get("home"), body.get("away"))
+    save_world(w)
+    return {"result": result, "live": live_season.view(w)}
 
 
 def world_draft_payload(world_id: str) -> dict:
@@ -1160,6 +1204,7 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/leagues$", world_leagues_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/schedule$", world_schedule_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/matrix$", world_matrix_payload),
+            (r"^/api/world/(?P<wid>world-[0-9a-f]+)/live$", world_live_view_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/draft$", world_draft_payload),
         ):
             m = re.match(pat, path)
@@ -1303,6 +1348,22 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
                 body = self._read_json() if int(self.headers.get("Content-Length") or 0) else {}
                 self._send_json(introduce_reserves_action(world_intro.group("wid"),
                                                           body.get("player_ids") or []))
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error), "server": server_info()}, status=400)
+            return
+        world_live = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/live/(?P<action>start|day|watch)$", path)
+        if world_live:
+            wid, action = world_live.group("wid"), world_live.group("action")
+            try:
+                if action == "start":
+                    self._send_json(world_live_start(wid))
+                elif action == "day":
+                    self._send_json(world_live_play_day(wid))
+                else:
+                    body = self._read_json() if int(self.headers.get("Content-Length") or 0) else {}
+                    self._send_json(world_live_watch(wid, body))
+            except world_flags.FeatureLocked as error:
+                self._send_json({"error": str(error), "locked": True, "server": server_info()}, status=403)
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error), "server": server_info()}, status=400)
             return
