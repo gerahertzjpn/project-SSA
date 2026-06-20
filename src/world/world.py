@@ -98,6 +98,11 @@ def _synth_attributes(rng: random.Random, tier: float) -> dict:
 
 
 POSITIONS = ("A1", "A2", "A3")
+STARTERS = len(POSITIONS)        # exactly 3 are FIELDED each series (the playbook lineup)
+# Clubs draft 3 STARTERS, then build DEPTH (a bench) on the market up to MAX_ROSTER — only then do
+# mid-series substitutions have someone to bring in. (With 90 pros / 22 clubs, drafting benches at
+# bootstrap would starve the transfer market, so depth is a market decision, like real football.)
+MAX_ROSTER = 5                   # cap: 3 starters + up to 2 bench
 
 
 def _synth_position_affinity(rng: random.Random) -> dict:

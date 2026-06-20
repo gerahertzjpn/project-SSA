@@ -16,7 +16,7 @@ from src.core import rng as seeds
 from src.regionals.elo import expected_score
 from src.world import brackets, calendar as cal, economy, playbook, soloq, team_elo
 from src.world.world import (
-    get_player, lower_teams, roster_players, upper_teams,
+    STARTERS, get_player, lower_teams, roster_players, upper_teams,
 )
 
 UPPER_SIZE = 10
@@ -310,7 +310,7 @@ def bootstrap_world(world: dict, *, seed: Optional[int] = None,
     if len(all_team_ids) != UPPER_SIZE + LOWER_SIZE:
         # Foundation supports the canonical 22; degrade gracefully otherwise.
         pass
-    balanced_draft(world, all_team_ids, sp.random(), target_size=3, pick_fn=draft_pick_fn)
+    balanced_draft(world, all_team_ids, sp.random(), target_size=STARTERS, pick_fn=draft_pick_fn)
 
     # 3. Bootstrap leagues
     lower_ids = all_team_ids[:LOWER_SIZE]

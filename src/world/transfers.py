@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Optional
 
 from src.world import economy
-from src.world.world import get_player, get_team
+from src.world.world import MAX_ROSTER, get_player, get_team
 
 MAX_REQUESTS_PER_WINDOW = 3
 ROUNDS = 2
@@ -124,8 +124,8 @@ def resolve_free_agent_auction(world: dict, bids: list[dict], *, seed: int = 0) 
         contenders = [b for b in valid if b["amount"] == top]
         winner = rng.choice(contenders)
         team = get_team(world, winner["team_id"])
-        if team["treasury"] < top:
-            continue  # can't afford -> auction void for this player
+        if team["treasury"] < top or len(team["roster"]) >= MAX_ROSTER:
+            continue  # can't afford / roster full -> auction void for this player
         team["treasury"] -= top
         _move_player_to_team(world, pid, team["team_id"])
         # the winning bid is a SIGNING BONUS — it burns (no selling club receives it).
@@ -160,7 +160,7 @@ def resolve_transfer_auction(world: dict, bids: list[dict], *,
         top = max(b["amount"] for b in valid)
         winner = rng.choice([b for b in valid if b["amount"] == top])
         buyer = get_team(world, winner["team_id"])
-        if buyer["treasury"] < top:
+        if buyer["treasury"] < top or len(buyer["roster"]) >= MAX_ROSTER:
             continue
         buyer["treasury"] -= top
         get_team(world, owner)["treasury"] += top          # owner is PAID (real transfer fee)
@@ -202,8 +202,8 @@ def propose_transfer(world: dict, window: TransferWindow, buyer_team: str,
     buyer = get_team(world, buyer_team)
     if buyer["treasury"] < offer:
         return {"status": "rejected", "reason": "insufficient treasury"}
-    if len(buyer["roster"]) < 3:
-        pass  # buying up is always allowed
+    if len(buyer["roster"]) >= MAX_ROSTER:
+        return {"status": "rejected", "reason": f"roster full (max {MAX_ROSTER})"}
     if not accept_fn(world, player, offer):
         return {"status": "declined", "reason": "owner declined"}
 

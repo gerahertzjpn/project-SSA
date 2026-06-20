@@ -232,12 +232,20 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
                 f"{preview['n_requests']} заявок, {preview['total_steps']:,} шагов; "
                 f"исполнение — {execution['reason']}")
 
-    # 5. Transfers (rules ready; LLM decisions gated). When the LLM market runs it
-    #    appends bid/buy/sell/decline events to the feed (see llm_market.py).
+    # 5. Transfers — clubs below the roster cap sign DEPTH (free agents) for the bench, so mid-
+    #    series substitutions have someone to bring in. The manager (LLM) decides bids; the sealed
+    #    FA auction resolves multi-club contention (several clubs can want the same player).
+    fa_bids = llm_manager.transfer_bids(world, llm=llm, feed=feed)
+    signings = transfers.resolve_free_agent_auction(world, fa_bids, seed=sp.seed())
+    for s in signings:
+        nick = world["players"][s["player_id"]]["nickname"]
+        tname = world["teams"][s["team_id"]]["name"]
+        events.emit(feed, "transfer", f"Трансфер: {tname} подписал {nick} "
+                    f"(бонус {s['signing_bonus']}, сгорает)", **s)
     report["stages"]["transfers"] = {
-        "window_rounds": transfers.ROUNDS,
+        "window_rounds": transfers.ROUNDS, "signings": len(signings),
         "llm_decisions": feature_flags.ui_state("llm_manager"),
-        "note": "правила окна готовы; решения LLM-менеджера в разработке",
+        "note": "клубы подписывают глубину состава (свободные агенты); аукцион решает спор",
     }
 
     # 6. Rookie draft (lower league, weakest-first) — chronicle each signing

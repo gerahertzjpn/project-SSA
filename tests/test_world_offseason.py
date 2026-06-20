@@ -44,6 +44,24 @@ def test_real_backend_training_ops_state():
         be.cotrain({"target": {"kind": "team"}})        # no net_ids
 
 
+def test_offseason_depth_signings_build_benches():
+    import json
+    import pathlib
+    from src.world.world import MAX_ROSTER
+    mpath = pathlib.Path("population/frozen_population_v1.json")
+    if not mpath.exists():
+        pytest.skip("frozen population manifest not present")
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    w = new_world("w-depth", FRANCHISES, seed=2, population=manifest)
+    season.bootstrap_world(w, seed=2)
+    season.run_regular_season(w)
+    assert all(len(t["roster"]) == 3 for t in w["teams"].values())     # drafted 3 starters
+    rep = offseason.run_offseason(w, llm=None, seed=5)
+    assert rep["stages"]["transfers"]["signings"] >= 1                  # clubs signed depth
+    assert all(len(t["roster"]) <= MAX_ROSTER for t in w["teams"].values())
+    assert any(len(t["roster"]) > 3 for t in w["teams"].values())      # benches formed -> subs usable
+
+
 def test_training_market_auctions_certs_then_spends_into_jobs():
     import json
     import pathlib

@@ -439,6 +439,82 @@ def _llm_spend(world: dict, team: dict, netted: list, wallet: list, llm):
 
 
 # --------------------------------------------------------------------------- #
+# Transfer market — each club with bench space bids for ONE free agent to add
+# DEPTH (so mid-series subs have someone to bring in). Multi-club contention is
+# resolved by the sealed FA auction (transfers.resolve_free_agent_auction).
+# --------------------------------------------------------------------------- #
+def transfer_bids(world: dict, *, llm=None, feed: Optional[list] = None) -> list[dict]:
+    """Bids ``[{team_id, player_id, amount}]`` for the free-agent auction — each club below the
+    roster cap with money bids for one free agent (LLM decides whether/who/how much; heuristic
+    fallback). The auction then resolves contention (several clubs can want the same player)."""
+    from src.world import freeagents, transfers
+    from src.world.world import MAX_ROSTER
+    fa_ids = freeagents.free_agents(world)
+    if not fa_ids:
+        return []
+    fas = [get_player(world, pid) for pid in fa_ids]
+    bids = []
+    for team in world["teams"].values():
+        if len(team.get("roster", [])) >= MAX_ROSTER or team.get("treasury", 0) <= 0:
+            continue
+        profile = manager.natural_profile(team["franchise_id"])
+        bid = None
+        if _active(llm):
+            try:
+                bid = _llm_transfer_bid(world, team, fas, llm)
+            except Exception as exc:
+                events.fallback(feed, f"transfer:{team['team_id']}", str(exc))
+        if bid is None:
+            bid = _heuristic_transfer_bid(world, team, fas, profile)
+        if bid:
+            bids.append(bid)
+    return bids
+
+
+def _affordable(team: dict, fas: list, *, by_value=True):
+    from src.world import transfers
+    aff = [p for p in fas if team["treasury"] >= transfers.signing_bonus(p)]
+    aff.sort(key=lambda p: valuation.skill_score(p), reverse=by_value)
+    return aff
+
+
+def _heuristic_transfer_bid(world: dict, team: dict, fas: list, profile):
+    from src.world import transfers
+    aff = _affordable(team, fas)
+    if not aff:
+        return None
+    p = aff[0]                                   # best affordable free agent
+    amount = int(round(transfers.fair_value(p) * (1.0 + 0.15 * profile.aggression)))
+    amount = min(amount, int(team["treasury"]))
+    return {"team_id": team["team_id"], "player_id": p["player_id"], "amount": amount}
+
+
+def _llm_transfer_bid(world: dict, team: dict, fas: list, llm):
+    from src.world import transfers
+    aff = _affordable(team, fas)[:30]
+    if not aff:
+        return None
+    ids = [p["player_id"] for p in aff]
+    schema = {"type": "object", "additionalProperties": False,
+              "properties": {"sign": {"type": "boolean"},
+                             "player_id": {"type": "string", "enum": ids},
+                             "max_bid": {"type": "integer"}, "reason": {"type": "string"}},
+              "required": ["sign"]}
+    rows = "; ".join(f"{p['player_id']}:{p['nickname']}({p['faction']},SoloQ{int(p['soloq_rating'])},"
+                     f"цена~{transfers.fair_value(p)})" for p in aff[:18])
+    prompt = (f"Клуб {team['name']}. Казна: {team['treasury']}. В ростере {len(team['roster'])} "
+              f"(нужна ГЛУБИНА для замен по ходу серии). Свободные агенты: {rows}.\n"
+              f"Подписать ли запасного (sign) и КОГО (player_id) + макс. ставку (max_bid, бонус "
+              f"сгорает)? Несколько клубов могут хотеть одного — победит высшая ставка.")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=200)
+    if not ans.get("sign") or ans.get("player_id") not in ids:
+        return None
+    amount = int(ans.get("max_bid") or transfers.fair_value(get_player(world, ans["player_id"])))
+    return {"team_id": team["team_id"], "player_id": ans["player_id"],
+            "amount": min(amount, int(team["treasury"]))}
+
+
+# --------------------------------------------------------------------------- #
 # Auctions — 🔴 L2 live bidding is secondary + explicit-confirm
 # --------------------------------------------------------------------------- #
 
