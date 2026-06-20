@@ -289,21 +289,20 @@ def start_world_offseason_job(world_id: str) -> dict:
             lines = [str(e.get("msg") or e.get("text") or e.get("message") or e.get("note") or "")
                      for e in events if isinstance(e, dict)]
             st = report.get("stages", {})
-            # Manager (LLM) decides training: WHETHER to buy + WHICH op + WHO/whom-to-fork — the
-            # single brain, not an auto-pick (heuristic manager.decide_training is the notified
-            # fallback). Launch the decided jobs as REAL background training, weakest teams first,
-            # capped so the queue stays sane; the rest are reported as skipped (no silent truncation).
-            from src.world import llm_manager
-            train_feed: list = []
-            decisions = llm_manager.run_training_decisions(world, llm=_world_llm(), feed=train_feed)
-            launched = [start_training_job(world_id, d, d.get("player_name")) for d in decisions[:TRAINING_LAUNCH_CAP]]
-            train_lines = [str(e.get("msg") or e.get("text") or "") for e in train_feed if isinstance(e, dict)]
+            # run_offseason already ran the TRAINING AUCTION (managers bid via the LLM) -> certificates
+            # -> SPEND (LLM picks op + target), producing the pending team jobs. Launch them as REAL
+            # background training, capped so the serialized queue stays sane; the rest are reported as
+            # skipped (no silent truncation). The tracker shows live progress.
+            train_jobs = (st.get("training", {}) or {}).get("jobs", []) or []
+            launched = [start_training_job(world_id, j, j.get("player_name"))
+                        for j in train_jobs[:TRAINING_LAUNCH_CAP]]
             _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
                 "next_season": report.get("next_season"),
                 "rookies": (st.get("rookie_draft") or {}).get("n", 0),
+                "training_auctioned": ((st.get("training", {}) or {}).get("auction") or {}).get("awarded", 0),
                 "training_launched": len(launched),
-                "training_skipped": max(0, len(decisions) - len(launched)),
-                "log": [ln for ln in (lines + train_lines) if ln][:50],
+                "training_skipped": max(0, len(train_jobs) - len(launched)),
+                "log": [ln for ln in lines if ln][:50],
             })
         except Exception as error:  # noqa: BLE001
             traceback.print_exc()

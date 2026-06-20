@@ -54,6 +54,47 @@ def _job_op(job: dict) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Training MARKET — the auction + spend that PRODUCES the team training jobs
+# --------------------------------------------------------------------------- #
+DEFAULT_TRAINING_SLOTS = 6        # gradeslots auctioned per off-season (owner-tunable)
+
+
+def _slot_anchor(world: dict, team_ids: list[str]) -> int:
+    """A nominal 'reference value' for one gradeslot (the LLM/heuristic bids around it)."""
+    treas = sorted(world["teams"][tid]["treasury"] for tid in team_ids)
+    median = treas[len(treas) // 2] if treas else 100
+    return max(10, int(median * 0.15))
+
+
+def run_training_market(world: dict, cfg: training_auction.TrainingConfig, *,
+                        llm=None, feed: Optional[list] = None, seed: int = 0,
+                        n_slots: Optional[int] = None) -> tuple[list[dict], dict]:
+    """The off-season training economy: auction N gradeslots (managers bid via the LLM, heuristic
+    fallback) → winners bank step-valued CERTIFICATES → each holder decides how to SPEND them
+    (op + target) or bank them. Returns (pending team jobs, auction summary). Mutates the world
+    (treasury + certificates), but does NOT run training — that's the backend's job."""
+    state = training_auction.TrainingAuctionState(cfg, season=world["season"],
+                                                  n_trainings=n_slots or DEFAULT_TRAINING_SLOTS)
+    team_ids = [t["team_id"] for t in world["teams"].values() if len(t.get("roster", [])) >= 3]
+    if not team_ids:
+        return [], {"slots": state.n_trainings, "awarded": 0, "spent": 0}
+    item_value = _slot_anchor(world, team_ids)
+    bids = llm_manager.auction_max_bids(world, team_ids, item_value, llm=llm, feed=feed)
+    awarded = 0
+    while state.remaining > 0:                    # sealed max-bid; winners' interest halves -> spreads
+        award = training_auction.auction_one_training(world, state, bids, seed=seed)
+        if award:
+            awarded += 1
+            tname = world["teams"][award["team_id"]]["name"]
+            events.emit(feed, "train", f"Аукцион тренировок: {tname} выиграл слот за {award['price']}")
+            bids[award["team_id"]] = bids.get(award["team_id"], 0) // 2
+    jobs = [job for team in world["teams"].values()
+            if (job := llm_manager.spend_certificates(world, team, llm=llm, feed=feed,
+                                                      config=cfg)) is not None]
+    return jobs, {"slots": state.n_trainings, "awarded": awarded, "spent": len(jobs)}
+
+
+# --------------------------------------------------------------------------- #
 # Combined training queue + preview
 # --------------------------------------------------------------------------- #
 def build_training_queue(team_jobs: list[dict] | None,
@@ -171,16 +212,24 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     if fa_jobs:
         events.emit(feed, "train", f"Фри-агенты: {len(fa_jobs)} на поддержании формы")
 
-    # 4. Combined training launch — ONE preview, (exec gated)
-    queue = build_training_queue(training_jobs, rookie_jobs, fa_jobs)
+    # 4. Training — AUCTION (managers bid via LLM) -> certificates -> SPEND (LLM op+target) -> jobs.
+    #    team_jobs are produced by the market unless the caller injected them (tests/owner). Then the
+    #    combined queue (team + rookie + free-agent) is previewed; execution is gated on a backend.
+    if training_jobs is None:
+        team_jobs, auction = run_training_market(world, cfg, llm=llm, feed=feed, seed=sp.seed())
+    else:
+        team_jobs, auction = list(training_jobs), None
+    queue = build_training_queue(team_jobs, rookie_jobs, fa_jobs)
     preview = training_preview(queue, cfg)
     execution = {"executed": False, "reason": "preview only — no training backend supplied",
                  "results": []}
     if backend is not None and queue:
         execution = _execute_training(world, queue, cfg, backend, feed=feed)
-    report["stages"]["training"] = {"preview": preview, "execution": execution}
-    events.emit(feed, "train", f"Тренировка (один запуск): {preview['n_requests']} заявок, "
-                f"{preview['total_steps']:,} шагов; исполнение — {execution['reason']}")
+    report["stages"]["training"] = {"auction": auction, "preview": preview,
+                                    "execution": execution, "jobs": team_jobs}
+    events.emit(feed, "train", f"Тренировка: аукцион {(auction or {}).get('awarded', 0)} слотов, "
+                f"{preview['n_requests']} заявок, {preview['total_steps']:,} шагов; "
+                f"исполнение — {execution['reason']}")
 
     # 5. Transfers (rules ready; LLM decisions gated). When the LLM market runs it
     #    appends bid/buy/sell/decline events to the feed (see llm_market.py).

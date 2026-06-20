@@ -137,7 +137,9 @@ def wants_to_sell(world: dict, team: dict, player: dict, offer: int,
 
 
 def certificate_intent(profile: ManagerProfile, has_fork_budget: bool) -> str:
-    """Which training op this manager favours spending a certificate on."""
+    """Which training op this manager favours spending a WON certificate on (the heuristic
+    fallback for the LLM cert-spend decision; the real choice is the auction + spend, see
+    training_auction.py + llm_manager.spend_certificates)."""
     if has_fork_budget and profile.youth_focus > 0.6:
         return "create_player"
     if profile.aggression > 0.6:
@@ -145,53 +147,6 @@ def certificate_intent(profile: ManagerProfile, has_fork_budget: bool) -> str:
     if profile.patience > 0.6:
         return "teamplay"
     return "skill_up"
-
-
-def decide_training(world: dict, team: dict, profile: ManagerProfile | None = None,
-                    *, steps: int | None = None, allow_fork: bool = False) -> dict | None:
-    """The manager's off-season training call: WHETHER to buy training, WHICH op (character via
-    certificate_intent), and WHICH target. Per-player ops train the team's WEAKEST netted player
-    ("худшие игроки получают тренировку от своего менеджера"); teamplay co-trains the 3 starters;
-    create_player forks from the weakest. Returns a job dict (team_id/spend_type/target/total_steps
-    /player_name/priority) or None when this manager passes (tight purse)."""
-    from src.world import training_ops
-    if profile is None:
-        profile = natural_profile(team["franchise_id"])
-    netted = [p for p in (get_player(world, pid) for pid in team.get("roster", [])) if p.get("net_id")]
-    if len(netted) < 3:
-        return None
-    # a very frugal + patient manager keeps the purse shut this window (didn't "buy" training)
-    if profile.frugality > 0.66 and profile.patience > 0.55:
-        return None
-    op = certificate_intent(profile, has_fork_budget=allow_fork)
-    if op == "create_player" and not allow_fork:
-        op = "skill_up"
-    steps = int(steps or training_ops.MIN_TRAINING_STEPS)
-    skill = {p["player_id"]: valuation.skill_score(p) for p in netted}
-    weakest = min(netted, key=lambda p: skill[p["player_id"]])
-    if op == "teamplay":
-        starters = sorted(netted, key=lambda p: skill[p["player_id"]], reverse=True)[:3]
-        target = {"kind": "team", "net_ids": [p["net_id"] for p in starters],
-                  "player_ids": [p["player_id"] for p in starters]}
-        name = f"{team['name']} · тройка"
-    elif op == "create_player":
-        target = {"kind": "parent", "net_id": weakest["net_id"], "player_id": weakest["player_id"]}
-        name = f"{team['name']} · новичок от {weakest['nickname']}"
-    else:
-        target = {"kind": "player", "net_id": weakest["net_id"], "player_id": weakest["player_id"]}
-        name = weakest["nickname"]
-    return {"team_id": team["team_id"], "spend_type": op, "target": target, "total_steps": steps,
-            "player_name": name, "priority": round(-min(skill.values()), 4)}
-
-
-def run_training_decisions(world: dict, *, steps: int | None = None,
-                           allow_fork: bool = False) -> list[dict]:
-    """Every manager decides its off-season training (decide_training). Returns the chosen jobs,
-    WEAKEST teams first (so a capped launch trains those who need it most)."""
-    jobs = [j for team in world["teams"].values()
-            if (j := decide_training(world, team, steps=steps, allow_fork=allow_fork)) is not None]
-    jobs.sort(key=lambda j: j["priority"], reverse=True)
-    return jobs
 
 
 # --------------------------------------------------------------------------- #

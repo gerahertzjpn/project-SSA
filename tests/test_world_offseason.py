@@ -44,27 +44,27 @@ def test_real_backend_training_ops_state():
         be.cotrain({"target": {"kind": "team"}})        # no net_ids
 
 
-def test_manager_training_decisions_are_net_bound_and_weakest_first():
+def test_training_market_auctions_certs_then_spends_into_jobs():
     import json
     import pathlib
-    from src.world import manager
+    from src.world import offseason as off
     mpath = pathlib.Path("population/frozen_population_v1.json")
     if not mpath.exists():
         pytest.skip("frozen population manifest not present")
     manifest = json.loads(mpath.read_text(encoding="utf-8"))
-    w = new_world("w-train", FRANCHISES, seed=7, population=manifest)
+    w = new_world("w-mkt", FRANCHISES, seed=7, population=manifest)
     season.bootstrap_world(w, seed=7)
     season.run_regular_season(w)
-    jobs = manager.run_training_decisions(w)
-    assert jobs, "managers should buy some training on a net-bound roster"
-    assert all(j["spend_type"] in training_ops.ENABLED_OPS for j in jobs)
-    # the backend must be able to resolve which net(s) to train
+    cfg = training_auction.TrainingConfig(steps_per_slot=1_000_000)
+    jobs, summary = off.run_training_market(w, cfg, llm=None, feed=[], seed=1)   # heuristic bids/spend
+    assert summary["awarded"] >= 1                      # the gradeslot auction awarded certificates
+    assert summary["spent"] == len(jobs)
+    # every spend job is a valid training op with a net-bound target that meets the floor
     for j in jobs:
+        assert j["spend_type"] in training_ops.ENABLED_OPS
         t = j["target"]
         assert ("net_id" in t) or ("net_ids" in t)
         assert j["total_steps"] >= training_ops.MIN_TRAINING_STEPS
-    pr = [j["priority"] for j in jobs]
-    assert pr == sorted(pr, reverse=True)        # weakest teams first
 
 
 def test_train_one_net_builds_a_valid_faction_triple():

@@ -23,7 +23,8 @@ from __future__ import annotations
 import os
 from typing import Callable, Optional
 
-from src.world import events, feature_flags, manager, playbook, scouting, transfers, valuation
+from src.world import (events, feature_flags, manager, playbook, scouting, training_auction,
+                       transfers, valuation)
 from src.world.world import get_player
 
 DEFAULT_MODEL = (os.environ.get("WORLD_LLM_MODEL")
@@ -269,85 +270,152 @@ def _llm_market(world: dict, team: dict, llm, profile) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Training — L1 (one call per team: train? which op? which player(s)/parent?). The
-# manager (LLM) is the single brain: it DECIDES whether to buy training and picks the
-# op + target. manager.decide_training is the deterministic FALLBACK (notified).
+# Training AUCTION — L1. The manager (LLM) decides whether/how much to BID for a
+# gradeslot; winners bank a step-valued certificate. Then it decides how to SPEND a
+# won certificate (which op + target). Both have a notified heuristic fallback.
+# (Economy lives in training_auction.py; the backend executes via training_ops.)
 # --------------------------------------------------------------------------- #
-def training_plan(world: dict, team: dict, *, llm=None, feed: Optional[list] = None,
-                  profile: Optional[manager.ManagerProfile] = None,
-                  steps: Optional[int] = None, allow_fork: bool = False) -> Optional[dict]:
-    """The manager's off-season training decision. LLM when active (it chooses WHETHER to train,
-    WHICH op, and WHO/whom-to-fork); else (or on any failure) the heuristic
-    ``manager.decide_training`` with a fallback notification. Returns a job dict or None."""
-    profile = profile or manager.natural_profile(team["franchise_id"])
-    if _active(llm):
-        try:
-            job = _llm_training(world, team, llm, steps=steps, allow_fork=allow_fork)
-            msg = (f"{op_label(job['spend_type'])} → {job['player_name']}" if job
-                   else "без тренировки в это межсезонье")
-            events.emit(feed, "training", f"{team['name']}: ЛЛМ — {msg}",
-                        team_id=team["team_id"], source="ЛЛМ")
-            return job
-        except Exception as exc:
-            events.fallback(feed, f"training:{team['team_id']}", str(exc))
-    return manager.decide_training(world, team, profile, steps=steps, allow_fork=allow_fork)
+def auction_max_bids(world: dict, team_ids: list[str], item_value: int, *,
+                     llm=None, feed: Optional[list] = None) -> dict:
+    """L1: each team's max bid for a training gradeslot. LLM decides whether/how much to bid
+    (0 = pass) when active; else (or on failure) the character heuristic ``manager.auction_bid``,
+    with a fallback notification. The CODE then runs the sealed auction (auction_one_training)."""
+    bids = {}
+    for tid in team_ids:
+        team = world["teams"][tid]
+        profile = manager.natural_profile(team["franchise_id"])
+        bid = None
+        if _active(llm):
+            try:
+                bid = _llm_auction_bid(world, team, llm, item_value, profile)
+            except Exception as exc:
+                events.fallback(feed, f"train-bid:{tid}", str(exc))
+        if bid is None:
+            bid = manager.auction_bid(profile, item_value, team["treasury"])
+        bids[tid] = max(0, min(int(bid), int(team.get("treasury", 0))))
+    return bids
 
 
-def run_training_decisions(world: dict, *, llm=None, feed: Optional[list] = None,
-                           steps: Optional[int] = None, allow_fork: bool = False) -> list[dict]:
-    """Every manager decides its off-season training (LLM, heuristic fallback). Returns the chosen
-    jobs, weakest-team-first so a capped launch trains those who need it most."""
-    jobs = [j for team in world["teams"].values()
-            if (j := training_plan(world, team, llm=llm, feed=feed, steps=steps,
-                                   allow_fork=allow_fork)) is not None]
-    jobs.sort(key=lambda j: j["priority"], reverse=True)
-    return jobs
+def _llm_auction_bid(world: dict, team: dict, llm, item_value: int, profile) -> int:
+    roster = ", ".join(f"{world['players'][pid]['nickname']}"
+                       f"(SoloQ{int(world['players'][pid]['soloq_rating'])})"
+                       for pid in team["roster"]) or "пусто"
+    schema = {"type": "object", "additionalProperties": False,
+              "properties": {"max_bid": {"type": "integer", "minimum": 0},
+                             "reason": {"type": "string"}},
+              "required": ["max_bid"]}
+    prompt = (f"Аукцион тренировок. Клуб {team['name']}. Казна: {team['treasury']}. "
+              f"Состав: {roster}. Ориентир стоимости слота: ~{item_value} "
+              f"({training_auction.DEFAULT_SLOT_STEPS:,} шагов тренировки).\n"
+              f"Решаешь, СТОИТ ли побороться за слот тренировки и сколько максимум поставить "
+              f"(max_bid; 0 = пропустить). Усиливай клуб к титулу, не разоряя казну.")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=200)
+    return int(ans.get("max_bid", 0))
 
 
-_OP_LABELS = {"skill_up": "общий буст", "meta_adapt": "против меты", "style_spec": "специализация",
-              "obedience_tune": "послушание", "teamplay": "сыгранность", "create_player": "новичок"}
-
-
-def op_label(op: str) -> str:
-    return _OP_LABELS.get(op, op)
-
-
-def _llm_training(world: dict, team: dict, llm, *, steps=None, allow_fork=False) -> Optional[dict]:
-    from src.world import training_ops
+def spend_certificates(world: dict, team: dict, *, llm=None, feed: Optional[list] = None,
+                       config: Optional["training_auction.TrainingConfig"] = None) -> Optional[dict]:
+    """A team that WON certificate(s) at the auction decides how to spend them: WHICH op, WHICH
+    target (player / 3 starters / fork parent), and WHICH certs to combine — or DEFER (bank them).
+    LLM when active, else the character heuristic, both validated through request_spend. Returns a
+    pending training job or None (deferred / nothing to spend)."""
+    tid = team["team_id"]
+    wallet = training_auction.team_certificates(world, tid)
+    if not wallet:
+        return None
     netted = [p for p in (get_player(world, pid) for pid in team.get("roster", [])) if p.get("net_id")]
     if len(netted) < 3:
         return None
+    decision = None
+    if _active(llm):
+        try:
+            decision = _llm_spend(world, team, netted, wallet, llm)
+        except Exception as exc:
+            events.fallback(feed, f"train-spend:{tid}", str(exc))
+    if decision is None:
+        decision = _heuristic_spend(team, netted, wallet)
+    if decision is None:                                  # defer: keep the certs banked
+        events.emit(feed, "train", f"{team['name']}: сертификаты в банке (тренировку отложили)",
+                    team_id=tid)
+        return None
+    op, target, cert_ids = decision
+    try:
+        job = training_auction.request_spend(world, tid, op, cert_ids, target=target, config=config)
+    except ValueError as exc:                             # e.g. fork needs >= FORK_MIN_STEPS
+        events.fallback(feed, f"train-spend:{tid}", str(exc))
+        return None
+    job["player_name"] = target.get("player_name") or _spend_name(world, team, op, target)
+    events.emit(feed, "train", f"{team['name']}: тренировка {op} → {job['player_name']} "
+                f"({job['total_steps']:,} шагов)", team_id=tid, source="ЛЛМ" if _active(llm) else "эвристика")
+    return job
+
+
+def _spend_name(world: dict, team: dict, op: str, target: dict) -> str:
+    if op == "teamplay":
+        return f"{team['name']} · тройка"
+    pid = target.get("player_id")
+    nick = world["players"][pid]["nickname"] if pid in world.get("players", {}) else pid
+    return f"{team['name']} · новичок от {nick}" if op == "create_player" else nick
+
+
+def _heuristic_spend(team: dict, netted: list, wallet: list):
+    """Fallback: spend on the character op for the WEAKEST netted player, combining ALL certs
+    (fork only if the combined steps reach the fork floor)."""
+    profile = manager.natural_profile(team["franchise_id"])
+    cert_ids = [c["cert_id"] for c in wallet]
+    total = sum(c["steps"] for c in wallet)
+    allow_fork = total >= training_auction.FORK_MIN_STEPS
+    op = manager.certificate_intent(profile, has_fork_budget=allow_fork)
+    weakest = min(netted, key=valuation.skill_score)
+    if op == "teamplay":
+        starters = sorted(netted, key=valuation.skill_score, reverse=True)[:3]
+        target = {"kind": "team", "net_ids": [p["net_id"] for p in starters],
+                  "player_ids": [p["player_id"] for p in starters]}
+    else:
+        target = {"kind": "parent" if op == "create_player" else "player",
+                  "net_id": weakest["net_id"], "player_id": weakest["player_id"]}
+    return op, target, cert_ids
+
+
+def _llm_spend(world: dict, team: dict, netted: list, wallet: list, llm):
     by_pid = {p["player_id"]: p for p in netted}
     ids = list(by_pid)
+    cert_ids = [c["cert_id"] for c in wallet]
+    total = sum(c["steps"] for c in wallet)
     ops = ["skill_up", "meta_adapt", "style_spec", "obedience_tune", "teamplay"]
-    if allow_fork:
+    if total >= training_auction.FORK_MIN_STEPS:
         ops.append("create_player")
     schema = {
         "type": "object", "additionalProperties": False,
         "properties": {
-            "train": {"type": "boolean"},
+            "spend": {"type": "boolean"},
             "op": {"type": "string", "enum": ops},
-            "player_id": {"type": "string", "enum": ids},      # trainee, or parent for create_player
+            "player_id": {"type": "string", "enum": ids},
             "player_ids": {"type": "array", "items": {"type": "string", "enum": ids}, "maxItems": 3},
             "reason": {"type": "string"},
-        },
-        "required": ["train"],
+        }, "required": ["spend"],
     }
-    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, _training_prompt(world, team, netted, allow_fork),
-                         schema, max_tokens=300)
-    if not ans.get("train"):
+    rows = "; ".join(f"{p['player_id']}:{p['nickname']}({p['faction']},SoloQ{int(p['soloq_rating'])},"
+                     f"скилл{valuation.skill_score(p):.2f})" for p in netted)
+    menu = ("skill_up=общий буст; meta_adapt=ПРОТИВ топов меты; style_spec=специализация в стиле; "
+            "obedience_tune=послушание приказам; teamplay=сыгранность тройки; "
+            "create_player=ФОРК нового игрока от родителя")
+    prompt = (f"Клуб {team['name']}. Выиграл сертификаты тренировки: {len(wallet)} шт = "
+              f"{total:,} шагов. Игроки с нейронками:\n{rows}.\nВиды: {menu}.\n--- РЕШЕНИЕ ---\n"
+              f"Тратить ли сертификаты сейчас (spend) или отложить в банк? Если тратить — выбери "
+              f"вид (op) и КОГО (player_id; teamplay — троих в player_ids; create_player — родитель "
+              f"для форка в player_id).")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=300)
+    if not ans.get("spend"):
         return None
     op = ans.get("op")
     if op not in ops:
-        raise ValueError(f"LLM returned bad training op {op!r}")
-    steps = int(steps or training_ops.MIN_TRAINING_STEPS)
-    priority = round(-min(valuation.skill_score(p) for p in netted), 4)
+        raise ValueError(f"LLM returned bad spend op {op!r}")
     if op == "teamplay":
         pids = [pid for pid in (ans.get("player_ids") or []) if pid in by_pid][:3]
-        if len(pids) < 3:                              # LLM gave a partial set -> top 3 by skill
+        if len(pids) < 3:
             pids = [p["player_id"] for p in sorted(netted, key=valuation.skill_score, reverse=True)[:3]]
         target = {"kind": "team", "net_ids": [by_pid[pid]["net_id"] for pid in pids], "player_ids": pids}
-        name = f"{team['name']} · тройка"
     else:
         pid = ans.get("player_id")
         if pid not in by_pid:
@@ -355,40 +423,12 @@ def _llm_training(world: dict, team: dict, llm, *, steps=None, allow_fork=False)
         p = by_pid[pid]
         target = {"kind": "parent" if op == "create_player" else "player",
                   "net_id": p["net_id"], "player_id": pid}
-        name = f"{team['name']} · новичок от {p['nickname']}" if op == "create_player" else p["nickname"]
-    return {"team_id": team["team_id"], "spend_type": op, "target": target, "total_steps": steps,
-            "player_name": name, "priority": priority}
-
-
-def _training_prompt(world: dict, team: dict, netted: list, allow_fork: bool) -> str:
-    rows = "; ".join(f"{p['player_id']}:{p['nickname']}({p['faction']},SoloQ{int(p['soloq_rating'])},"
-                     f"скилл{valuation.skill_score(p):.2f})" for p in netted)
-    menu = ("skill_up=общий буст; meta_adapt=тренировка ПРОТИВ топов меты; "
-            "style_spec=специализация в своём стиле; obedience_tune=послушание приказам; "
-            "teamplay=сыгранность тройки; create_player=ФОРК нового игрока от выбранного родителя")
-    forkline = "" if allow_fork else "\nВ это межсезонье create_player (форк) НЕдоступен — нет бюджета."
-    return (f"Клуб {team['name']}. Казна: {team['treasury']}. Игроки с нейронками:\n{rows}.\n"
-            f"Виды тренировки: {menu}.{forkline}\n--- РЕШЕНИЕ ---\n"
-            f"Реши как менеджер: покупать ли тренировку в это межсезонье (train). Если да — выбери "
-            f"вид (op) и КОГО тренировать (player_id; для teamplay — троих в player_ids; для "
-            f"create_player player_id = родитель для форка). Усиливай клуб к титулу; можешь и "
-            f"отказаться, если состав силён или казну важнее сберечь.")
+    return op, target, cert_ids
 
 
 # --------------------------------------------------------------------------- #
-# Auctions — L1 by default; 🔴 L2 live bidding is secondary + explicit-confirm
+# Auctions — 🔴 L2 live bidding is secondary + explicit-confirm
 # --------------------------------------------------------------------------- #
-def auction_max_bids(world: dict, team_ids: list[str], item_value: int, *,
-                     llm=None, feed: Optional[list] = None) -> dict:
-    """L1: each team's max bid for an auction item — the manager sends an 'assistant'
-    with a plan, the CODE runs the sealed auction. Heuristic = ``manager.auction_bid``
-    weighted by character (the LLM may override priorities when active)."""
-    bids = {}
-    for tid in team_ids:
-        team = world["teams"][tid]
-        profile = manager.natural_profile(team["franchise_id"])
-        bids[tid] = manager.auction_bid(profile, item_value, team["treasury"])
-    return bids
 
 
 def live_auction_available() -> bool:
