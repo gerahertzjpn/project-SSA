@@ -289,12 +289,18 @@ def start_world_offseason_job(world_id: str) -> dict:
             lines = [str(e.get("text") or e.get("message") or e.get("note") or "")
                      for e in events if isinstance(e, dict)]
             st = report.get("stages", {})
-            # Training is owner/manager-driven (training-auction certificates + owner rookie/FA
-            # budgets), NOT an auto-pick — see _execute_training in offseason.py. The tracker
-            # (TRAINING_JOBS + /api/world/<id>/training + UI panel) surfaces those real jobs.
+            # Manager-driven training: each manager decides WHETHER to buy training + WHICH op/target
+            # (the weakest netted player, the 3 starters, or a fork) — NOT an auto-pick. Launch them
+            # as REAL background jobs, weakest teams first, capped so the queue stays sane; the rest
+            # are reported as skipped (no silent truncation). The tracker shows live progress.
+            from src.world import manager as _manager
+            decisions = _manager.run_training_decisions(world)
+            launched = [start_training_job(world_id, d, d.get("player_name")) for d in decisions[:TRAINING_LAUNCH_CAP]]
             _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
                 "next_season": report.get("next_season"),
                 "rookies": (st.get("rookie_draft") or {}).get("n", 0),
+                "training_launched": len(launched),
+                "training_skipped": max(0, len(decisions) - len(launched)),
                 "log": [ln for ln in lines if ln][:40],
             })
         except Exception as error:  # noqa: BLE001
@@ -316,16 +322,30 @@ def world_job_status(job_id: str) -> dict:
 # --- background TRAINING jobs (real PPO) + a per-world progress tracker -------- #
 TRAINING_JOBS: dict[str, dict] = {}
 TRAINING_JOBS_LOCK = threading.Lock()
+# Each training op spins up a many-worker PPO pool, so only ONE heavy run executes at a time;
+# the rest queue (shown as "queued" in the tracker) and run as the slot frees.
+TRAINING_SEM = threading.Semaphore(1)
+# Cap how many manager-decided trainings one off-season launches (they queue + run serially);
+# the remainder are reported as skipped rather than silently dropped.
+TRAINING_LAUNCH_CAP = 6
+TRAINING_RUN_DIR = str(FROZEN_POP.parent.parent / "training_runs" / "league_population_v1")
+_OP_METHOD = {"skill_up": "continue_ppo", "meta_adapt": "continue_ppo", "style_spec": "continue_ppo",
+              "obedience_tune": "continue_ppo", "teamplay": "cotrain", "create_player": "fork"}
 
 
-def start_training_job(world_id: str, net_id: str, player_name: str, steps: int,
-                       kind: str = "skill_up") -> str:
-    """Launch a REAL PPO training of one player's net on a worker thread, tracked for progress."""
+def start_training_job(world_id: str, job: dict, player_name: str | None = None) -> str:
+    """Queue a REAL training op (manager- or owner-decided) on a background thread, capped to one
+    heavy run at a time, tracked for progress. ``job`` = {spend_type, target, total_steps}; the op
+    dispatches to the right backend method (continue_ppo / cotrain / fork)."""
+    op = job.get("spend_type", "skill_up")
+    steps = int(job.get("total_steps", 800_000))
+    target = job.get("target", {})
+    player_name = player_name or job.get("player_name") or target.get("player_id") or op
     job_id = uuid.uuid4().hex
     with TRAINING_JOBS_LOCK:
-        TRAINING_JOBS[job_id] = {"job_id": job_id, "world_id": world_id, "net_id": net_id,
-                                 "player": player_name, "kind": kind, "done": 0, "total": int(steps),
-                                 "status": "running", "error": None}
+        TRAINING_JOBS[job_id] = {"job_id": job_id, "world_id": world_id, "op": op,
+                                 "player": player_name, "done": 0, "total": steps,
+                                 "status": "queued", "error": None}
 
     def progress(done: int, total: int) -> None:
         with TRAINING_JOBS_LOCK:
@@ -334,25 +354,33 @@ def start_training_job(world_id: str, net_id: str, player_name: str, steps: int,
                 j["done"] = int(done); j["total"] = int(total)
 
     def worker() -> None:
-        try:
-            from src.world import backends
-            res = backends.train_one_net(str(FROZEN_POP.parent.parent / "training_runs"
-                                             / "league_population_v1"), net_id, int(steps), progress)
+        with TRAINING_SEM:                       # one heavy training at a time; others stay "queued"
             with TRAINING_JOBS_LOCK:
-                TRAINING_JOBS[job_id].update(status="done", done=res.get("steps_added", steps), result=res)
-        except Exception as error:  # noqa: BLE001
-            traceback.print_exc()
-            with TRAINING_JOBS_LOCK:
-                TRAINING_JOBS[job_id].update(status="error", error=str(error))
+                if job_id in TRAINING_JOBS:
+                    TRAINING_JOBS[job_id]["status"] = "running"
+            try:
+                from src.world import backends
+                be = backends.RealTrainingBackend(run_dir=TRAINING_RUN_DIR, require_flag=False)
+                ctx = {"target": target, "total_steps": steps, "op": op,
+                       "net_ids": target.get("net_ids")}
+                method = getattr(be, _OP_METHOD.get(op, "continue_ppo"))
+                res = method(ctx, progress)
+                with TRAINING_JOBS_LOCK:
+                    TRAINING_JOBS[job_id].update(status="done", done=steps, result=res)
+            except Exception as error:  # noqa: BLE001
+                traceback.print_exc()
+                with TRAINING_JOBS_LOCK:
+                    TRAINING_JOBS[job_id].update(status="error", error=str(error))
 
     threading.Thread(target=worker, daemon=True).start()
     return job_id
 
 
 def training_jobs_status(world_id: str) -> dict:
+    rank = {"running": 0, "queued": 1, "done": 2, "error": 3}
     with TRAINING_JOBS_LOCK:
         jobs = [dict(j) for j in TRAINING_JOBS.values() if j["world_id"] == world_id]
-    jobs.sort(key=lambda j: (j["status"] != "running", j["player"]))
+    jobs.sort(key=lambda j: (rank.get(j["status"], 9), j["player"]))
     return {"jobs": jobs}
 
 

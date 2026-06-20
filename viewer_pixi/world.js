@@ -221,19 +221,26 @@ async function pollTraining() {
   } catch (e) { return; }
   if (!jobs.length) { show("trainingPanel", false); return; }
   show("trainingPanel", true);
+  const OP_LABEL = { skill_up: "Скилл", meta_adapt: "Против меты", style_spec: "Стиль",
+    obedience_tune: "Послушание", teamplay: "Командная", create_player: "Новичок" };
   const running = jobs.filter((j) => j.status === "running").length;
+  const queued = jobs.filter((j) => j.status === "queued").length;
+  const active = running + queued;
+  const head = running ? `${running} идёт${queued ? ", " + queued + " в очереди" : ""}`
+    : queued ? `${queued} в очереди` : "завершены";
   el("trainingPanel").innerHTML =
-    `<h3>🏋️ Тренировки нейронок <span class="muted">${running ? running + " идёт" : "завершены"}</span></h3>` +
+    `<h3>🏋️ Тренировки нейронок <span class="muted">${head}</span></h3>` +
     jobs.map((j) => {
       const pct = Math.min(100, Math.round((j.done / Math.max(1, j.total)) * 100));
       const tag = j.status === "done" ? "✓ карточка пересчитана"
-        : j.status === "error" ? "ошибка" : `${pct}%`;
+        : j.status === "error" ? "ошибка"
+        : j.status === "queued" ? "в очереди" : `${pct}%`;
       return `<div class="train-row"><span class="tn">${j.player}</span>` +
-        `<span class="tnet">${j.net_id}</span>` +
+        `<span class="tnet">${OP_LABEL[j.op] || j.op || ""}</span>` +
         `<div class="train-bar"><div class="train-fill${j.status === "done" ? " done" : ""}" style="width:${j.status === "done" ? 100 : pct}%"></div></div>` +
         `<span class="tp">${tag}</span></div>`;
     }).join("");
-  if (!running && trainTimer) { clearInterval(trainTimer); trainTimer = null; }
+  if (!active && trainTimer) { clearInterval(trainTimer); trainTimer = null; }
 }
 function startTrainingPoll() {
   if (trainTimer) clearInterval(trainTimer);

@@ -44,6 +44,29 @@ def test_real_backend_training_ops_state():
         be.cotrain({"target": {"kind": "team"}})        # no net_ids
 
 
+def test_manager_training_decisions_are_net_bound_and_weakest_first():
+    import json
+    import pathlib
+    from src.world import manager
+    mpath = pathlib.Path("population/frozen_population_v1.json")
+    if not mpath.exists():
+        pytest.skip("frozen population manifest not present")
+    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+    w = new_world("w-train", FRANCHISES, seed=7, population=manifest)
+    season.bootstrap_world(w, seed=7)
+    season.run_regular_season(w)
+    jobs = manager.run_training_decisions(w)
+    assert jobs, "managers should buy some training on a net-bound roster"
+    assert all(j["spend_type"] in training_ops.ENABLED_OPS for j in jobs)
+    # the backend must be able to resolve which net(s) to train
+    for j in jobs:
+        t = j["target"]
+        assert ("net_id" in t) or ("net_ids" in t)
+        assert j["total_steps"] >= training_ops.MIN_TRAINING_STEPS
+    pr = [j["priority"] for j in jobs]
+    assert pr == sorted(pr, reverse=True)        # weakest teams first
+
+
 def test_train_one_net_builds_a_valid_faction_triple():
     # train_one_net must assemble one sparring partner per OTHER faction so LeagueTrainer._triples
     # yields exactly one faction-balanced triple (the bug that made 1-3 nets produce 0 plans).
