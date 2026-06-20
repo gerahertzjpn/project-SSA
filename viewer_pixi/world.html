@@ -58,25 +58,29 @@
           <span id="viewSeason" class="view-season"></span>
           <span id="viewCounts" class="view-counts"></span>
         </div>
-        <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
-        <button id="offseasonBtn" class="ghost">⟳ Межсезонье</button>
-      </div>
-      <div class="view-grid">
-        <div class="view-col">
-          <h3>Верхняя лига <span class="muted">(Power)</span></h3>
-          <div id="upperTable" class="standings"></div>
-          <h3>Нижняя лига <span class="muted">(Power)</span></h3>
-          <div id="lowerTable" class="standings"></div>
-        </div>
-        <div class="view-col">
-          <h3>SoloQ — топ рейтинга</h3>
-          <div id="ladder" class="ladder"></div>
-          <h3>История чемпионов</h3>
-          <div id="history" class="history"></div>
+        <div class="view-actions">
+          <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
+          <button id="offseasonBtn" class="ghost">⟳ Межсезонье</button>
         </div>
       </div>
-      <div id="rosterPanel" class="roster-panel is-hidden"></div>
+
+      <nav id="tabbar" class="tabbar">
+        <button class="tab is-active" data-tab="leagues">🏆 Лиги</button>
+        <button class="tab" data-tab="ratings">📊 Рейтинг</button>
+        <button class="tab" data-tab="schedule">📅 Расписание</button>
+        <button class="tab" data-tab="teams">🛡️ Команды</button>
+        <button class="tab" data-tab="history">📜 История</button>
+      </nav>
+
       <div id="trainingPanel" class="training-panel is-hidden"></div>
+
+      <div class="tab-panels">
+        <div id="panel-leagues" class="tab-panel"></div>
+        <div id="panel-ratings" class="tab-panel is-hidden"></div>
+        <div id="panel-schedule" class="tab-panel is-hidden"></div>
+        <div id="panel-teams" class="tab-panel is-hidden"></div>
+        <div id="panel-history" class="tab-panel is-hidden"></div>
+      </div>
     </section>
   </main>
 
