@@ -57,6 +57,15 @@
   const byId = Object.fromEntries(teams.map((t) => [t.team_id, t]));
   const tname = (id) => (byId[id] ? byId[id].name : id);
   const tabbr = (id) => (byId[id] ? byId[id].abbrev : id);
+  // simple generated emblems (the real World uses regionals emblem_svg server-side)
+  function previewEmblem(t) {
+    return `<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">` +
+      `<rect width="120" height="120" rx="22" fill="#11161d"/>` +
+      `<path d="M60 14 L102 30 V64 Q102 96 60 110 Q18 96 18 64 V30 Z" fill="${t.color}"/>` +
+      `<path d="M60 14 L102 30 V64 Q102 96 60 110 Q18 96 18 64 V30 Z" fill="none" stroke="#0c1116" stroke-width="4"/>` +
+      `<text x="60" y="74" font-family="Arial" font-size="36" font-weight="800" text-anchor="middle" fill="#0c1116">${t.abbrev.slice(0, 2)}</text></svg>`;
+  }
+  const EMBLEMS = Object.fromEntries(teams.map((t) => [t.team_id, previewEmblem(t)]));
 
   // ---- players (90: 78 debut, 12 reserve) + Season-0 draft --------------- //
   let players = [];
@@ -238,8 +247,9 @@
   }
   function draftView() {
     const d = snap().draft || snaps[0].draft;
-    const picks = d.picks.map((p) => ({ round: p.round, overall: p.overall, team: tabbr(p.team_id),
-      team_name: tname(p.team_id), player: pById[p.player_id].nickname, faction: pById[p.player_id].faction,
+    const picks = d.picks.map((p) => ({ round: p.round, overall: p.overall, team_id: p.team_id,
+      team: tabbr(p.team_id), team_name: tname(p.team_id), player: pById[p.player_id].nickname,
+      faction: pById[p.player_id].faction,
       archetype: pById[p.player_id].archetype, rating: Math.round(pById[p.player_id].ratingHist[0]) }));
     return { season: d.season, kind: d.kind, picks, n: picks.length };
   }
@@ -260,7 +270,7 @@
     const commentary = [];
     snaps.slice(0, CUR + 1).forEach((s) => { commentary.push(s.commentary[0]); if (s.num < CUR) commentary.push(s.commentary[1]); });
     return { world_id: WID, name: "Demo World", season: CUR, phase: "regular",
-      upper: [], lower: [], ladder: [], history, reserves, commentary,
+      upper: [], lower: [], ladder: [], history, reserves, commentary, emblems: EMBLEMS,
       counts: { players: players.length,
         free_agents: players.filter((p) => p.role === "pro" && !p.teamId && !p.reserve).length,
         streamers: players.filter((p) => p.role === "streamer").length,

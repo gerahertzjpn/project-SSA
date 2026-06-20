@@ -444,9 +444,12 @@ def world_view_payload(world_id: str) -> dict:
                 "lower_champion": _team_name(w, s["lower_champion"])}
                for s in w.get("history", [])[-10:]]
     reserves = [pcard(pid) for pid in w.get("reserves", []) if pid in players]
+    fr_by_id = {f["franchise_id"]: f for f in franchise_specs()}
+    emblems = {t["team_id"]: emblem_svg(fr_by_id[t["franchise_id"]])
+               for t in w["teams"].values() if t.get("franchise_id") in fr_by_id}
     return {"world_id": w["world_id"], "name": w.get("name"), "season": w["season"],
             "phase": w.get("phase"), "upper": upper, "lower": lower, "ladder": ladder,
-            "history": history, "reserves": reserves,
+            "history": history, "reserves": reserves, "emblems": emblems,
             "commentary": (w.get("commentary") or [])[-40:],
             "counts": {"players": len(players), "free_agents": len(w.get("free_agents", [])),
                        "streamers": len(w.get("streamers", [])), "rostered": len(pid_team),

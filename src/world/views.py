@@ -259,7 +259,7 @@ def draft_view(world: dict) -> dict:
         t = world["teams"].get(p["team_id"])
         pl = world["players"].get(p["player_id"])
         picks.append({
-            "round": p.get("round"), "overall": p.get("overall"),
+            "round": p.get("round"), "overall": p.get("overall"), "team_id": p["team_id"],
             "team": t["abbrev"] if t else p["team_id"], "team_name": t["name"] if t else p["team_id"],
             "player": pl["nickname"] if pl else p["player_id"],
             "faction": pl.get("faction") if pl else None,

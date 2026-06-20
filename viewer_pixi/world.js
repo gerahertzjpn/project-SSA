@@ -66,6 +66,10 @@ function sparkline(values, w = 88, h = 24) {
     `<polyline points="${pts}" fill="none" stroke-width="1.8" /></svg>`;
 }
 const teamLabelFA = (p) => p.team || (p.role === "streamer" ? "Стример" : "Свободный агент");
+function emblem(teamId, cls) {
+  const svg = state.emblems && state.emblems[teamId];
+  return `<span class="tlogo ${cls || ""}">${svg || ""}</span>`;
+}
 
 // --------------------------------------------------------------------------- //
 // New-world team picker
@@ -173,7 +177,10 @@ async function loadTab(name) {
     else if (name === "ratings") { state.players = (await api("/players")).players; renderRatings(); }
     else if (name === "schedule") renderSchedule(await api("/schedule"));
     else if (name === "draft") renderDraft(await api("/draft"));
-    else if (name === "teams") renderTeams((await api("/leagues")).leagues);
+    else if (name === "teams") {
+      renderTeams((await api("/leagues")).leagues);
+      if (state.pendingTeam) { const tid = state.pendingTeam; state.pendingTeam = null; loadTeamPage(tid); }
+    }
   } catch (e) {
     panel.innerHTML = `<div class="result-error">Не удалось загрузить: ${esc(e.message)}</div>`;
   }
@@ -193,7 +200,7 @@ function renderLeagues(leagues) {
   const rows = (leagues[state.leagueKey] || []).map((t) =>
     `<tr class="ltrow" data-team="${esc(t.team_id)}">` +
       `<td class="lt-place">${t.place}</td>` +
-      `<td class="lt-ab">${esc(t.abbrev)}</td>` +
+      `<td class="lt-ab">${emblem(t.team_id)}<span>${esc(t.abbrev)}</span></td>` +
       `<td class="lt-nm">${esc(t.name)}</td>` +
       `<td class="lt-roster">${(t.roster || []).map(esc).join(" · ")}</td>` +
       `<td class="lt-pw">${t.power}</td>` +
@@ -286,69 +293,72 @@ function togglePlayerDetail(row) {
 // Tab: Расписание + сетка плей-офф
 // --------------------------------------------------------------------------- //
 function matchCard(m) {
-  const score = m.played ? `${m.maps_home}–${m.maps_away}` : "—";
   const winH = m.played && m.winner === m.home, winA = m.played && m.winner === m.away;
-  return `<div class="mcard${m.played ? " played" : ""}">` +
-    `<span class="mc-day">Д${m.day}</span>` +
-    `<span class="mc-team${winH ? " win" : ""}">${esc(m.home_abbrev)}</span>` +
-    `<span class="mc-score">${score}</span>` +
-    `<span class="mc-team${winA ? " win" : ""}">${esc(m.away_abbrev)}</span>` +
-    `<span class="mc-bo">Bo${m.best_of}</span>` +
+  const side = (id, ab, sc, win) =>
+    `<div class="mc-row${win ? " win" : ""}">${emblem(id)}<span class="mc-tm">${esc(ab)}</span>` +
+    `<span class="mc-sc">${m.played ? sc : "·"}</span></div>`;
+  return `<div class="mcard${m.played ? " played" : " upcoming"}" title="Bo${m.best_of}">` +
+    side(m.home, m.home_abbrev, m.maps_home, winH) +
+    side(m.away, m.away_abbrev, m.maps_away, winA) +
   `</div>`;
 }
 function renderSchedule(data) {
-  const reg = (data.regular || []);
+  const reg = data.regular || [];
   const bracket = data.bracket || {};
-  const regHtml = reg.length
-    ? `<div class="sched-grid">${reg.map(matchCard).join("")}</div>`
-    : `<div class="muted">Регулярка ещё не сыграна.</div>`;
+  const byLg = {};
+  reg.forEach((m) => (byLg[m.league] = byLg[m.league] || []).push(m));
+  const sect = (title, ms) => !ms || !ms.length ? "" :
+    `<h4 class="sched-lg">${title}</h4><div class="sched-grid">${ms.map(matchCard).join("")}</div>`;
+  const regHtml = (sect("Верхняя лига", byLg.upper) + sect("Нижняя лига", byLg.lower))
+    || `<div class="muted">Регулярка ещё не сыграна.</div>`;
   const brHtml = Object.keys(bracket).length
     ? Object.entries(bracket).map(([lg, stages]) =>
-        `<div class="bracket-block"><h4>${lg === "upper" ? "Плей-офф · Верхняя" : "Плей-офф · Нижняя"}</h4>` +
+        `<div class="bracket-block"><h4>${lg === "upper" ? "🏆 Плей-офф · Верхняя" : "Плей-офф · Нижняя"}</h4>` +
         `<div class="bracket">${stages.map((st) =>
           `<div class="br-col"><div class="br-stage">${esc(st.label)}</div>` +
-          st.matches.map(matchCard).join("") + `</div>`).join("")}</div></div>`).join("")
+          `<div class="br-matches">${st.matches.map(matchCard).join("")}</div></div>`).join("")}</div></div>`).join("")
     : `<div class="muted">Плей-офф ещё не сыгран.</div>`;
   el("panel-schedule").innerHTML =
-    `<h3>Регулярный сезон <span class="muted">(1 серия = 1 день)</span></h3>${regHtml}` +
-    `<h3>Плей-офф</h3>${brHtml}`;
+    `<h3>Регулярный сезон</h3>${regHtml}<h3>Плей-офф <span class="muted">(сетка)</span></h3>${brHtml}`;
 }
 
 // --------------------------------------------------------------------------- //
 // Tab: Команды + страница команды
 // --------------------------------------------------------------------------- //
 function renderTeams(leagues) {
-  const all = [].concat(leagues.upper || [], leagues.lower_A || [], leagues.lower_Z || []);
+  const group = (title, rows) => !rows.length ? "" :
+    `<h3 class="tgroup-h">${title}</h3><div class="tcards">${rows.map((t) =>
+      `<button class="tcard" data-team="${esc(t.team_id)}" style="--tc:${state._colors && state._colors[t.team_id] || "#3a4757"}">` +
+        emblem(t.team_id, "lg") +
+        `<div class="tc-body"><div class="tc-nm">${esc(t.name)} <span class="tc-ab">${esc(t.abbrev)}</span></div>` +
+        `<div class="tc-pw">⚡ ${t.power} · ${"★".repeat(Math.min(5, t.titles || 0)) || "без титулов"}</div></div>` +
+        `<span class="tc-go">→</span>` +
+      `</button>`).join("")}</div>`;
   el("panel-teams").innerHTML =
     `<div id="teamPage" class="team-page is-hidden"></div>` +
-    `<div class="tcards">${all.map((t) =>
-      `<button class="tcard" data-team="${esc(t.team_id)}">` +
-        `<div class="tc-top"><span class="tc-ab">${esc(t.abbrev)}</span>` +
-        `<span class="tc-lg">${t.league === "upper" ? "Верх" : "Низ " + (t.group || "")}</span></div>` +
-        `<div class="tc-nm">${esc(t.name)}</div>` +
-        `<div class="tc-pw">Power ${t.power} · ${"★".repeat(Math.min(5, t.titles || 0)) || "0 титулов"}</div>` +
-      `</button>`).join("")}</div>`;
+    group("Верхняя лига", leagues.upper || []) +
+    group("Нижняя · группа A", leagues.lower_A || []) +
+    group("Нижняя · группа Z", leagues.lower_Z || []);
   el("panel-teams").querySelectorAll(".tcard").forEach((b) =>
     b.addEventListener("click", () => openTeam(b.dataset.team)));
 }
-async function openTeam(teamId) {
-  switchTab("teams");
-  // wait for the teams panel to render its cards, then show the page
-  setTimeout(async () => {
-    const page = el("teamPage");
-    if (!page) return;
-    page.innerHTML = `<div class="muted loading">Загрузка команды…</div>`;
-    page.classList.remove("is-hidden");
-    try {
-      const { team } = await api(`/team/${teamId}`);
-      renderTeamPage(team);
-    } catch (e) {
-      page.innerHTML = `<div class="result-error">Ошибка: ${esc(e.message)}</div>`;
-    }
-  }, 60);
+function openTeam(teamId) {
+  state.pendingTeam = teamId;
+  if (state.tab === "teams") { state.pendingTeam = null; loadTeamPage(teamId); }
+  else switchTab("teams");      // loadTab('teams') renders cards then opens the pending team page
+}
+async function loadTeamPage(teamId) {
+  const page = document.getElementById("teamPage");   // fresh (renderTeams just rebuilt it)
+  if (!page) return;
+  page.innerHTML = `<div class="muted loading">Загрузка команды…</div>`;
+  page.classList.remove("is-hidden");
+  page.scrollIntoView({ behavior: "smooth", block: "start" });
+  try { renderTeamPage((await api(`/team/${teamId}`)).team); }
+  catch (e) { page.innerHTML = `<div class="result-error">Ошибка: ${esc(e.message)}</div>`; }
 }
 function renderTeamPage(t) {
-  const page = el("teamPage");
+  const page = document.getElementById("teamPage");
+  if (!page) return;
   const rec = t.record || {};
   const roster = (t.roster || []).map((p) =>
     `<div class="tp-player">${factionChip(p.faction)}` +
@@ -360,6 +370,7 @@ function renderTeamPage(t) {
   page.innerHTML =
     `<div class="tp-head">` +
       `<button class="ghost tp-close">← к командам</button>` +
+      emblem(t.team_id, "xl") +
       `<h3>${esc(t.name)} <span class="muted">${esc(t.abbrev)} · ${t.league === "upper" ? "Верхняя" : "Нижняя " + (t.group || "")}</span></h3>` +
     `</div>` +
     `<div class="tp-stats">` +
@@ -399,17 +410,20 @@ function renderDraft(data) {
     return;
   }
   const kind = data.kind === "bootstrap" ? "Стартовый драфт" : "Драфт новичков";
-  const rows = picks.map((p) =>
-    `<div class="dpick"><span class="dp-ov">#${p.overall}</span>` +
-    `<span class="dp-rnd">Р${p.round}</span>` +
-    `<span class="dp-team">${esc(p.team)}</span>` +
-    `${factionChip(p.faction)}` +
-    `<span class="dp-pl">${esc(p.player)}</span>` +
-    `<span class="dp-ar">${esc(p.archetype || "")}</span>` +
-    `<span class="dp-rr">${p.rating ?? ""}</span></div>`).join("");
+  const rounds = {};
+  picks.forEach((p) => { (rounds[p.round] = rounds[p.round] || []).push(p); });
+  const html = Object.keys(rounds).sort((a, b) => a - b).map((r) =>
+    `<div class="draft-round"><div class="dr-head">Раунд ${r}</div>` +
+    `<div class="draft-board">${rounds[r].map((p) =>
+      `<div class="dpick">` +
+        `<span class="dp-ov">${p.overall}</span>` +
+        emblem(p.team_id, "") +
+        `<div class="dp-body"><div class="dp-pl">${esc(p.player)} ${factionChip(p.faction)}</div>` +
+        `<div class="dp-sub">${esc(p.team)} · ${esc(p.archetype || "")}</div></div>` +
+        `<span class="dp-rr">${p.rating ?? ""}</span>` +
+      `</div>`).join("")}</div></div>`).join("");
   el("panel-draft").innerHTML =
-    `<h3>${kind} <span class="muted">сезон ${data.season} · ${picks.length} пиков</span></h3>` +
-    `<div class="draft-board">${rows}</div>`;
+    `<h3>${kind} <span class="muted">сезон ${data.season} · ${picks.length} пиков</span></h3>${html}`;
 }
 
 // --------------------------------------------------------------------------- //
@@ -483,6 +497,7 @@ async function openWorld(worldId) {
     const { world } = await fetchJson(`/api/world/${worldId}`);
     state.worldId = world.world_id;
     state.world = world;
+    state.emblems = world.emblems || {};
     show("newSection", false);
     show("resultPanel", false);
     show("worldView", true);
