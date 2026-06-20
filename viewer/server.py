@@ -146,6 +146,21 @@ WORLD_JOBS: dict[str, dict] = {}
 WORLD_JOBS_LOCK = threading.Lock()
 FROZEN_POP = ROOT / "population" / "frozen_population_v1.json"
 
+# Per-world mutation lock — the server is threaded and load/save are unsynchronised, so every
+# load -> mutate -> save on a world (advance / off-season / live start + reveal) takes this lock.
+# It serialises concurrent writers so two requests can't double-finalise a season or clobber an
+# in-progress reveal (a GET never takes it — reads stay responsive).
+_WORLD_LOCKS: dict[str, threading.Lock] = {}
+_WORLD_LOCKS_GUARD = threading.Lock()
+
+
+def _world_lock(world_id: str) -> threading.Lock:
+    with _WORLD_LOCKS_GUARD:
+        lk = _WORLD_LOCKS.get(world_id)
+        if lk is None:
+            lk = _WORLD_LOCKS[world_id] = threading.Lock()
+        return lk
+
 
 def _world_net_fns(world: dict):
     """(soloq_match_fn, season_play_fn) bound to the frozen population, or (None, None)
@@ -243,7 +258,11 @@ def start_world_advance_job(world_id: str) -> dict:
 
     def worker() -> None:
         try:
+          with _world_lock(world_id):
+            from src.world import live_season
             world = load_world(world_id)
+            if live_season.is_live(world):
+                raise ValueError("идёт раскрытие сезона по дням — сначала доиграй его")
             _, play_fn = _world_net_fns(world)
             llm = _world_llm()
             if llm is not None:
@@ -317,23 +336,26 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None) -> di
 
     def worker() -> None:
         try:
-            from src.world import offseason
-            world = load_world(world_id)
-            soloq_mf, _ = _world_net_fns(world)
-            rookie_budget, fa_budget, cfg, slots, rounds = _offseason_budgets(settings)
-            intro_ids = (settings or {}).get("introduce_ids") or []
-            if intro_ids:                              # reserves can ONLY debut here, in the off-season
-                from src.world.world import introduce_reserves
-                introduce_reserves(world, intro_ids)
-            _set_world_job(job_id, phase="SoloQ + аукцион + трансферы (LLM-менеджер)…")
-            llm = _world_llm()
-            report = offseason.run_offseason(
-                world, soloq_match_fn=soloq_mf, llm=llm, rookie_budget=rookie_budget,
-                fa_budget=fa_budget, training_config=cfg, auction_slots=slots, soloq_rounds=rounds)
-            from src.world import commentary
-            commentary.offseason_note(world, report, llm=llm)       # 📻 off-season recap
-            commentary.manager_comments(world, llm=llm)             # 💬 one comment per manager
-            save_world(world)
+            from src.world import live_season, offseason
+            with _world_lock(world_id):
+                world = load_world(world_id)
+                if live_season.is_live(world):
+                    raise ValueError("идёт раскрытие сезона по дням — сначала доиграй его")
+                soloq_mf, _ = _world_net_fns(world)
+                rookie_budget, fa_budget, cfg, slots, rounds = _offseason_budgets(settings)
+                intro_ids = (settings or {}).get("introduce_ids") or []
+                if intro_ids:                          # reserves can ONLY debut here, in the off-season
+                    from src.world.world import introduce_reserves
+                    introduce_reserves(world, intro_ids)
+                _set_world_job(job_id, phase="SoloQ + аукцион + трансферы (LLM-менеджер)…")
+                llm = _world_llm()
+                report = offseason.run_offseason(
+                    world, soloq_match_fn=soloq_mf, llm=llm, rookie_budget=rookie_budget,
+                    fa_budget=fa_budget, training_config=cfg, auction_slots=slots, soloq_rounds=rounds)
+                from src.world import commentary
+                commentary.offseason_note(world, report, llm=llm)   # 📻 off-season recap
+                commentary.manager_comments(world, llm=llm)         # 💬 one comment per manager
+                save_world(world)
             events = [e for e in (report.get("events") or []) if isinstance(e, dict) and e.get("msg")]
             chronicle = [{"seq": e.get("seq"), "kind": e.get("kind"), "msg": e.get("msg"),
                           "source": e.get("source"), "team": e.get("team_id")} for e in events][:200]
@@ -529,10 +551,13 @@ def start_world_live_job(world_id: str) -> dict:
 
     def worker() -> None:
         try:
+          with _world_lock(world_id):
+            from src.world import commentary, live_season
             world = load_world(world_id)
             if world.get("phase") == "offseason_due":
                 raise ValueError("сначала проведи межсезонье")
-            from src.world import commentary, live_season
+            if live_season.is_live(world):
+                raise ValueError("сезон по дням уже идёт — доиграй его до конца")
             _, play_fn = _world_net_fns(world)
             llm = _world_llm()
             if llm is not None:
@@ -557,15 +582,17 @@ def start_world_live_job(world_id: str) -> dict:
 
 def world_live_reveal_day(world_id: str) -> dict:
     """Reveal one already-played day (instant). The final day settles the season + adds the
-    champions to the broadcast (templated, no LLM — only now that the result is on screen)."""
+    champions to the broadcast (templated, no LLM — only now that the result is on screen).
+    Under the per-world lock so two concurrent reveals can't double-finalise the same day."""
     from src.world import live_season
-    w = load_world(world_id)
-    result = live_season.reveal_next_day(w)
-    if result.get("finished"):
-        from src.world import commentary
-        commentary.season_close(w, w["history"][-1], llm=None)
-    save_world(w)
-    return {"result": result, "live": live_season.view(w)}
+    with _world_lock(world_id):
+        w = load_world(world_id)
+        result = live_season.reveal_next_day(w)
+        if result.get("finished"):
+            from src.world import commentary
+            commentary.season_close(w, w["history"][-1], llm=None)
+        save_world(w)
+        return {"result": result, "live": live_season.view(w)}
 
 
 def world_live_watch(world_id: str, body: dict) -> dict:

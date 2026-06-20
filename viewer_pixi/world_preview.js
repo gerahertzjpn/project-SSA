@@ -487,8 +487,8 @@
     }
     LIVE = { season: CUR, cursor: 0, nDays: days.length, nreg, groups, days,
       playoff: br, powerByDay,
-      done: { season: CUR, upper_champion: br.upper.nodes.gf.result.winner,
-        lower_champion: br.lower.nodes.gf.result.winner } };
+      done: { season: CUR, upper_champion: tabbr(br.upper.nodes.gf.result.winner),
+        lower_champion: tabbr(br.lower.nodes.gf.result.winner) } };
   }
   function lvReveal() {
     if (!LIVE || LIVE.cursor >= LIVE.nDays) return { result: { already_done: true }, live: lvView() };
@@ -561,7 +561,7 @@
     if (url.startsWith("/api/world/job/")) return { status: "done", world_id: WID, phase: "Готово", summary: lastSummary };
     if (method === "POST" && url === "/api/world/create") { CUR = 0; lastSummary = {}; return { job_id: "cr", status: "running" }; }
     if (method === "POST" && url.endsWith("/live/start")) {
-      lvBuild();                                  // play the whole demo season up front
+      if (!(LIVE && LIVE.cursor < LIVE.nDays)) lvBuild();   // don't clobber an in-progress reveal
       lastSummary = { season: LIVE.season, total_days: LIVE.nDays };
       return { job_id: "live", status: "running" };
     }

@@ -59,6 +59,22 @@ def test_play_and_store_does_not_touch_canonical_state():
     assert len(w.get("history", [])) == hist_before
 
 
+def test_position_stats_do_not_leak_during_reveal():
+    # The up-front play records per-game position_stats; they must be held back (restored to
+    # pre-season) until the reveal finishes, then applied — otherwise the Ratings tab would show
+    # the whole unrevealed season's winrates from day 0.
+    w = _bootstrapped()
+    def _games(world):
+        return sum(v.get("games", 0) for p in world["players"].values()
+                   for v in (p.get("position_stats") or {}).values())
+    before = _games(w)
+    _played(w)
+    assert _games(w) == before                       # mid-reveal: no new position games surfaced
+    while LS.is_live(w):
+        LS.reveal_next_day(w)
+    assert _games(w) > before                        # finalised: the season's games are now counted
+
+
 def test_view_is_spoiler_free_at_each_cursor():
     w = _played(_bootstrapped())
     v0 = LS.view(w)
@@ -76,7 +92,9 @@ def test_view_is_spoiler_free_at_each_cursor():
     assert v1["bracket"]["upper"] == []
 
 
-def test_full_reveal_finalizes_like_batch():
+def test_full_reveal_finalizes_with_correct_invariants():
+    # Not a bit-identical re-run of run_regular_season (per-series RNG is call-order keyed), but the
+    # settled season must hold the same structural invariants: 85 series, 135/45/45 points, 2 promo/releg.
     w = _bootstrapped()
     before = len(w.get("history", []))
     _played(w)

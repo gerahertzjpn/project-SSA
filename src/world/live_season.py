@@ -1,14 +1,17 @@
 """Play a whole season ONCE, then reveal it DAY BY DAY (no spoilers).
 
 The owner's model (chosen explicitly): the season is a SINGLE canonical play-through with the
-REAL match engine — exactly the same matches "Сыграть сезон" (`run_regular_season`) would play —
-captured into a per-day structure. The UI then *reveals* it one day at a time, and only what's
-been revealed exists for the viewer: standings, the playoff bracket and provisional Power fill in
-as you step through the days; nothing past the cursor is shown. Watching a match in the broadcast
-just replays its already-decided map sequence (no scrub).
+REAL match engine (the SAME `season.play_one_series` / net engine «Сыграть сезон» uses), captured
+into a per-day structure. The UI then *reveals* it one day at a time, and only what's been revealed
+exists for the viewer: standings, the playoff bracket and provisional Power fill in as you step
+through the days; nothing past the cursor is shown. Watching a match in the broadcast just replays
+its already-decided map sequence (no scrub).
 
-So this is NOT a separate/parallel simulation and it does NOT change the match mechanic — it is the
-same season, played up front, revealed progressively.
+So this does NOT change the match mechanic — it is one season, played up front, revealed
+progressively, and settled through the same finaliser. (It is NOT a bit-identical re-run of a
+specific batch `run_regular_season`: per-series RNG is keyed by call order and the two paths play
+the groups in a different order, so a given seed yields a different — but equally valid — canonical
+season. The promotion/points/series-count invariants hold either way.)
 
 Spoiler-safety: ``play_and_store`` plays every series but does NOT touch canonical state (no Elo,
 no calendar, no history, no promotion) — those other tabs stay blank for the season until the
@@ -18,6 +21,7 @@ revealed, the season is settled through the SAME :func:`season.finalize_season` 
 """
 from __future__ import annotations
 
+import copy
 from typing import Optional
 
 from src.world import brackets, season
@@ -119,6 +123,11 @@ def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dic
 
     results = {"upper": [], "lower_A": [], "lower_Z": []}
     local_elo = {tid: float(t["elo"]) for tid, t in world["teams"].items()}
+    # The up-front play records per-game position_stats (winrate per position). Snapshot them now,
+    # restore after playing, and stash the post-season state — so during the reveal the Ratings tab
+    # shows ONLY pre-season position data (no leak), and the real stats land at finalize.
+    pos_before = {pid: copy.deepcopy(p.get("position_stats"))
+                  for pid, p in world["players"].items() if "position_stats" in p}
 
     def _bump_elo(s: dict) -> None:                 # provisional Power, on a LOCAL copy only
         d = series_elo_delta(local_elo[s["home"]], local_elo[s["away"]],
@@ -171,6 +180,10 @@ def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dic
         power_by_day.append({tid: round(e) for tid, e in local_elo.items()})
 
     n_days = len(days)
+    # capture the post-season position_stats, then restore the pre-season ones (re-applied at finalize)
+    pos_after = {pid: copy.deepcopy(world["players"][pid].get("position_stats")) for pid in pos_before}
+    for pid, snap in pos_before.items():
+        world["players"][pid]["position_stats"] = snap
     world["live_replay"] = {
         "season": season_num,
         "cursor": 0,
@@ -180,6 +193,7 @@ def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dic
         "days": days,                              # full series incl cores (server-side only)
         "playoff": {"upper": up_br, "lower": lo_br},
         "power_by_day": power_by_day,
+        "pos_after": pos_after,                    # real position_stats, applied when reveal finishes
         "finalize": {
             "up_results": results["upper"], "a_results": results["lower_A"],
             "z_results": results["lower_Z"],
@@ -338,6 +352,9 @@ def _finalize(world: dict, ls: dict) -> dict:
         world, ls["season"], up_rows, a_rows, z_rows, fin["up_play"], fin["lo_play"],
         fin["up_results"], fin["a_results"], fin["z_results"],
         settle_economy=True, record=True, apply_elo=True)
+    for pid, stats in (ls.get("pos_after") or {}).items():   # the season's real position_stats land now
+        if pid in world["players"] and stats is not None:
+            world["players"][pid]["position_stats"] = stats
     world["phase"] = "offseason_due"        # whole season revealed -> off-season is now due
     return summary
 
