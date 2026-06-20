@@ -435,10 +435,23 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
   background: #1a2029; color: #eef4fa; border: 1px solid #2a323d; border-radius: 8px;
   padding: 8px 10px; font-size: 14px; font-weight: 700;
 }
+.os-reserves { margin: 4px 0 0; }
+.osr-head { font-size: 12px; color: #9fb0c2; font-weight: 700; margin-bottom: 6px; }
+.osr-list { max-height: 150px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid #232c38; border-radius: 8px; padding: 6px; }
+.osr-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 3px 6px;
+  border-radius: 6px; cursor: pointer; }
+.osr-row:hover { background: #18222f; }
+.osr-nm { font-weight: 600; color: #e6edf4; }
 .os-eta {
   margin: 14px 0; padding: 11px 13px; background: #14202c; border: 1px solid #244055;
   border-radius: 10px; font-size: 13px; color: #cfe0ff; line-height: 1.5;
 }
+/* Off-season is mandatory between seasons -> pulse the button when it's due */
+button.ghost.required { border-color: #2f6df0; color: #fff; background: #18222f;
+  animation: osreq 1.5s ease-in-out infinite; }
+@keyframes osreq { 0%, 100% { box-shadow: 0 0 0 0 rgba(47, 109, 240, .5); }
+  50% { box-shadow: 0 0 0 6px rgba(47, 109, 240, 0); } }
 .os-actions { display: flex; gap: 10px; justify-content: flex-end; }
 
 /* Chronicle (off-season replay) */

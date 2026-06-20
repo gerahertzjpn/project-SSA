@@ -59,7 +59,6 @@
           <span id="viewCounts" class="view-counts"></span>
         </div>
         <div class="view-actions">
-          <button id="reservesBtn" class="ghost is-hidden">🎒 Резерв</button>
           <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
           <button id="offseasonBtn" class="ghost">⟳ Межсезонье</button>
         </div>
@@ -105,6 +104,7 @@
           <label>Свободных агентов<input id="osFaN" type="number" min="0" max="10" value="0"></label>
           <label>Шагов на агента<input id="osFaS" type="number" min="800000" step="100000" value="800000"></label>
         </div>
+        <div id="osReserves" class="os-reserves"></div>
         <div id="osEta" class="os-eta"></div>
         <div class="os-actions">
           <button id="osRun" class="primary">Запустить межсезонье</button>
@@ -129,20 +129,6 @@
         <div class="os-actions">
           <button id="selCreate" class="primary">Создать World</button>
           <button id="selCancel" class="ghost">Отмена</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- Reserves: debut held-out players later -->
-    <div id="resModal" class="os-overlay is-hidden">
-      <div class="os-card sel-card">
-        <h3>Резерв — ввести новичков</h3>
-        <p class="muted">Отметь резервистов, чтобы ввести их в этом сезоне (попадут в пул новичков
-          и будут задрафтованы, помимо натренированных).</p>
-        <div id="resList" class="sel-list">—</div>
-        <div class="os-actions">
-          <button id="resIntro" class="primary">Ввести выбранных</button>
-          <button id="resCancel" class="ghost">Закрыть</button>
         </div>
       </div>
     </div>

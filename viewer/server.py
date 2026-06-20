@@ -257,7 +257,9 @@ def start_world_advance_job(world_id: str) -> dict:
             _set_world_job(job_id, phase="Группы + плей-офф (реальные матчи)…")
             summary = world_season.run_regular_season(world, play=play_fn)
             close_line = commentary.season_close(world, summary, llm=llm)   # 📻 champions + promo/releg
-            world["season"] = int(world.get("season", 0)) + 1  # roll to the next season
+            # Season just PLAYED. The off-season (which the owner must run next) rolls to the next
+            # season — so don't increment here (that was a double-roll). Gate via the phase.
+            world["phase"] = "offseason_due"
             save_world(world)
             _set_world_job(job_id, status="done", phase="Сезон сыгран", summary={
                 "season": summary["season"],
@@ -311,6 +313,10 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None) -> di
             world = load_world(world_id)
             soloq_mf, _ = _world_net_fns(world)
             rookie_budget, fa_budget, cfg, slots, rounds = _offseason_budgets(settings)
+            intro_ids = (settings or {}).get("introduce_ids") or []
+            if intro_ids:                              # reserves can ONLY debut here, in the off-season
+                from src.world.world import introduce_reserves
+                introduce_reserves(world, intro_ids)
             _set_world_job(job_id, phase="SoloQ + аукцион + трансферы (LLM-менеджер)…")
             llm = _world_llm()
             report = offseason.run_offseason(

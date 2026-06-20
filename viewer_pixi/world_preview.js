@@ -287,7 +287,7 @@
     const commentary = [];
     snaps.slice(0, CUR + 1).forEach((s) => { commentary.push(s.commentary[0]); if (s.num < CUR) commentary.push(s.commentary[1]); });
     const managers = (snaps[Math.max(0, CUR - 1)] || snap()).managerComments || [];
-    return { world_id: WID, name: "Demo World", season: CUR, phase: "regular",
+    return { world_id: WID, name: "Demo World", season: CUR, phase: PHASE,
       upper: [], lower: [], ladder: [], history, reserves, commentary, emblems: EMBLEMS,
       manager_comments: CUR > 0 ? managers : [],
       counts: { players: players.length,
@@ -305,18 +305,18 @@
   // ---- the fake API ----------------------------------------------------- //
   let lastSummary = {};
   let showTraining = false;       // the tracker appears only after an off-season (like the real UI)
-  function doAdvance() {
+  let PHASE = "regular";          // regular -> (play season) -> offseason_due -> (off-season) -> regular
+  function doAdvance() {           // play the CURRENT season; the OFF-SEASON rolls to the next
     const s = snaps[CUR];
-    showTraining = false;
+    showTraining = false; PHASE = "offseason_due";
     lastSummary = { season: s.num, upper_champion: tname(s.champ.upper_champion),
       lower_champion: tname(s.champ.lower_champion), promoted: s.champ.promoted.map(tname),
       relegated: s.champ.relegated.map(tname), commentary: s.commentary.map((c) => c.text) };
-    if (CUR < 2) CUR++;
     return { job_id: "adv", status: "running" };
   }
   function doOffseason() {
-    const s = snaps[Math.min(CUR, 2)];
-    showTraining = true;
+    const s = snaps[CUR];
+    showTraining = true; PHASE = "regular";
     lastSummary = { next_season: Math.min(CUR + 1, 2), rookies: 3, training_auctioned: 6,
       training_launched: Math.min(6, s.training.length), chronicle: s.chronicle,
       log: s.chronicle.map((c) => c.msg).slice(0, 50) };

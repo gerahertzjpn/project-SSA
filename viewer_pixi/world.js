@@ -504,11 +504,12 @@ function renderHeader(w) {
   el("viewCounts").textContent =
     `${c.players} игроков · ${c.rostered} в составах · ${c.streamers} стримеров` +
     (c.reserves ? ` · ${c.reserves} в резерве` : "");
-  const nRes = (w.reserves || []).length;
-  el("reservesBtn").classList.toggle("is-hidden", nRes === 0);
-  el("reservesBtn").textContent = `🎒 Резерв (${nRes})`;
-  el("advanceBtn").disabled = state.busy;
-  el("offseasonBtn").disabled = state.busy;
+  // Off-season is MANDATORY between seasons: after a played season you must run it before the next.
+  const due = w.phase === "offseason_due";
+  el("advanceBtn").disabled = state.busy || due;
+  el("offseasonBtn").disabled = state.busy || !due;
+  el("offseasonBtn").classList.toggle("required", due && !state.busy);
+  el("advanceBtn").title = due ? "Сначала проведите межсезонье" : "";
 }
 async function openWorld(worldId) {
   try {
@@ -581,34 +582,6 @@ async function createWithSelection() {
   } finally { refreshPicker(); }
 }
 
-// Reserves: debut held-out players later ------------------------------------ //
-function openResModal() {
-  const res = (state.world && state.world.reserves) || [];
-  state.resPick = new Set();
-  el("resList").innerHTML = res.length ? res.map((p) =>
-    `<label class="sel-row"><input type="checkbox" data-pid="${esc(p.player_id)}">` +
-    `<span class="sel-ov">${p.rating}</span>${factionChip(p.faction)}` +
-    `<span class="sel-nm">${esc(p.nickname)}</span>` +
-    `<span class="sel-net">${esc(p.archetype || "")}</span></label>`).join("")
-    : `<div class="muted">Резерв пуст.</div>`;
-  el("resList").querySelectorAll("input[data-pid]").forEach((cb) =>
-    cb.addEventListener("change", () =>
-      cb.checked ? state.resPick.add(cb.dataset.pid) : state.resPick.delete(cb.dataset.pid)));
-  show("resModal", true);
-}
-async function introduceReserves() {
-  if (!state.resPick || !state.resPick.size) { show("resModal", false); return; }
-  show("resModal", false);
-  try {
-    await fetchJson(`/api/world/${state.worldId}/introduce`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ player_ids: [...state.resPick] }),
-    });
-    flashResult(`<div class="season-done">Введено новичков из резерва: ${state.resPick.size}. Будут задрафтованы в межсезонье.</div>`);
-    await openWorld(state.worldId);
-  } catch (e) { flashResult(`<div class="result-error">Ошибка: ${esc(e.message)}</div>`); }
-}
-
 function flashResult(html) {
   show("resultPanel", true);
   el("resultPanel").innerHTML = html;
@@ -660,16 +633,24 @@ function updateEta() {
 }
 function openOsModal() {
   if (!state.worldId || state.busy) return;
+  const res = (state.world && state.world.reserves) || [];
+  el("osReserves").innerHTML = !res.length ? "" :
+    `<div class="osr-head">🎒 Ввести из резерва <span class="muted">(${res.length} — только в межсезонье)</span></div>` +
+    `<div class="osr-list">${res.map((p) =>
+      `<label class="osr-row"><input type="checkbox" data-pid="${esc(p.player_id)}">` +
+      `${factionChip(p.faction)}<span class="osr-nm">${esc(p.nickname)}</span>` +
+      `<span class="muted">${esc(p.archetype || "")} · ${p.rating}</span></label>`).join("")}</div>`;
   updateEta();
   show("osModal", true);
 }
 async function submitOffseason() {
+  const introduce_ids = [...el("osReserves").querySelectorAll("input:checked")].map((cb) => cb.dataset.pid);
   show("osModal", false);
   el("offseasonBtn").disabled = true;
   try {
     const job = await runJob(`/api/world/${state.worldId}/offseason`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(osSettings()),
+      body: JSON.stringify({ ...osSettings(), introduce_ids }),
     }, "Межсезонье — SoloQ, аукцион, трансферы");
     const s = job.summary || {};
     flashResult(`<div class="season-done">Межсезонье закрыто → сезон <strong>${s.next_season}</strong>. ` +
@@ -733,9 +714,6 @@ function wireEvents() {
   el("selCreate").addEventListener("click", createWithSelection);
   el("selCancel").addEventListener("click", () => show("selModal", false));
   el("selX").addEventListener("input", updateSelHint);
-  el("reservesBtn").addEventListener("click", openResModal);
-  el("resIntro").addEventListener("click", introduceReserves);
-  el("resCancel").addEventListener("click", () => show("resModal", false));
   el("advanceBtn").addEventListener("click", advance);
   el("offseasonBtn").addEventListener("click", openOsModal);
   el("osRun").addEventListener("click", submitOffseason);
