@@ -170,6 +170,15 @@ def _team_name(world: dict, tid) -> str:
     return t["name"] if t else str(tid)
 
 
+def _world_llm():
+    """Real Claude client for manager decisions when the llm_manager flag is ON and a key is
+    available; None otherwise (-> heuristic manager, zero API calls). Model via WORLD_LLM_MODEL."""
+    from src.world import llm_manager
+    if not llm_manager.llm_enabled():
+        return None
+    return llm_manager.get_client()
+
+
 def start_world_create_job(payload: dict) -> dict:
     """Validate the 22-team pick, then bootstrap a population-backed world on a worker
     thread (net-real SoloQ + league fill). Returns a job_id the UI polls."""
@@ -197,8 +206,15 @@ def start_world_create_job(payload: dict) -> dict:
             world = new_world(world_id, specs, name=world_id, seed=seed,
                               population=str(FROZEN_POP) if use_pop else None)
             soloq_mf, play_fn = _world_net_fns(world) if use_pop else (None, None)
-            _set_world_job(job_id, phase="SoloQ + драфт + лиги (реальные матчи)…")
-            world_season.bootstrap_world(world, seed=seed, play=play_fn, soloq_match_fn=soloq_mf)
+            llm = _world_llm()
+            draft_fn = None
+            if llm is not None:
+                from src.world import llm_manager
+                draft_fn = llm_manager.draft_pick_fn(world, llm=llm)  # L2: one LLM call per pick
+            _set_world_job(job_id, phase="SoloQ + драфт (LLM) + лиги (реальные матчи)…"
+                           if llm else "SoloQ + драфт + лиги (реальные матчи)…")
+            world_season.bootstrap_world(world, seed=seed, play=play_fn, soloq_match_fn=soloq_mf,
+                                         draft_pick_fn=draft_fn)
             _set_world_job(job_id, phase="Сохраняем…")
             save_world(world)
             _set_world_job(job_id, status="done", phase="Готово", world_id=world_id)
@@ -224,6 +240,13 @@ def start_world_advance_job(world_id: str) -> dict:
         try:
             world = load_world(world_id)
             _, play_fn = _world_net_fns(world)
+            llm = _world_llm()
+            if llm is not None:
+                from src.world import llm_manager
+                _set_world_job(job_id, phase="Менеджеры пишут плейбуки (LLM)…")
+                for t in world["teams"].values():       # L1: one playbook call per team
+                    if len(t.get("roster", [])) >= 3:
+                        llm_manager.author_playbook(world, t, llm=llm)
             _set_world_job(job_id, phase="Группы + плей-офф (реальные матчи)…")
             summary = world_season.run_regular_season(world, play=play_fn)
             world["season"] = int(world.get("season", 0)) + 1  # roll to the next season
@@ -259,8 +282,8 @@ def start_world_offseason_job(world_id: str) -> dict:
             from src.world import offseason
             world = load_world(world_id)
             soloq_mf, _ = _world_net_fns(world)
-            _set_world_job(job_id, phase="SoloQ + трансферы + рукизы…")
-            report = offseason.run_offseason(world, soloq_match_fn=soloq_mf)
+            _set_world_job(job_id, phase="SoloQ + трансферы + рукизы (LLM-менеджер)…")
+            report = offseason.run_offseason(world, soloq_match_fn=soloq_mf, llm=_world_llm())
             save_world(world)
             events = report.get("events", []) or []
             lines = [str(e.get("text") or e.get("message") or e.get("note") or "")
