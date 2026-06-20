@@ -460,7 +460,7 @@ def world_view_payload(world_id: str) -> dict:
                for s in w.get("history", [])[-10:]]
     reserves = [pcard(pid) for pid in w.get("reserves", []) if pid in players]
     live = None
-    if w.get("live_season"):
+    if w.get("live_replay"):
         from src.world import live_season
         live = live_season.view(w)
     fr_by_id = {f["franchise_id"]: f for f in franchise_specs()}
@@ -511,42 +511,69 @@ def world_matrix_payload(world_id: str, season=None) -> dict:
     return views.league_matrix(w, season)
 
 
-# --- day-by-day live season (synchronous; fast league sim for a responsive reveal) ----- #
+# --- day-by-day season: PLAY the whole season net-real once (background), then REVEAL it ----- #
 def world_live_view_payload(world_id: str) -> dict:
     from src.world import live_season
     return {"live": live_season.view(load_world(world_id))}
 
 
-def world_live_start(world_id: str) -> dict:
-    """Begin a day-by-day season. Allowed only when a fresh season is ready to play
-    (phase 'regular'/unset) — never while an off-season is still due."""
+def start_world_live_job(world_id: str) -> dict:
+    """Play the ENTIRE season net-real on a worker thread (same matches as «Сыграть сезон»),
+    then store it for day-by-day reveal. Canonical state isn't settled until the reveal finishes,
+    so other tabs stay spoiler-free meanwhile. Refused while an off-season is still due."""
     world_flags.assert_enabled("ui_world_tab")
-    from src.world import live_season
-    w = load_world(world_id)
-    if w.get("phase") in ("offseason_due",):
-        raise ValueError("сначала проведи межсезонье")
-    if live_season.is_live(w):
-        return {"live": live_season.view(w)}
-    live_season.start(w)
-    save_world(w)
-    return {"live": live_season.view(w)}
+    job_id = uuid.uuid4().hex
+    with WORLD_JOBS_LOCK:
+        WORLD_JOBS[job_id] = {"status": "running", "kind": "live", "world_id": world_id,
+                              "phase": "Готовим сезон…", "summary": None, "error": None}
+
+    def worker() -> None:
+        try:
+            world = load_world(world_id)
+            if world.get("phase") == "offseason_due":
+                raise ValueError("сначала проведи межсезонье")
+            from src.world import commentary, live_season
+            _, play_fn = _world_net_fns(world)
+            llm = _world_llm()
+            if llm is not None:
+                from src.world import llm_manager
+                _set_world_job(job_id, phase="Менеджеры пишут плейбуки (LLM)…")
+                for t in world["teams"].values():
+                    if len(t.get("roster", [])) >= 3:
+                        llm_manager.author_playbook(world, t, llm=llm)
+            commentary.season_open(world, llm=llm)        # 📻 season opens (no result yet)
+            _set_world_job(job_id, phase="Играем весь сезон нейросетями…")
+            rep = live_season.play_and_store(world, play=play_fn)
+            save_world(world)
+            _set_world_job(job_id, status="done", phase="Сезон сыгран — раскрывай по дням",
+                           summary={"season": rep["season"], "total_days": rep["n_days"]})
+        except Exception as error:  # noqa: BLE001
+            traceback.print_exc()
+            _set_world_job(job_id, status="error", error=str(error))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return {"job_id": job_id, "status": "running"}
 
 
-def world_live_play_day(world_id: str) -> dict:
+def world_live_reveal_day(world_id: str) -> dict:
+    """Reveal one already-played day (instant). The final day settles the season + adds the
+    champions to the broadcast (templated, no LLM — only now that the result is on screen)."""
     from src.world import live_season
     w = load_world(world_id)
-    result = live_season.play_day(w)
+    result = live_season.reveal_next_day(w)
+    if result.get("finished"):
+        from src.world import commentary
+        commentary.season_close(w, w["history"][-1], llm=None)
     save_world(w)
     return {"result": result, "live": live_season.view(w)}
 
 
 def world_live_watch(world_id: str, body: dict) -> dict:
-    """Play ONE upcoming fixture as the official result and return its per-map sequence
-    (the no-scrub live broadcast). The UI reveals the maps with a short delay between them."""
+    """Replay one of the next day's matches map-by-map (no scrub). The result is already decided;
+    returns its stored map sequence. Read-only — does not advance the reveal."""
     from src.world import live_season
     w = load_world(world_id)
-    result = live_season.play_series_live(w, body.get("home"), body.get("away"))
-    save_world(w)
+    result = live_season.reveal_watch(w, body.get("home"), body.get("away"))
     return {"result": result, "live": live_season.view(w)}
 
 
@@ -1356,9 +1383,9 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             wid, action = world_live.group("wid"), world_live.group("action")
             try:
                 if action == "start":
-                    self._send_json(world_live_start(wid))
+                    self._send_json(start_world_live_job(wid))
                 elif action == "day":
-                    self._send_json(world_live_play_day(wid))
+                    self._send_json(world_live_reveal_day(wid))
                 else:
                     body = self._read_json() if int(self.headers.get("Content-Length") or 0) else {}
                     self._send_json(world_live_watch(wid, body))

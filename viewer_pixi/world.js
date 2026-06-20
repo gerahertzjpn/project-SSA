@@ -787,35 +787,38 @@ const STAGE_LBL = { ub: "Верхняя сетка", lb: "Нижняя сетк�
 
 async function startLive() {
   if (!state.worldId || state.busy) return;
-  state.busy = true; renderHeader(state.world);
+  state.busy = true; el("liveStartBtn").disabled = true;
   try {
-    const { live } = await apiPost("/live/start");
-    state.world.live = live; state.world.phase = "live";
+    // Plays the WHOLE season net-real in the background (same matches as «Сыграть сезон»);
+    // then we reveal it day by day. Other tabs stay spoiler-free until the reveal finishes.
+    await runJob(`/api/world/${state.worldId}/live/start`, { method: "POST" },
+      "Играем весь сезон нейросетями — потом раскроем по дням");
     state.lastBroadcast = null;
+    await openWorld(state.worldId);
     switchTab("live");
   } catch (e) { flashResult(`<div class="result-error">${esc(e.message)}</div>`); }
   finally { state.busy = false; renderHeader(state.world); }
 }
 
-async function playNextDay() {
+async function playNextDay() {           // reveal the next already-played day (instant)
   if (state.busy || !state.world || !state.world.live) return;
   state.busy = true; el("nextDayBtn").disabled = true; renderHeader(state.world);
   try {
     const { result, live } = await apiPost("/live/day");
     state.world.live = live;
-    if (!live.active) {                          // last day played -> season is finalised
+    if (result.finished) {               // last day revealed -> season settled
       state.world.phase = "offseason_due";
-      flashResult(`<div class="season-done">Сезон сыгран по дням! 🏆 ${esc((live.done || {}).upper_champion || "")} — пора в межсезонье.</div>`);
+      flashResult(`<div class="season-done">Сезон раскрыт полностью! 🏆 ${esc((live.done || {}).upper_champion || "")} — пора в межсезонье.</div>`);
       await openWorld(state.worldId);
       switchTab("live");
       return;
     }
-    renderLive(live, result);
+    renderLive(live);
   } catch (e) { flashResult(`<div class="result-error">${esc(e.message)}</div>`); }
   finally { state.busy = false; renderHeader(state.world); }
 }
 
-async function watchMatch(home, away) {
+async function watchMatch(home, away) {  // replay one upcoming match map-by-map (no scrub)
   if (state.busy) return;
   state.busy = true; renderHeader(state.world);
   const bc = document.getElementById("liveBroadcast");
@@ -882,23 +885,23 @@ function liveStandingsMini(rows, title) {
   }</tbody></table></div>`;
 }
 
-function renderLive(live, dayResult) {
+function renderLive(live) {
   const panel = el("panel-live");
   if (!live || (!live.active && !live.done)) {
     panel.innerHTML = `<div class="lv-empty"><p class="muted">Сезон по дням ещё не запущен.</p>` +
-      `<p>Нажми <b>«📅 По дням»</b> вверху — сезон пойдёт день за днём, без подсказок о будущем. ` +
-      `Каждый день можно открыть <b>прямой эфир</b> отдельного матча.</p></div>`;
+      `<p>Нажми <b>«📅 По дням»</b> вверху — мы сыграем весь сезон нейросетями, а потом раскроем его ` +
+      `день за днём, без подсказок о будущем. Каждый матч можно открыть в <b>прямом эфире</b>.</p></div>`;
     return;
   }
-  const phaseLbl = live.phase === "playoff" ? "Плей-офф" : (live.phase === "done" ? "Сезон сыгран" : "Регулярный сезон");
-  const pct = Math.min(100, Math.round((live.day - 1) / live.total_days * 100));
+  const phaseLbl = live.phase === "playoff" ? "Плей-офф" : (live.phase === "done" ? "Сезон раскрыт" : "Регулярный сезон");
+  const pct = Math.min(100, Math.round(live.cursor / live.total_days * 100));
   const fixtures = live.active ? (live.next_fixtures || []) : [];
   const fxCards = fixtures.map((f) =>
     `<div class="lv-fx"><span class="lv-fx-stage">${esc(STAGE_LBL[f.stage] || f.stage)}</span>` +
     `<span class="lv-fx-tm">${emblem(f.home)}${esc(f.home_abbrev)}</span><span class="lv-vs">vs</span>` +
     `<span class="lv-fx-tm">${emblem(f.away)}${esc(f.away_abbrev)}</span>` +
     `<button class="ghost lv-watch" data-h="${esc(f.home)}" data-a="${esc(f.away)}">📺 Эфир</button></div>`).join("");
-  const playedToday = (dayResult && dayResult.played || []).map((p) =>
+  const playedToday = (live.just_played || []).map((p) =>
     `<span class="lv-res ${p.winner === p.home ? "h" : "a"}">${esc(p.home_abbrev)} ${p.maps_home}:${p.maps_away} ${esc(p.away_abbrev)}</span>`).join("");
   const st = live.standings || {};
   const brk = live.bracket || {};
@@ -907,8 +910,8 @@ function renderLive(live, dayResult) {
   panel.innerHTML =
     `<div class="lv-bar"><div class="lv-day">🔴 День <b>${live.day}</b> / ${live.total_days} · ${phaseLbl}</div>` +
     `<div class="lv-prog"><div class="lv-prog-fill" style="width:${pct}%"></div></div>` +
-    (live.active ? `<button id="lvNext" class="primary">▶ Сыграть день</button>` :
-      `<div class="lv-done">✅ Сезон сыгран — открой «⟳ Межсезонье»</div>`) + `</div>` +
+    (live.active ? `<button id="lvNext" class="primary">▶ Следующий день</button>` :
+      `<div class="lv-done">✅ Сезон раскрыт — открой «⟳ Межсезонье»</div>`) + `</div>` +
     `<div id="liveBroadcast" class="lv-broadcast">${state.lastBroadcast || ""}</div>` +
     (playedToday ? `<div class="lv-today"><span class="muted">Сыграно в этот день:</span> ${playedToday}</div>` : "") +
     (fixtures.length ? `<h4>Следующие матчи <span class="muted">(можно смотреть в прямом эфире)</span></h4>` +

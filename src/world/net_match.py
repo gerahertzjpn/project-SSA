@@ -170,6 +170,7 @@ def make_net_play_fn(
         game_spawner = Spawner(series_spawner.seed())  # independent per-game seeds
         mh = ma = 0
         streak_h = streak_a = 0          # consecutive-loss streaks for the comeback IF-THEN rules
+        sequence: list[str] = []         # winner of each decisive map (for the no-scrub broadcast)
         last_meta = None
         for _ in range(best_of):  # hard cap: a Bo-N can't exceed N games even with draws
             if mh >= needed or ma >= needed:
@@ -198,15 +199,16 @@ def make_net_play_fn(
                                   replay_path=str(rdir / f"league_{gseed}.json") if rec else None,
                                   player_models=models, player_factions=factions, orders=orders)
             if result.winner == "TEAM_A":
-                mh += 1; streak_h = 0; streak_a += 1
+                mh += 1; streak_h = 0; streak_a += 1; sequence.append(home)
             elif result.winner == "TEAM_B":
-                ma += 1; streak_a = 0; streak_h += 1
+                ma += 1; streak_a = 0; streak_h += 1; sequence.append(away)
             # a draw counts as a played game toward the cap but clinches nothing
             if use_playbook and record_positions:        # credit THIS game's lineup with its result
                 playbook.record_position_results(world, home_lu, result.winner == "TEAM_A")
                 playbook.record_position_results(world, away_lu, result.winner == "TEAM_B")
         winner = home if mh > ma else (away if ma > mh else home)  # tie on the cap -> home seed
-        out = {"home": home, "away": away, "maps_home": mh, "maps_away": ma, "winner": winner}
+        out = {"home": home, "away": away, "maps_home": mh, "maps_away": ma, "winner": winner,
+               "best_of": best_of, "sequence": sequence}
         if last_meta:
             out["playbook"] = last_meta
         return out
