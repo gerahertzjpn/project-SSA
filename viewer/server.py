@@ -149,11 +149,13 @@ FROZEN_POP = ROOT / "population" / "frozen_population_v1.json"
 
 def _world_net_fns(world: dict):
     """(soloq_match_fn, season_play_fn) bound to the frozen population, or (None, None)
-    when the manifest is absent (-> abstract rating model)."""
+    when the manifest is absent (-> abstract rating model). EVERY net match is recorded as a
+    replay under data/world/<world_id>/replays/ (owner: record all World matches)."""
     if not FROZEN_POP.exists():
         return None, None
     from src.world import net_match  # local: pulls torch only when a world actually runs
-    return net_match.world_match_fns(world, str(FROZEN_POP))
+    replay_dir = ROOT / "data" / "world" / world["world_id"] / "replays"
+    return net_match.world_match_fns(world, str(FROZEN_POP), replay_dir=replay_dir)
 
 
 def _set_world_job(job_id: str, **fields) -> None:

@@ -85,18 +85,26 @@ def make_soloq_match_fn(
     *,
     run_match_fn: Callable = _default_run_match,
     orders_provider: Optional[Callable[[list, list], Optional[dict]]] = None,
+    replay_dir: Optional[str | Path] = None,
 ) -> Callable:
     """Return a SoloQ ``match_fn(team_a, team_b, ratings, rng) -> (winner, impacts)`` that plays
     a real 3v3 net match. ``team_a``/``team_b`` are 3 World player ids each.
 
     ``orders_provider(team_a, team_b) -> orders|None`` lets a caller overlay manager game-plans
-    (SoloQ normally has none — the nets play free)."""
+    (SoloQ normally has none — the nets play free). ``replay_dir`` set -> EVERY match is saved as
+    a replay there (owner: record all World matches); None -> headless (tests)."""
     idx = net_model_index(load_manifest(manifest_path))
+    rdir = Path(replay_dir) if replay_dir is not None else None
+    if rdir is not None:
+        rdir.mkdir(parents=True, exist_ok=True)
 
     def match_fn(team_a, team_b, ratings, rng):
         models, factions, slot_pids = _models_factions(world, idx, list(team_a), list(team_b))
         seed = rng.randrange(1, 2 ** 31 - 1)
-        kwargs = dict(seed=seed, bot_type="league", mode="training", replay_path=None,
+        rec = rdir is not None
+        kwargs = dict(seed=seed, bot_type="league",
+                      mode="replay" if rec else "training",
+                      replay_path=str(rdir / f"soloq_{seed}.json") if rec else None,
                       player_models=models, player_factions=factions)
         if orders_provider is not None:
             orders = orders_provider(list(team_a), list(team_b))
@@ -122,6 +130,7 @@ def make_net_play_fn(
     run_match_fn: Callable = _default_run_match,
     use_playbook: bool = True,
     record_positions: bool = True,
+    replay_dir: Optional[str | Path] = None,
 ) -> Callable:
     """A season ``play(home, away, best_of) -> result`` that plays a REAL net Bo-N series
     between each team's playbook LINEUP. Same result contract as ``season.make_play_fn`` (home,
@@ -137,6 +146,9 @@ def make_net_play_fn(
 
     idx = net_model_index(load_manifest(manifest_path))
     series_spawner = Spawner(seed)
+    rdir = Path(replay_dir) if replay_dir is not None else None
+    if rdir is not None:
+        rdir.mkdir(parents=True, exist_ok=True)
 
     def _lineup_pids(lineup_map: dict) -> list[str]:
         return [lineup_map[pos] for pos in POSITIONS]
@@ -158,8 +170,12 @@ def make_net_play_fn(
         for _ in range(best_of):  # hard cap: a Bo-N can't exceed N games even with draws
             if mh >= needed or ma >= needed:
                 break
-            result = run_match_fn(seed=game_spawner.seed(), bot_type="league", mode="training",
-                                  replay_path=None, player_models=models, player_factions=factions)
+            gseed = game_spawner.seed()
+            rec = rdir is not None
+            result = run_match_fn(seed=gseed, bot_type="league",
+                                  mode="replay" if rec else "training",
+                                  replay_path=str(rdir / f"league_{gseed}.json") if rec else None,
+                                  player_models=models, player_factions=factions)
             if result.winner == "TEAM_A":
                 mh += 1
             elif result.winner == "TEAM_B":
@@ -177,10 +193,13 @@ def make_net_play_fn(
     return play
 
 
-def world_match_fns(world: dict, manifest_path: Optional[str | Path] = None) -> tuple:
+def world_match_fns(world: dict, manifest_path: Optional[str | Path] = None,
+                    replay_dir: Optional[str | Path] = None) -> tuple:
     """Convenience: (soloq_match_fn, season_play_fn) for a population-backed world, or
-    ``(None, None)`` for an abstract world (callers then fall back to the rating defaults)."""
+    ``(None, None)`` for an abstract world (callers then fall back to the rating defaults).
+    ``replay_dir`` set -> every World match is recorded as a replay there."""
     if not world.get("streamers") and not any(
             p.get("net_id") for p in world.get("players", {}).values()):
         return None, None
-    return make_soloq_match_fn(world, manifest_path), make_net_play_fn(world, manifest_path)
+    return (make_soloq_match_fn(world, manifest_path, replay_dir=replay_dir),
+            make_net_play_fn(world, manifest_path, replay_dir=replay_dir))
