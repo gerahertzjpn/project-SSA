@@ -54,35 +54,48 @@ def make_play_fn(world: dict, seed: Optional[int] = None, *,
     spawner = seeds.Spawner(seed)
 
     def play(home: str, away: str, best_of: int) -> dict:
-        rng = spawner.random()
-        sh, sa = team_strength(world, home), team_strength(world, away)
-        meta = None
-        if use_playbook:
-            dh, da, meta = playbook.matchup_modifiers(world, home, away, best_of)
-            sh += dh
-            sa += da
-        p_home = expected_score(sh, sa)
-        need = best_of // 2 + 1
-        mh = ma = 0
-        cores_h = cores_a = 0          # hidden granular stat: cores smashed per map won
-        while mh < need and ma < need:
-            if rng.random() < p_home:
-                mh += 1
-                cores_h += rng.randint(1, 3)
-            else:
-                ma += 1
-                cores_a += rng.randint(1, 3)
-        winner = home if mh > ma else away
-        result = {"home": home, "away": away, "maps_home": mh, "maps_away": ma,
-                  "winner": winner, "cores_home": cores_h, "cores_away": cores_a}
-        if meta:
-            result["playbook"] = meta
-            if record_positions:   # attribute the series to each starter's position
-                playbook.record_position_results(world, meta["home"]["lineup"], winner == home)
-                playbook.record_position_results(world, meta["away"]["lineup"], winner == away)
-        return result
+        return play_one_series(world, home, away, best_of, spawner.random(),
+                               use_playbook=use_playbook, record_positions=record_positions)
 
     return play
+
+
+def play_one_series(world: dict, home: str, away: str, best_of: int, rng: random.Random,
+                    *, use_playbook: bool = True, record_positions: bool = True) -> dict:
+    """Simulate ONE Bo-N series from roster strength (modulated by the active playbook), playing
+    map-by-map. Returns the result dict incl. ``sequence`` (the winner of each map, in order — for
+    a no-scrub live broadcast) and ``cores_home``/``cores_away`` (the hidden league tiebreaker).
+    Shared by ``make_play_fn`` (batch) and ``live_season`` (day-by-day / live watch)."""
+    sh, sa = team_strength(world, home), team_strength(world, away)
+    meta = None
+    if use_playbook:
+        dh, da, meta = playbook.matchup_modifiers(world, home, away, best_of)
+        sh += dh
+        sa += da
+    p_home = expected_score(sh, sa)
+    need = best_of // 2 + 1
+    mh = ma = 0
+    cores_h = cores_a = 0              # hidden granular stat: cores smashed per map won
+    sequence: list[str] = []
+    while mh < need and ma < need:
+        if rng.random() < p_home:
+            mh += 1
+            cores_h += rng.randint(1, 3)
+            sequence.append(home)
+        else:
+            ma += 1
+            cores_a += rng.randint(1, 3)
+            sequence.append(away)
+    winner = home if mh > ma else away
+    result = {"home": home, "away": away, "maps_home": mh, "maps_away": ma,
+              "winner": winner, "cores_home": cores_h, "cores_away": cores_a,
+              "best_of": best_of, "sequence": sequence}
+    if meta:
+        result["playbook"] = meta
+        if record_positions:   # attribute the series to each starter's position
+            playbook.record_position_results(world, meta["home"]["lineup"], winner == home)
+            playbook.record_position_results(world, meta["away"]["lineup"], winner == away)
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -222,12 +235,30 @@ def run_regular_season(world: dict, play: Optional[PlayFn] = None, *,
     lo_play = brackets.lower_playoff([r["team_id"] for r in a_rows],
                                      [r["team_id"] for r in z_rows], play)
 
+    return finalize_season(world, season, up_rows, a_rows, z_rows, up_play, lo_play,
+                           up_results, a_results, z_results,
+                           settle_economy=settle_economy, record=record, seed=resolved_seed)
+
+
+def finalize_season(world: dict, season: int, up_rows: list[dict], a_rows: list[dict],
+                    z_rows: list[dict], up_play: dict, lo_play: dict,
+                    up_results: list[dict], a_results: list[dict], z_results: list[dict],
+                    *, settle_economy: bool = True, record: bool = True,
+                    apply_elo: bool = True, seed: Optional[int] = None) -> dict:
+    """Close a season from its resolved standings + playoff results: apply Elo, record the
+    calendar, settle economy + trophies, run promotion/relegation, append the history summary.
+
+    Shared by the all-at-once ``run_regular_season`` and the day-by-day ``live_season`` engine
+    so both settle a season IDENTICALLY (single source of truth for prizes/promo/history).
+    ``apply_elo``/``record`` are False for the live engine, which already applied Elo + recorded
+    the calendar series-by-series as each day was played."""
     # ---- Elo from all official series ----------------------------------- #
-    all_series = (up_results + a_results + z_results
-                  + up_play["series"] + lo_play["series"])
-    for r in all_series:
-        team_elo.apply_series_result(world, r["home"], r["away"],
-                                     r["maps_home"], r["maps_away"], r.get("best_of", 3))
+    if apply_elo:
+        all_series = (up_results + a_results + z_results
+                      + up_play["series"] + lo_play["series"])
+        for r in all_series:
+            team_elo.apply_series_result(world, r["home"], r["away"],
+                                         r["maps_home"], r["maps_away"], r.get("best_of", 3))
 
     # ---- calendar ------------------------------------------------------- #
     if record:
@@ -257,7 +288,7 @@ def run_regular_season(world: dict, play: Optional[PlayFn] = None, *,
 
     summary = {
         "season": season,
-        "seed": resolved_seed,                     # this run's seed (unique unless pinned)
+        "seed": seed,                              # this run's seed (unique unless pinned)
         "upper_ranking": upper_ranking,
         "lower_ranking": lower_ranking,
         "upper_champion": up_play["champion"],
