@@ -248,6 +248,27 @@ def _match_row(world: dict, e: dict, day: int) -> dict:
     }
 
 
+def draft_view(world: dict) -> dict:
+    """The latest recorded draft board (bootstrap or rookie) — pick order with team + player."""
+    drafts = world.get("drafts") or []
+    if not drafts:
+        return {"season": None, "kind": None, "picks": [], "n": 0}
+    d = drafts[-1]
+    picks = []
+    for p in d["picks"]:
+        t = world["teams"].get(p["team_id"])
+        pl = world["players"].get(p["player_id"])
+        picks.append({
+            "round": p.get("round"), "overall": p.get("overall"),
+            "team": t["abbrev"] if t else p["team_id"], "team_name": t["name"] if t else p["team_id"],
+            "player": pl["nickname"] if pl else p["player_id"],
+            "faction": pl.get("faction") if pl else None,
+            "archetype": pl.get("archetype") if pl else None,
+            "rating": round(float(pl.get("soloq_rating", 0))) if pl else None,
+        })
+    return {"season": d["season"], "kind": d["kind"], "picks": picks, "n": len(picks)}
+
+
 def schedule_view(world: dict, season: Optional[int] = None) -> dict:
     """A season's fixtures as a day-by-day list (1 series = 1 day, in calendar order)
     plus the playoff bracket grouped per league + stage for a bracket render."""

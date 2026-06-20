@@ -480,6 +480,11 @@ def world_schedule_payload(world_id: str, season=None) -> dict:
     return views.schedule_view(w, season)
 
 
+def world_draft_payload(world_id: str) -> dict:
+    from src.world import views
+    return views.draft_view(load_world(world_id))
+
+
 def world_players_pool_payload() -> dict:
     """The frozen pool the owner picks from at world creation (Season-0 selection). Pros only,
     with their card overall + per-attribute, sorted strongest-first."""
@@ -1120,6 +1125,7 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/players$", world_players_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/leagues$", world_leagues_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/schedule$", world_schedule_payload),
+            (r"^/api/world/(?P<wid>world-[0-9a-f]+)/draft$", world_draft_payload),
         ):
             m = re.match(pat, path)
             if m:

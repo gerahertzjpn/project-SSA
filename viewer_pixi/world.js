@@ -156,7 +156,7 @@ function switchTab(name) {
   state.tab = name;
   document.querySelectorAll("#tabbar .tab").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.tab === name));
-  ["leagues", "ratings", "schedule", "teams", "broadcast", "history"].forEach((t) =>
+  ["leagues", "ratings", "schedule", "teams", "draft", "broadcast", "history"].forEach((t) =>
     show(`panel-${t}`, t === name));
   loadTab(name);
 }
@@ -169,6 +169,7 @@ async function loadTab(name) {
     if (name === "leagues") renderLeagues((await api("/leagues")).leagues);
     else if (name === "ratings") { state.players = (await api("/players")).players; renderRatings(); }
     else if (name === "schedule") renderSchedule(await api("/schedule"));
+    else if (name === "draft") renderDraft(await api("/draft"));
     else if (name === "teams") renderTeams((await api("/leagues")).leagues);
   } catch (e) {
     panel.innerHTML = `<div class="result-error">Не удалось загрузить: ${esc(e.message)}</div>`;
@@ -383,6 +384,29 @@ function renderHistory(history) {
         `<div class="hist-row"><span class="hs">S${s.season}</span>` +
         `<span class="hc">🏆 ${esc(s.upper_champion)}</span>` +
         `<span class="hc lo">↑ ${esc(s.lower_champion)}</span></div>`).join("")}</div>`;
+}
+
+// --------------------------------------------------------------------------- //
+// Tab: ✍️ Драфт
+// --------------------------------------------------------------------------- //
+function renderDraft(data) {
+  const picks = (data && data.picks) || [];
+  if (!picks.length) {
+    el("panel-draft").innerHTML = `<div class="muted">Драфт ещё не проводился.</div>`;
+    return;
+  }
+  const kind = data.kind === "bootstrap" ? "Стартовый драфт" : "Драфт новичков";
+  const rows = picks.map((p) =>
+    `<div class="dpick"><span class="dp-ov">#${p.overall}</span>` +
+    `<span class="dp-rnd">Р${p.round}</span>` +
+    `<span class="dp-team">${esc(p.team)}</span>` +
+    `${factionChip(p.faction)}` +
+    `<span class="dp-pl">${esc(p.player)}</span>` +
+    `<span class="dp-ar">${esc(p.archetype || "")}</span>` +
+    `<span class="dp-rr">${p.rating ?? ""}</span></div>`).join("");
+  el("panel-draft").innerHTML =
+    `<h3>${kind} <span class="muted">сезон ${data.season} · ${picks.length} пиков</span></h3>` +
+    `<div class="draft-board">${rows}</div>`;
 }
 
 // --------------------------------------------------------------------------- //

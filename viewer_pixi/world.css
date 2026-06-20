@@ -480,6 +480,17 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .sq-d.down { color: #ff8a8a; font-weight: 700; }
 .sq-with, .sq-vs { color: #8493a4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Draft board */
+.draft-board { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 6px; }
+.dpick { display: grid; grid-template-columns: 38px 28px 44px auto 1fr auto; gap: 8px; align-items: center;
+  background: #161b22; border: 1px solid #222a34; border-radius: 8px; padding: 7px 10px; font-size: 12px; }
+.dp-ov { color: #6b7886; font-weight: 800; }
+.dp-rnd { color: #8493a4; font-size: 10px; }
+.dp-team { font-weight: 800; color: #cdd9e6; }
+.dp-pl { color: #e6edf4; font-weight: 700; }
+.dp-ar { color: #8fb8ff; font-size: 11px; }
+.dp-rr { color: #8fb8ff; font-weight: 800; text-align: right; }
+
 /* Broadcast (commentator) tab */
 .broadcast { display: flex; flex-direction: column; gap: 8px; }
 .bc-host { color: #ff8a5c; font-weight: 800; font-size: 13px; margin-bottom: 4px; }

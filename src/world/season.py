@@ -98,7 +98,10 @@ def balanced_draft(world: dict, team_ids: list[str], rng: random.Random,
     per slot (L2 draft); falling back to best-by-value when it returns None/invalid.
     Mutates the world."""
     free = world["free_agents"]
+    picks: list[dict] = []
+    rnd = 0
     while any(len(world["teams"][tid]["roster"]) < target_size for tid in team_ids):
+        rnd += 1
         # fewest players first; ties broken RANDOMLY (equal teams in Season 0).
         order = sorted(
             team_ids,
@@ -110,7 +113,7 @@ def balanced_draft(world: dict, team_ids: list[str], rng: random.Random,
             if len(team["roster"]) >= target_size:
                 continue
             if not free:
-                return  # pool exhausted
+                break  # pool exhausted
             pick = None
             if pick_fn is not None:
                 pick = pick_fn(team, [get_player(world, pid) for pid in free])
@@ -122,9 +125,13 @@ def balanced_draft(world: dict, team_ids: list[str], rng: random.Random,
             player["status"] = "rostered"
             player["team_id"] = tid
             team["roster"].append(pick)
+            picks.append({"round": rnd, "overall": len(picks) + 1, "team_id": tid, "player_id": pick})
             progressed = True
         if not progressed:
             break
+    if picks:                # record the draft board for the UI
+        world.setdefault("drafts", []).append(
+            {"season": world.get("season", 0), "kind": "bootstrap", "picks": picks})
 
 
 # --------------------------------------------------------------------------- #
