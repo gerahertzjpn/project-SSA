@@ -25,6 +25,20 @@ ROUNDS = 2
 VALUE_TO_PRICE = 8.0
 # You cannot buy below this fraction of fair value -> blocks absurd lowballs.
 MIN_PRICE_FRACTION = 0.6
+# NOBODY is free. Signing a player with NO selling club (a free agent or a drafted rookie) costs a
+# SIGNING BONUS — paid by the signing club to the player and BURNED (it leaves the economy, it is
+# not income for anyone). Rookies are deliberately CHEAP (a fraction of their already-low value).
+ROOKIE_FEE_FRACTION = 0.3
+MIN_SIGNING_BONUS = 20
+
+
+def signing_bonus(player: dict, *, rookie: bool = False,
+                  config: economy.EconomyConfig = economy.CONFIG) -> int:
+    """The burn-cost to sign a club-less player (free agent or rookie). Scales with the player's
+    value (strength + results, via fair_value); rookies pay a small fraction so they stay cheap."""
+    base = fair_value(player, config)
+    fee = base * ROOKIE_FEE_FRACTION if rookie else base
+    return max(MIN_SIGNING_BONUS, int(round(fee)))
 
 
 # --------------------------------------------------------------------------- #
@@ -114,8 +128,45 @@ def resolve_free_agent_auction(world: dict, bids: list[dict], *, seed: int = 0) 
             continue  # can't afford -> auction void for this player
         team["treasury"] -= top
         _move_player_to_team(world, pid, team["team_id"])
-        signings.append({"player_id": pid, "team_id": team["team_id"], "price": top})
+        # the winning bid is a SIGNING BONUS — it burns (no selling club receives it).
+        signings.append({"player_id": pid, "team_id": team["team_id"], "price": top,
+                         "signing_bonus": top})
     return signings
+
+
+def resolve_transfer_auction(world: dict, bids: list[dict], *,
+                             accept_fn: AcceptFn = None, seed: int = 0) -> list[dict]:
+    """Multi-club contention for ROSTERED players: several clubs can fight over the SAME signed
+    player. ``bids``: ``[{team_id, player_id, amount}]``. Per player, among bids the owner accepts
+    (>= asking / fair value) the HIGHEST wins; the money goes to the SELLING club (unlike a free
+    agent, where it burns). Seeded tiebreak. Returns completed transfers. The free-agent auction
+    (resolve_free_agent_auction) is the club-less counterpart."""
+    accept_fn = accept_fn or _default_accept
+    rng = random.Random(seed)
+    by_player: dict[str, list[dict]] = {}
+    for b in bids:
+        by_player.setdefault(b["player_id"], []).append(b)
+    done = []
+    for pid, plist in by_player.items():
+        player = get_player(world, pid)
+        owner = player.get("team_id")
+        if owner is None:
+            continue  # club-less -> use resolve_free_agent_auction
+        floor = min_price(player)
+        valid = [b for b in plist if b["team_id"] != owner and b["amount"] >= floor
+                 and accept_fn(world, player, b["amount"])]
+        if not valid:
+            continue
+        top = max(b["amount"] for b in valid)
+        winner = rng.choice([b for b in valid if b["amount"] == top])
+        buyer = get_team(world, winner["team_id"])
+        if buyer["treasury"] < top:
+            continue
+        buyer["treasury"] -= top
+        get_team(world, owner)["treasury"] += top          # owner is PAID (real transfer fee)
+        _move_player_to_team(world, pid, winner["team_id"])
+        done.append({"player_id": pid, "from": owner, "to": winner["team_id"], "price": top})
+    return done
 
 
 # --------------------------------------------------------------------------- #
@@ -190,12 +241,17 @@ def rookie_draft(world: dict, *, want_fn: Optional[Callable[[dict, list], Option
             choice = max(pool, key=lambda pid: economy.player_value(get_player(world, pid)))
         if choice is None or choice not in pool:
             continue
-        pool.remove(choice)
         player = get_player(world, choice)
+        fee = signing_bonus(player, rookie=True)     # cheap signing bonus, BURNS (no selling club)
+        tm = world["teams"][team["team_id"]]
+        if tm["treasury"] < fee:
+            continue                                  # can't afford the bonus -> pass
+        tm["treasury"] = round(tm["treasury"] - fee, 2)
+        pool.remove(choice)
         player["status"] = "rookie"   # salary starts after first played season
         player["team_id"] = team["team_id"]
         team["roster"].append(choice)
-        picks.append({"team_id": team["team_id"], "player_id": choice})
+        picks.append({"team_id": team["team_id"], "player_id": choice, "signing_bonus": fee})
     world["rookies_pool"] = pool
     return picks
 

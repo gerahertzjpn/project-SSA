@@ -79,8 +79,29 @@ def test_free_agent_auction_highest_bidder_wins():
     bids = [{"team_id": t1, "player_id": fa, "amount": floor + 10},
             {"team_id": t2, "player_id": fa, "amount": floor + 50}]
     signings = transfers.resolve_free_agent_auction(w, bids, seed=0)
-    assert signings == [{"player_id": fa, "team_id": t2, "price": floor + 50}]
+    assert len(signings) == 1
+    s = signings[0]
+    assert s["player_id"] == fa and s["team_id"] == t2 and s["price"] == floor + 50
+    assert s["signing_bonus"] == floor + 50          # the fee BURNS (signing bonus, no seller)
     assert fa in w["teams"][t2]["roster"]
+
+
+def test_rostered_player_auction_multiple_clubs_contend():
+    # several clubs fight over the SAME signed player; highest accepted bid wins, owner is PAID.
+    w = new_world("w-rauc", FRANCHISES, seed=4)
+    teams = list(w["teams"])
+    owner, b1, b2 = teams[0], teams[1], teams[2]
+    pid = w["free_agents"][0]
+    transfers._move_player_to_team(w, pid, owner)        # now rostered on `owner`
+    w["teams"][b1]["treasury"] = w["teams"][b2]["treasury"] = 100_000
+    fv = transfers.fair_value(w["players"][pid])
+    bids = [{"team_id": b1, "player_id": pid, "amount": fv + 10},
+            {"team_id": b2, "player_id": pid, "amount": fv + 80}]    # b2 outbids b1
+    before_owner = w["teams"][owner]["treasury"]
+    done = transfers.resolve_transfer_auction(w, bids, seed=0)
+    assert len(done) == 1 and done[0]["to"] == b2 and done[0]["from"] == owner
+    assert pid in w["teams"][b2]["roster"] and pid not in w["teams"][owner]["roster"]
+    assert w["teams"][owner]["treasury"] == before_owner + fv + 80    # selling club is PAID
 
 
 def test_rookie_draft_lower_only_weakest_first():
@@ -90,13 +111,18 @@ def test_rookie_draft_lower_only_weakest_first():
     strong, weak = teams[0], teams[1]
     strong["league"], weak["league"] = "lower", "lower"
     strong["elo"], weak["elo"] = 1200.0, 800.0
+    strong["treasury"] = weak["treasury"] = 5000      # clubs can afford the (cheap) signing bonus
     rook = w["free_agents"][0]
     w["free_agents"].remove(rook)
     w["players"][rook]["status"] = "rookie"
     w["rookies_pool"] = [rook]
+    before = weak["treasury"]
     picks = transfers.rookie_draft(w)
     assert picks and picks[0]["team_id"] == weak["team_id"]
     assert rook in weak["roster"]
+    # rookies are NOT free: a cheap signing bonus was charged (and it burns)
+    assert picks[0]["signing_bonus"] > 0
+    assert weak["treasury"] == before - picks[0]["signing_bonus"]
 
 
 # --------------------------------------------------------- training auction- #
