@@ -82,6 +82,10 @@ class TeamTrainingEnvConfig:
     # Fraction of episodes with NO order at all (channel masked to zeros, order
     # shaping off) so the net also learns to play freely when un-ordered. 0 = off.
     no_order_prob: float = 0.0
+    # Pin EVERY ordered episode to one strategy preset id (e.g. "rush_core") instead
+    # of sampling uniformly — used by the style_spec training op to specialize a net
+    # in a single game plan. None = sample all presets (the default).
+    forced_strategy: Optional[str] = None
     # Per-player faction map {player_id: "humans"|"infected"|"robots"}. When None,
     # make_initial_state defaults every player to "humans" (legacy behavior).
     player_factions: Optional[dict] = None
@@ -495,7 +499,12 @@ class TeamTrainingEnv:
             return {player_id: {"absent": True} for player_id in self.controlled_players}
         # One COHERENT strategy preset for the whole controlled team (not free
         # tempo×win_path) so the net only ever trains on sensible game plans.
-        preset = STRATEGY_PRESETS[int(self.rng.integers(len(STRATEGY_PRESETS)))]
+        forced = self.config.forced_strategy
+        if forced is not None:
+            preset = next((p for p in STRATEGY_PRESETS if p["id"] == forced),
+                          STRATEGY_PRESETS[int(self.rng.integers(len(STRATEGY_PRESETS)))])
+        else:
+            preset = STRATEGY_PRESETS[int(self.rng.integers(len(STRATEGY_PRESETS)))]
         roles = preset["roles"]
         return {
             player_id: {

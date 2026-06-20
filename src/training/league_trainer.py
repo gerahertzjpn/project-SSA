@@ -64,6 +64,7 @@ class LeagueConfig:
     minibatch_size: int = 1024
     sample_orders: bool = True
     no_order_prob: float = 0.2
+    forced_strategy: Optional[str] = None     # pin every ordered episode to one preset (style_spec)
     opponent_deterministic: bool = False
     # opponent mix (the remainder after these two is the scripted share)
     ancestor_opponent_prob: float = 0.35
@@ -113,6 +114,7 @@ def _run_episode_vs(plan, nets, faction_by_id, pool_path, common, buffers):
         sample_orders=bool(common["sample_orders"]),
         order_shaping_weight=plan["order_shaping_weight"],   # per-player {slot: weight} dict
         no_order_prob=float(common["no_order_prob"]),
+        forced_strategy=common.get("forced_strategy"),
     )
     if kind in ("ancestors", "descendants"):
         cfg.update(
@@ -343,7 +345,8 @@ class LeagueTrainer:
         common = {"max_ticks": self.config.max_ticks,
                   "opponent_deterministic": self.config.opponent_deterministic,
                   "sample_orders": self.config.sample_orders,
-                  "no_order_prob": self.config.no_order_prob}
+                  "no_order_prob": self.config.no_order_prob,
+                  "forced_strategy": self.config.forced_strategy}
         wc = max(1, self.config.workers)
         chunks = [plans[i::wc] for i in range(wc)]
         chunks = [c for c in chunks if c]

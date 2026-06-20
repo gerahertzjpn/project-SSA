@@ -34,15 +34,14 @@ def test_all_features_unlocked():
 # ------------------------------------------------------------- backend wired #
 def test_real_backend_training_ops_state():
     be = backends.get_backend(require_flag=False)   # bypass the dev gate for the validation check
-    # continue_ppo is the REAL single-net PPO loop; it validates the target first
-    # (no net_id -> ValueError) so we never kick off training in a unit test.
+    # All ops are REAL now; they validate input first (missing target/net_ids -> ValueError) so
+    # the unit test never kicks off training. continue_ppo / fork / evaluate need a net_id;
+    # cotrain needs net_ids.
+    for method in ("continue_ppo", "fork", "evaluate"):
+        with pytest.raises(ValueError):
+            getattr(be, method)({"target": {"kind": "player"}})
     with pytest.raises(ValueError):
-        be.continue_ppo({"target": {"kind": "player"}})
-    # fork / cotrain / evaluate are still stubs.
-    ctx = {"target": {"kind": "parent", "net_id": "humans_1__skirmisher"}, "total_steps": 1000}
-    for method in ("fork", "cotrain", "evaluate"):
-        with pytest.raises(NotImplementedError):
-            getattr(be, method)(ctx)
+        be.cotrain({"target": {"kind": "team"}})        # no net_ids
 
 
 def test_train_one_net_builds_a_valid_faction_triple():
