@@ -163,13 +163,14 @@ function switchTab(name) {
   state.tab = name;
   document.querySelectorAll("#tabbar .tab").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.tab === name));
-  ["leagues", "matrix", "ratings", "schedule", "teams", "draft", "broadcast", "managers", "history"].forEach((t) =>
+  ["leagues", "matrix", "ratings", "schedule", "teams", "draft", "transfers", "broadcast", "managers", "history"].forEach((t) =>
     show(`panel-${t}`, t === name));
   loadTab(name);
 }
 async function loadTab(name) {
   const panel = el(`panel-${name}`);
   if (name === "history") return renderHistory(state.world ? state.world.history : []);
+  if (name === "transfers") return renderOffseasonTx(state.world ? state.world.last_offseason : null);
   if (name === "broadcast") return renderBroadcast(state.world ? state.world.commentary : []);
   if (name === "managers") return renderManagers(state.world ? state.world.manager_comments : []);
   panel.innerHTML = `<div class="muted loading">Загрузка…</div>`;
@@ -539,6 +540,74 @@ function renderManagers(comments) {
 // Tab: 📻 Эфир (commentator)
 // --------------------------------------------------------------------------- //
 const COMMENT_ICON = { season_open: "🎬", season_close: "🏆", offseason: "🔁", match: "🎙️" };
+// --------------------------------------------------------------------------- //
+// Tab: 💸 Трансферы — off-season transactions window
+// --------------------------------------------------------------------------- //
+function renderOffseasonTx(off) {
+  const panel = el("panel-transfers");
+  if (!off || !off.transactions) {
+    panel.innerHTML = `<div class="muted">Межсезонье ещё не проводилось — итоги трансферов появятся здесь.</div>`;
+    return;
+  }
+  const tx = off.transactions;
+  const empty = (txt) => `<div class="tx-empty muted">${txt}</div>`;
+  const sec = (title, count, body) =>
+    `<section class="tx-sec"><h3>${title} <span class="tx-n">${count}</span></h3>${body}</section>`;
+  const teamTag = (id, name) => `${emblem(id)}<span class="tx-tm">${esc(name)}</span>`;
+
+  const auctions = (tx.auctions || []).length
+    ? `<div class="tx-list">${tx.auctions.map((a) =>
+        `<div class="tx-row">${teamTag(a.team_id, a.team)}<span class="tx-mid">выиграл слот тренировки</span>` +
+        `<span class="tx-price">${a.price}</span></div>`).join("")}</div>`
+    : empty("Аукцион тренировок не проводился.");
+
+  const trains = (tx.training_requests || []).length
+    ? `<div class="tx-list">${tx.training_requests.map((t) =>
+        `<div class="tx-row">${teamTag(t.team_id, t.team)}<span class="tx-mid">→ ${esc(t.op_title)}</span>` +
+        `<span class="tx-who">${esc(t.player)}</span>` +
+        `<span class="tx-steps">${t.steps ? (t.steps / 1e6).toFixed(1) + "M ш" : ""}</span></div>`).join("")}</div>`
+    : empty("Никто не отправлен на тренировку.");
+
+  const signings = (tx.signings || []).length
+    ? `<div class="tx-list">${tx.signings.map((s) =>
+        `<div class="tx-row">${teamTag(s.team_id, s.team)}<span class="tx-mid">подписал</span>` +
+        `<span class="tx-who">${esc(s.player)} <span class="tx-kind">${s.kind === "rookie" ? "новичок" : "св. агент"}</span></span>` +
+        `<span class="tx-price">${s.bonus != null ? "бонус " + s.bonus : ""}</span></div>`).join("")}</div>`
+    : empty("Подписаний не было.");
+
+  const buys = (tx.buys || []).length
+    ? `<div class="tx-list">${tx.buys.map((b) =>
+        `<div class="tx-row">${teamTag(b.to_team_id, b.to_team)}<span class="tx-mid">купил</span>` +
+        `<span class="tx-who">${esc(b.player)}</span><span class="tx-from">у ${esc(b.from_team)}</span>` +
+        `<span class="tx-price">${b.price}</span></div>`).join("")}</div>`
+    : empty("Сделок между клубами не было.");
+
+  const releases = (tx.releases || []).length
+    ? `<div class="tx-list">${tx.releases.map((r) =>
+        `<div class="tx-row">${teamTag(r.team_id, r.team)}<span class="tx-mid">отпустил</span>` +
+        `<span class="tx-who">${esc(r.player)}</span><span class="tx-from">→ свободный агент</span></div>`).join("")}</div>`
+    : empty("Никого не отпустили.");
+
+  const requests = (tx.requests || []).length
+    ? `<div class="tx-list">${tx.requests.map((q) =>
+        `<div class="tx-row ${q.won ? "tx-won" : ""}">${teamTag(q.team_id, q.team)}<span class="tx-mid">запросил</span>` +
+        `<span class="tx-who">${esc(q.player)}</span><span class="tx-price">${q.amount != null ? q.amount : ""}</span>` +
+        `<span class="tx-flag">${q.won ? "✓ выиграл" : "—"}</span></div>`).join("")}</div>`
+    : empty("Запросов не поступало.");
+
+  panel.innerHTML =
+    `<div class="tx-head">Итоги межсезонья <span class="muted">после сезона ${off.season_ended}</span></div>` +
+    sec("🏷️ Аукцион тренировок", tx.counts.auctions, auctions) +
+    sec("💪 На тренировку", tx.counts.training_requests, trains) +
+    sec("✍️ Подписания", tx.counts.signings, signings) +
+    sec("💱 Покупки между клубами", tx.counts.buys, buys) +
+    sec("✂️ Отпущены (кики)", tx.counts.releases, releases) +
+    sec("📨 Запросы (ставки)", tx.counts.requests, requests);
+}
+
+// --------------------------------------------------------------------------- //
+// Tab: 📻 Эфир
+// --------------------------------------------------------------------------- //
 function renderBroadcast(lines) {
   lines = lines || [];
   el("panel-broadcast").innerHTML = !lines.length

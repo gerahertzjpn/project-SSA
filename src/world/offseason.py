@@ -49,6 +49,29 @@ def _op_title(op: str) -> str:
     return SYSTEM_OP_LABELS.get(op, op)
 
 
+# A bench player is "clearly surplus" (release candidate) only if his market value is well
+# below the club's WEAKEST starter — so clubs cut dead weight without ever gutting the trio.
+RELEASE_SURPLUS_FRACTION = 0.55
+
+
+def _surplus_bench(world: dict, team: dict) -> list[str]:
+    """Release candidates: only fires when a club is at the roster cap and a bench player
+    is markedly weaker than its weakest starter. Conservative by design — the population
+    is persistent (released players go to free agency, never deleted; no culling)."""
+    from src.world import economy
+    from src.world.world import MAX_ROSTER, get_player
+    roster = team.get("roster", [])
+    if len(roster) < MAX_ROSTER:
+        return []
+    starters = roster[:transfers.MIN_STARTERS]
+    bench = roster[transfers.MIN_STARTERS:]
+    if not starters or not bench:
+        return []
+    weakest_starter = min(economy.player_value(get_player(world, pid)) for pid in starters)
+    return [pid for pid in bench
+            if economy.player_value(get_player(world, pid)) < weakest_starter * RELEASE_SURPLUS_FRACTION]
+
+
 def _job_op(job: dict) -> str:
     return job.get("op") or job.get("spend_type") or "?"
 
@@ -81,17 +104,20 @@ def run_training_market(world: dict, cfg: training_auction.TrainingConfig, *,
     item_value = _slot_anchor(world, team_ids)
     bids = llm_manager.auction_max_bids(world, team_ids, item_value, llm=llm, feed=feed)
     awarded = 0
+    awards: list[dict] = []                       # who won a gradeslot and for how much (for the UI)
     while state.remaining > 0:                    # sealed max-bid; winners' interest halves -> spreads
         award = training_auction.auction_one_training(world, state, bids, seed=seed)
         if award:
             awarded += 1
             tname = world["teams"][award["team_id"]]["name"]
+            awards.append({"team_id": award["team_id"], "team": tname, "price": award["price"]})
             events.emit(feed, "train", f"Аукцион тренировок: {tname} выиграл слот за {award['price']}")
             bids[award["team_id"]] = bids.get(award["team_id"], 0) // 2
     jobs = [job for team in world["teams"].values()
             if (job := llm_manager.spend_certificates(world, team, llm=llm, feed=feed,
                                                       config=cfg)) is not None]
-    return jobs, {"slots": state.n_trainings, "awarded": awarded, "spent": len(jobs)}
+    return jobs, {"slots": state.n_trainings, "awarded": awarded, "spent": len(jobs),
+                  "awards": awards}
 
 
 # --------------------------------------------------------------------------- #
@@ -163,6 +189,66 @@ def render_training_preview(preview: dict) -> list[str]:
         lines.append(f"  [{r['kind']}] {who}: {r['op']} «{r['title']}» цель={tgt} "
                      f"{r['steps']:,}ш ≈{r['est_minutes']}мин{flag}")
     return lines
+
+
+# --------------------------------------------------------------------------- #
+# Transactions digest (the off-season window the UI shows)
+# --------------------------------------------------------------------------- #
+def _build_transactions(world: dict, *, auction, team_jobs, fa_bids, signings,
+                        picks, club_transfers, releases) -> dict:
+    """Assemble the structured off-season transactions the UI renders: auctions,
+    training requests, signings, club-to-club buys, departures, releases and bids —
+    every entry with resolved team/player names."""
+    def pl(pid):
+        return (world["players"].get(pid) or {}).get("nickname", pid)
+
+    def tm(tid):
+        return (world["teams"].get(tid) or {}).get("name", tid)
+
+    def job_target(job):
+        t = job.get("target") or {}
+        if t.get("player_id"):
+            return t["player_id"], pl(t["player_id"])
+        if t.get("parent_id"):
+            return t["parent_id"], f"новичок (форк {pl(t['parent_id'])})"
+        return None, _op_title(_job_op(job))
+
+    won = {(s["team_id"], s["player_id"]) for s in signings}
+    auctions = list((auction or {}).get("awards", []))
+    training_requests = []
+    for j in team_jobs or []:
+        op = _job_op(j)
+        pid, label = job_target(j)
+        training_requests.append({"team_id": j.get("team_id"), "team": tm(j.get("team_id")),
+                                  "op": op, "op_title": _op_title(op), "player_id": pid,
+                                  "player": label, "steps": j.get("total_steps")})
+    sign_rows = [{"team_id": s["team_id"], "team": tm(s["team_id"]), "player_id": s["player_id"],
+                  "player": pl(s["player_id"]), "bonus": s.get("signing_bonus", s.get("price")),
+                  "kind": "free_agent"} for s in signings]
+    rookie_rows = [{"team_id": p["team_id"], "team": tm(p["team_id"]), "player_id": p["player_id"],
+                    "player": pl(p["player_id"]), "bonus": p.get("signing_bonus"),
+                    "kind": "rookie"} for p in picks]
+    buys = [{"player_id": d["player_id"], "player": pl(d["player_id"]),
+             "from_team_id": d["from"], "from_team": tm(d["from"]),
+             "to_team_id": d["to"], "to_team": tm(d["to"]), "price": d["price"]}
+            for d in club_transfers]
+    release_rows = [{"player_id": r["player_id"], "player": r.get("player") or pl(r["player_id"]),
+                     "team_id": r["from"], "team": tm(r["from"])} for r in releases]
+    requests = [{"team_id": b["team_id"], "team": tm(b["team_id"]), "player_id": b["player_id"],
+                 "player": pl(b["player_id"]), "amount": b.get("amount"),
+                 "won": (b["team_id"], b["player_id"]) in won} for b in (fa_bids or [])]
+    departures = ([{"player_id": d["player_id"], "player": pl(d["player_id"]),
+                    "from_team": tm(d["from"]), "to_team": tm(d["to"]), "kind": "transfer"}
+                   for d in club_transfers]
+                  + [{"player_id": r["player_id"], "player": r.get("player") or pl(r["player_id"]),
+                      "from_team": tm(r["from"]), "to_team": "Свободный агент", "kind": "release"}
+                     for r in releases])
+    return {"auctions": auctions, "training_requests": training_requests,
+            "signings": sign_rows + rookie_rows, "buys": buys, "departures": departures,
+            "releases": release_rows, "requests": requests,
+            "counts": {"auctions": len(auctions), "training_requests": len(training_requests),
+                       "signings": len(sign_rows) + len(rookie_rows), "buys": len(buys),
+                       "releases": len(release_rows), "requests": len(requests)}}
 
 
 # --------------------------------------------------------------------------- #
@@ -256,6 +342,26 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
         events.emit(feed, "draft", f"Драфт новичков: {tname} подписал {nick}", **pk)
     report["stages"]["rookie_draft"] = {"picks": picks, "n": len(picks)}
 
+    # 6.5 Club market — clubs cut clearly-surplus bench (kicks → free agency, never deleted),
+    #     then bid on OTHER clubs' bench players. Real club-to-club moves: the buyer pays the
+    #     SELLING club (resolve_transfer_auction), so money + a player change hands. Bench-only
+    #     on both sides, so no club ever loses its starting trio.
+    releases = []
+    for team in list(world["teams"].values()):
+        for pid in _surplus_bench(world, team):
+            ev = transfers.release_to_free_agency(world, team["team_id"], pid)
+            if ev:
+                releases.append(ev)
+                events.emit(feed, "transfer",
+                            f"{team['name']} отпустил {ev['player']} в свободные агенты", **ev)
+    club_bids = transfers.heuristic_club_transfer_bids(world)
+    club_transfers = transfers.resolve_transfer_auction(world, club_bids, seed=sp.seed())
+    for d in club_transfers:
+        nick = world["players"][d["player_id"]]["nickname"]
+        frm = world["teams"][d["from"]]["name"]
+        to = world["teams"][d["to"]]["name"]
+        events.emit(feed, "transfer", f"Трансфер: {to} купил {nick} у {frm} за {d['price']}", **d)
+
     # 7. Planning — each manager authors its tournament PLAYBOOK (LLM if active, else
     #    heuristic; author_playbook emits the chronicle + any fallback notification).
     plans = []
@@ -269,6 +375,15 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
         "llm_decisions": feature_flags.ui_state("llm_manager"),
         "note": "менеджеры задают плейбук (LLM если включён, иначе эвристика)",
     }
+
+    # Structured TRANSACTIONS digest the off-season window UI reads (separate from the
+    # event chronicle): who bid, who signed/bought/left/got cut, auction wins + prices,
+    # training requests. Kept at the report top level + persisted on the world.
+    report["transactions"] = _build_transactions(
+        world, auction=auction, team_jobs=team_jobs, fa_bids=fa_bids, signings=signings,
+        picks=picks, club_transfers=club_transfers, releases=releases)
+    world["last_offseason"] = {"season_ended": report["season_just_ended"],
+                               "transactions": report["transactions"]}
 
     # 8. Advance: close the off-season -> next season
     cal.skip_month(world, 1)

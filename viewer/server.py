@@ -467,6 +467,7 @@ def world_view_payload(world_id: str) -> dict:
             "history": history, "reserves": reserves, "emblems": emblems,
             "commentary": (w.get("commentary") or [])[-40:],
             "manager_comments": (w.get("manager_comments") or [])[-22:],
+            "last_offseason": w.get("last_offseason"),
             "counts": {"players": len(players), "free_agents": len(w.get("free_agents", [])),
                        "streamers": len(w.get("streamers", [])), "rostered": len(pid_team),
                        "reserves": len(reserves)}}

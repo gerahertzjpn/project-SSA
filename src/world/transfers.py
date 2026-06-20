@@ -274,5 +274,61 @@ def _move_player_to_team(world: dict, player_id: str, team_id: str) -> None:
         world["teams"][team_id]["roster"].append(player_id)
 
 
+# --------------------------------------------------------------------------- #
+# Releases (kicks) + club-to-club bid heuristic — used by the off-season market
+# --------------------------------------------------------------------------- #
+MIN_STARTERS = 3       # a club must keep at least a full starting trio — only the BENCH is tradeable
+
+
+def _bench_players(world: dict, team: dict) -> list[str]:
+    """The surplus beyond the starting trio (roster index >= MIN_STARTERS) — the only
+    players a club may sell or release without breaking its lineup."""
+    return list(team.get("roster", [])[MIN_STARTERS:])
+
+
+def release_to_free_agency(world: dict, team_id: str, player_id: str) -> Optional[dict]:
+    """Cut a BENCH player loose to the free-agent pool (a 'kick'). Refuses to touch a
+    starter — a club must keep its trio. Returns the event dict, or None if invalid."""
+    team = world["teams"].get(team_id)
+    if team is None or player_id not in _bench_players(world, team):
+        return None
+    nickname = get_player(world, player_id).get("nickname")
+    team["roster"].remove(player_id)
+    player = get_player(world, player_id)
+    player["team_id"] = None
+    player["status"] = "free_agent"
+    world.setdefault("free_agents", [])
+    if player_id not in world["free_agents"]:
+        world["free_agents"].append(player_id)
+    return {"player_id": player_id, "player": nickname, "from": team_id, "status": "released"}
+
+
+def heuristic_club_transfer_bids(world: dict) -> list[dict]:
+    """Club-to-club interest: every club below the roster cap bids on the single best
+    BENCH player at another club it can afford (bid = fair value, which clears the
+    owner's accept threshold). One bid per buyer. ``resolve_transfer_auction`` then
+    settles multi-club contention and pays the selling club."""
+    bids: list[dict] = []
+    for buyer in world["teams"].values():
+        if len(buyer.get("roster", [])) >= MAX_ROSTER:
+            continue
+        budget = buyer.get("treasury", 0)
+        best = None                                   # (value, price, player_id)
+        for seller in world["teams"].values():
+            if seller["team_id"] == buyer["team_id"]:
+                continue
+            for pid in _bench_players(world, seller):
+                player = get_player(world, pid)
+                price = fair_value(player)
+                if price > budget:
+                    continue
+                val = economy.player_value(player)
+                if best is None or val > best[0]:
+                    best = (val, price, pid)
+        if best is not None:
+            bids.append({"team_id": buyer["team_id"], "player_id": best[2], "amount": best[1]})
+    return bids
+
+
 def open_window() -> TransferWindow:
     return TransferWindow()

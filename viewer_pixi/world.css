@@ -559,6 +559,28 @@ button.ghost.required { border-color: #2f6df0; color: #fff; background: #18222f;
 .dp-sub { color: #8493a4; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dp-rr { color: #8fb8ff; font-weight: 800; }
 
+/* Трансферы — off-season transactions window */
+.tx-head { font-size: 16px; font-weight: 800; color: #e6edf4; margin: 12px 0 6px; }
+.tx-sec { margin-top: 16px; }
+.tx-sec h3 { margin: 0 0 8px; color: #cdd9e6; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.tx-n { background: #1c2530; color: #8fb8ff; font-weight: 800; font-size: 12px;
+  border-radius: 999px; padding: 1px 9px; }
+.tx-list { display: flex; flex-direction: column; gap: 4px; }
+.tx-row { display: flex; align-items: center; gap: 8px; background: #11161d;
+  border: 1px solid #1a212b; border-radius: 8px; padding: 7px 11px; font-size: 13px; flex-wrap: wrap; }
+.tx-row.tx-won { border-color: #2c5a3a; }
+.tx-row .tlogo svg { width: 20px; height: 20px; }
+.tx-tm { font-weight: 800; color: #cdd9e6; }
+.tx-mid { color: #8493a4; }
+.tx-who { font-weight: 700; color: #e6edf4; }
+.tx-kind { color: #8493a4; font-weight: 500; font-size: 11px; }
+.tx-from { color: #8493a4; }
+.tx-price { margin-left: auto; font-weight: 800; color: #ffd58a; }
+.tx-steps { color: #8fb8ff; font-size: 12px; }
+.tx-flag { color: #6ee7a8; font-weight: 700; font-size: 12px; }
+.tx-row:not(.tx-won) .tx-flag { color: #6b7886; }
+.tx-empty { padding: 8px 2px; font-size: 13px; }
+
 /* Player personal page (modal) */
 .player-card { width: min(680px, 96vw); max-height: 88vh; overflow-y: auto; position: relative;
   background: #11161d; border: 1px solid #2a323d; border-radius: 14px; padding: 20px 22px;

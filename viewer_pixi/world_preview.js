@@ -201,9 +201,35 @@
       return { season: s, team_id: t.team_id, team: t.name, manager: `Менеджер ${t.abbrev}`,
         text: MGR_T[(i + s) % MGR_T.length].replace(/\{s\}/g, s).replace(/\{p\}/g, star).replace(/\{rival\}/g, rival) };
     });
+    // off-season transactions digest (hardcoded demo — every category populated)
+    const poolFA = freeAgents.slice();
+    const txAuctions = auctionWinners.map((t) => ({ team_id: t.team_id, team: t.name, price: ri(60, 140) }));
+    const txTrains = trainPicks.map((tp) => ({ team_id: tp.team, team: byId[tp.team].name,
+      op: tp.op, op_title: tp.op, player: tp.player, steps: 1000000 }));
+    const txSign = shuf(teams).slice(0, 4 + s).map((t, i) => { const fa = poolFA[i % poolFA.length];
+      return { team_id: t.team_id, team: t.name, player_id: fa.player_id, player: fa.nickname,
+        bonus: ri(30, 90), kind: i % 4 === 0 ? "rookie" : "free_agent" }; });
+    const txBuys = shuf(teams).slice(0, 3).map((t, i) => { const from = teams[(teams.indexOf(t) + 5) % teams.length];
+      const rp = byId[from.team_id].roster; const who = rp.length ? pById[rp[rp.length - 1]] : pById[players[i].player_id];
+      return { player_id: who.player_id, player: who.nickname, from_team_id: from.team_id, from_team: from.name,
+        to_team_id: t.team_id, to_team: t.name, price: ri(120, 480) }; });
+    const txRel = shuf(teams).slice(0, 2).map((t) => { const rp = byId[t.team_id].roster;
+      const who = rp.length ? pById[rp[rp.length - 1]] : pById[players[0].player_id];
+      return { player_id: who.player_id, player: who.nickname, team_id: t.team_id, team: t.name }; });
+    const txReq = shuf(teams).slice(0, 8).map((t, i) => { const fa = poolFA[(i + 1) % poolFA.length];
+      return { team_id: t.team_id, team: t.name, player_id: fa.player_id, player: fa.nickname,
+        amount: ri(40, 200), won: i % 3 === 0 }; });
+    const transactions = { auctions: txAuctions, training_requests: txTrains,
+      signings: txSign, buys: txBuys, releases: txRel, requests: txReq,
+      departures: txBuys.map((b) => ({ player_id: b.player_id, player: b.player,
+        from_team: b.from_team, to_team: b.to_team, kind: "transfer" })),
+      counts: { auctions: txAuctions.length, training_requests: txTrains.length,
+        signings: txSign.length, buys: txBuys.length, releases: txRel.length, requests: txReq.length } };
+
     snaps.push({ num: s, teamSnap, upStand, aStand, zStand, fixtures, bracket: { upper: upPlay.cols, lower: loPlay.cols },
       champ: { upper_champion: upperChamp, lower_champion: lowerChamp, promoted, relegated },
-      commentary, chronicle, training, managerComments, draft: s === 0 ? { season: 0, kind: "bootstrap", picks: draftPicks.slice() } : null });
+      commentary, chronicle, training, managerComments, transactions,
+      draft: s === 0 ? { season: 0, kind: "bootstrap", picks: draftPicks.slice() } : null });
 
     // roll over
     byId[upperChamp].titles++; byId[upperChamp].trophies.push({ season: s, title: "Чемпион верхней" });
@@ -327,10 +353,12 @@
       upper_champion: tname(s.champ.upper_champion), lower_champion: tname(s.champ.lower_champion) }));
     const commentary = [];
     snaps.slice(0, CUR + 1).forEach((s) => { commentary.push(s.commentary[0]); if (s.num < CUR) commentary.push(s.commentary[1]); });
-    const managers = (snaps[Math.max(0, CUR - 1)] || snap()).managerComments || [];
+    const offSnap = snaps[Math.max(0, CUR - 1)] || snap();
+    const managers = offSnap.managerComments || [];
     return { world_id: WID, name: "Demo World", season: CUR, phase: PHASE,
       upper: [], lower: [], ladder: [], history, reserves, commentary, emblems: EMBLEMS,
       manager_comments: CUR > 0 ? managers : [],
+      last_offseason: CUR > 0 ? { season_ended: offSnap.num, transactions: offSnap.transactions } : null,
       counts: { players: players.length,
         free_agents: players.filter((p) => p.role === "pro" && !p.teamId && !p.reserve).length,
         streamers: players.filter((p) => p.role === "streamer").length,
