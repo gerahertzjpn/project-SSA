@@ -209,6 +209,36 @@ function renderView(w) {
   show("rosterPanel", false);
   el("advanceBtn").disabled = state.busy;
   el("offseasonBtn").disabled = state.busy;
+  startTrainingPoll();
+}
+
+let trainTimer = null;
+async function pollTraining() {
+  if (!state.worldId) return;
+  let jobs = [];
+  try {
+    jobs = (await fetchJson(`/api/world/${state.worldId}/training`)).jobs || [];
+  } catch (e) { return; }
+  if (!jobs.length) { show("trainingPanel", false); return; }
+  show("trainingPanel", true);
+  const running = jobs.filter((j) => j.status === "running").length;
+  el("trainingPanel").innerHTML =
+    `<h3>🏋️ Тренировки нейронок <span class="muted">${running ? running + " идёт" : "завершены"}</span></h3>` +
+    jobs.map((j) => {
+      const pct = Math.min(100, Math.round((j.done / Math.max(1, j.total)) * 100));
+      const tag = j.status === "done" ? "✓ карточка пересчитана"
+        : j.status === "error" ? "ошибка" : `${pct}%`;
+      return `<div class="train-row"><span class="tn">${j.player}</span>` +
+        `<span class="tnet">${j.net_id}</span>` +
+        `<div class="train-bar"><div class="train-fill${j.status === "done" ? " done" : ""}" style="width:${j.status === "done" ? 100 : pct}%"></div></div>` +
+        `<span class="tp">${tag}</span></div>`;
+    }).join("");
+  if (!running && trainTimer) { clearInterval(trainTimer); trainTimer = null; }
+}
+function startTrainingPoll() {
+  if (trainTimer) clearInterval(trainTimer);
+  pollTraining();
+  trainTimer = setInterval(pollTraining, 3000);
 }
 
 async function openWorld(worldId) {

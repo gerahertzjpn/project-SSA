@@ -32,14 +32,16 @@ def test_all_features_unlocked():
 
 
 # ------------------------------------------------------------- backend wired #
-def test_real_backend_is_wired_but_unimplemented():
-    # The flag is unlocked, so the gate no longer fires — but the PPO ops are still TODO stubs
-    # (real training is wired as a background job, not a synchronous backend call).
+def test_real_backend_training_ops_pending():
     be = backends.get_backend()
-    for method, ctx in (("fork", {"target": {"kind": "parent"}}),
-                        ("continue_ppo", {"target": {"kind": "player"}})):
+    # continue_ppo validates the target (no net_id -> ValueError) but its single-net PPO loop is
+    # pending (population trainers need the full roster); fork/cotrain/evaluate are stubs.
+    with pytest.raises(ValueError):
+        be.continue_ppo({"target": {"kind": "player"}})
+    ctx = {"target": {"kind": "player", "net_id": "humans_1__skirmisher"}, "total_steps": 1000}
+    for method in ("continue_ppo", "fork", "cotrain", "evaluate"):
         with pytest.raises(NotImplementedError):
-            getattr(be, method)({**ctx, "total_steps": 1_000_000})
+            getattr(be, method)(ctx)
 
 
 # ------------------------------------------------------------- 800k floor -- #

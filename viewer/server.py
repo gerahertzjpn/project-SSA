@@ -289,6 +289,9 @@ def start_world_offseason_job(world_id: str) -> dict:
             lines = [str(e.get("text") or e.get("message") or e.get("note") or "")
                      for e in events if isinstance(e, dict)]
             st = report.get("stages", {})
+            # NOTE: the offseason will launch REAL background training here (start_training_job)
+            # once the single-net PPO loop is wired (backends.train_one_net); the tracker
+            # (TRAINING_JOBS + /api/world/<id>/training + the UI panel) is already in place.
             _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
                 "next_season": report.get("next_season"),
                 "rookies": (st.get("rookie_draft") or {}).get("n", 0),
@@ -308,6 +311,49 @@ def world_job_status(job_id: str) -> dict:
         if job is None:
             raise KeyError(f"unknown world job {job_id}")
         return dict(job, job_id=job_id)
+
+
+# --- background TRAINING jobs (real PPO) + a per-world progress tracker -------- #
+TRAINING_JOBS: dict[str, dict] = {}
+TRAINING_JOBS_LOCK = threading.Lock()
+
+
+def start_training_job(world_id: str, net_id: str, player_name: str, steps: int,
+                       kind: str = "skill_up") -> str:
+    """Launch a REAL PPO training of one player's net on a worker thread, tracked for progress."""
+    job_id = uuid.uuid4().hex
+    with TRAINING_JOBS_LOCK:
+        TRAINING_JOBS[job_id] = {"job_id": job_id, "world_id": world_id, "net_id": net_id,
+                                 "player": player_name, "kind": kind, "done": 0, "total": int(steps),
+                                 "status": "running", "error": None}
+
+    def progress(done: int, total: int) -> None:
+        with TRAINING_JOBS_LOCK:
+            j = TRAINING_JOBS.get(job_id)
+            if j is not None:
+                j["done"] = int(done); j["total"] = int(total)
+
+    def worker() -> None:
+        try:
+            from src.world import backends
+            res = backends.train_one_net(str(FROZEN_POP.parent.parent / "training_runs"
+                                             / "league_population_v1"), net_id, int(steps), progress)
+            with TRAINING_JOBS_LOCK:
+                TRAINING_JOBS[job_id].update(status="done", done=res.get("steps_added", steps), result=res)
+        except Exception as error:  # noqa: BLE001
+            traceback.print_exc()
+            with TRAINING_JOBS_LOCK:
+                TRAINING_JOBS[job_id].update(status="error", error=str(error))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return job_id
+
+
+def training_jobs_status(world_id: str) -> dict:
+    with TRAINING_JOBS_LOCK:
+        jobs = [dict(j) for j in TRAINING_JOBS.values() if j["world_id"] == world_id]
+    jobs.sort(key=lambda j: (j["status"] != "running", j["player"]))
+    return {"jobs": jobs}
 
 
 def world_view_payload(world_id: str) -> dict:
@@ -942,6 +988,10 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json(world_job_status(world_job.group("job_id")))
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error)}, status=404)
+            return
+        world_train = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/training$", path)
+        if world_train:
+            self._send_json(training_jobs_status(world_train.group("wid")))
             return
         if path.startswith("/api/world/"):
             wid = path[len("/api/world/"):]
