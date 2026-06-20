@@ -128,16 +128,28 @@ def author_playbook(world: dict, team: dict, *, llm=None, feed: Optional[list] =
     return plan
 
 
+# The ONLY conditions the LLM may use (the schema enum is these keys). Each maps to a check that
+# _condition_matches actually implements, so the LLM can never author a rule that won't fire — an
+# unknown condition is rejected by _playbook_from_llm (-> heuristic fallback). Covers BOTH the
+# opponent (faction + their last call, all 6 strategies) AND the series state (score/streak).
 _CONDITION_MAP = {
+    # --- by OPPONENT faction ---
     "opp_robots": {"opp_faction_majority": "robots"},
     "opp_humans": {"opp_faction_majority": "humans"},
     "opp_infected": {"opp_faction_majority": "infected"},
-    "opp_plays_macro": {"opp_last_strategy": "macro"},
+    # --- by OPPONENT's last-known strategy (all six) ---
+    "opp_plays_standard": {"opp_last_strategy": "standard"},
     "opp_plays_core_rush": {"opp_last_strategy": "core_rush"},
+    "opp_plays_all_in": {"opp_last_strategy": "all_in"},
     "opp_plays_turtle": {"opp_last_strategy": "turtle"},
+    "opp_plays_macro": {"opp_last_strategy": "macro"},
+    "opp_plays_baron": {"opp_last_strategy": "baron"},
+    # --- by SERIES state ---
+    "behind_in_series": {"series_behind": True},
+    "ahead_in_series": {"series_ahead": True},
+    "series_lost1": {"series_lost": 1},
     "playoff_behind2": {"stage": "playoff", "playoff_losing_streak": 2},
     "playoff_ahead": {"stage": "playoff", "series_ahead": True},
-    "series_lost1": {"series_lost": 1},
 }
 
 
