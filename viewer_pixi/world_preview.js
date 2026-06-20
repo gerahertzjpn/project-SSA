@@ -86,6 +86,15 @@
     }
   }
   const freeAgents = enteredIds.map((id) => pById[id]).filter((p) => !p.teamId);  // entered, undrafted
+  // 18 STREAMERS: ancestor-bound, SoloQ-only free agents, never drafted (role "streamer").
+  for (let i = 0; i < 18; i++) {
+    const fac = pk(FACTIONS), ar = pk(ARCH);
+    const p = { player_id: `${WID}-s${String(i).padStart(2, "0")}`, nickname: nick(), faction: fac,
+      archetype: ar, net_id: `${fac}_anc_${i}`, role: "streamer", base: ri(945, 1090), teamId: null,
+      reserve: false, games: ri(30, 130), gen: 0, posStats: {}, ratingHist: [], soloq: [], trophies: [] };
+    ["A1", "A2", "A3"].forEach((pos) => { const g = ri(3, 20), w = ri(0, g); p.posStats[pos] = { games: g, wins: w }; });
+    players.push(p); pById[p.player_id] = p;
+  }
 
   // ---- season simulation helpers ---------------------------------------- //
   const STAGE_LABEL = { ub: "Верхняя сетка", lb_r1: "Нижняя сетка — 1", lb_final: "Финал нижней сетки", grand_final: "Гранд-финал" };
@@ -213,7 +222,8 @@
   function playerView(p) {
     const hist = p.ratingHist.slice(0, CUR + 2).map(Math.round);
     const delta = hist.length >= 2 ? +(hist[hist.length - 1] - hist[hist.length - 2]).toFixed(1) : 0;
-    const team = p.teamId ? tname(p.teamId) : (p.reserve ? "Резерв" : "Свободный агент");
+    const team = p.teamId ? tname(p.teamId)
+      : (p.reserve ? "Резерв" : (p.role === "streamer" ? "Стример" : "Свободный агент"));
     const pos = {}; Object.entries(p.posStats).forEach(([k, v]) =>
       pos[k] = { games: v.games, wins: v.wins, winrate: v.games ? +(v.wins / v.games).toFixed(3) : null });
     return { player_id: p.player_id, nickname: p.nickname, faction: p.faction, archetype: p.archetype,
@@ -251,12 +261,15 @@
     snaps.slice(0, CUR + 1).forEach((s) => { commentary.push(s.commentary[0]); if (s.num < CUR) commentary.push(s.commentary[1]); });
     return { world_id: WID, name: "Demo World", season: CUR, phase: "regular",
       upper: [], lower: [], ladder: [], history, reserves, commentary,
-      counts: { players: 90, free_agents: freeAgents.filter((p) => !p.teamId).length, streamers: 18,
+      counts: { players: players.length,
+        free_agents: players.filter((p) => p.role === "pro" && !p.teamId && !p.reserve).length,
+        streamers: players.filter((p) => p.role === "streamer").length,
         rostered, reserves: reserves.length } };
   }
   function playersPool() {
-    const poolv = players.map((p) => ({ net_id: p.net_id, faction: p.faction, archetype: p.archetype,
-      overall: Math.round((p.base - 880) / 3), attrs: {} })).sort((a, b) => b.overall - a.overall);
+    const poolv = players.filter((p) => p.role === "pro").map((p) => ({ net_id: p.net_id,
+      faction: p.faction, archetype: p.archetype, overall: Math.round((p.base - 880) / 3), attrs: {} }))
+      .sort((a, b) => b.overall - a.overall);
     return { pool: poolv, total: poolv.length, n_teams: 22, min_enter: 66 };
   }
 
@@ -286,10 +299,14 @@
     await sleep(160);
     const method = (opts && opts.method) || "GET";
     url = url.split("?")[0];
-    if (url === "/api/world/info") return { ui: { locked: false }, worlds: ["world-preview"] };
-    if (url === "/api/world/franchises")
-      return { franchises: teams.map((t) => ({ franchise_id: t.franchise_id, name: t.name, abbrev: t.abbrev,
-        color: t.color, accent: t.color, manager: "Менеджер", persona: "", default_plan: null, emblem: "" })) };
+    if (url === "/api/world/info") return { ui: { locked: false, note: "" }, worlds: ["world-preview"] };
+    if (url === "/api/world/franchises") {
+      const TEMPO = ["balanced", "aggressive", "defensive"], WP = ["economy", "core_rush", "map_control"];
+      return { franchises: teams.map((t, i) => ({ franchise_id: t.franchise_id, name: t.name, abbrev: t.abbrev,
+        color: t.color, accent: t.color, manager: `Менеджер ${t.abbrev}`,
+        persona: `Клуб «${t.name}» — ${pk(["амбициозный", "хладнокровный", "дерзкий", "расчётливый"])}, ставит на ${pk(["молодёжь", "опыт", "агрессию", "экономику"])}.`,
+        default_plan: { tempo: TEMPO[i % 3], win_path: WP[i % 3] }, emblem: "" })) };
+    }
     if (url === "/api/world/players-pool") return playersPool();
     if (url.startsWith("/api/world/job/")) return { status: "done", world_id: WID, phase: "Готово", summary: lastSummary };
     if (method === "POST" && url === "/api/world/create") { CUR = 0; lastSummary = {}; return { job_id: "cr", status: "running" }; }
