@@ -329,8 +329,10 @@ class GameEngine:
             if not player.alive:
                 continue
             obs = self._observe(player_id) if getattr(bot, "requires_observation", True) else {}
-            # Optional LLM-manager order overlay (set by run_match for showcase);
-            # the policy net reads obs["order"] through encode_observation.
+            # Optional manager order overlay (set by run_match), keyed by player_id
+            # ({pid: {tempo,win_path,role}}); encode_observation's _player_order extracts each
+            # player's own order. World net matches pass per-side orders so each club runs its
+            # OWN playbook strategy.
             orders = getattr(self, "orders", None)
             if obs and orders:
                 obs["order"] = orders

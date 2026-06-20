@@ -138,9 +138,13 @@ def make_net_play_fn(
     but the winner comes from actual GameEngine matches instead of roster-rating coin flips.
 
     The manager-LLM still chooses strategy + lineup (via ``playbook.matchup_modifiers``); here
-    that lineup decides WHICH three nets play. (Strategy-as-in-match-orders is a later refinement
-    — run_match accepts an ``orders`` overlay; for now the nets play their lineup free.)"""
+    that lineup decides WHICH three nets play, and its strategy is sent to the engine as a
+    per-side ORDER overlay so the nets actually play the called game plan. The playbook is
+    RE-RESOLVED before every game with the live series score, so conditional strategy switches AND
+    substitutions (a club swapping a player mid-series) really happen — the club, not its current
+    three nets, is what persists."""
     from src.core.rng import Spawner
+    from src.training.spaces import strategy_order_for_slot
     from src.world import playbook
     from src.world.world import POSITIONS
 
@@ -153,41 +157,58 @@ def make_net_play_fn(
     def _lineup_pids(lineup_map: dict) -> list[str]:
         return [lineup_map[pos] for pos in POSITIONS]
 
-    def play(home: str, away: str, best_of: int) -> dict:
-        meta = None
-        if use_playbook:
-            _dh, _da, meta = playbook.matchup_modifiers(world, home, away, best_of)
-            home_lu, away_lu = meta["home"]["lineup"], meta["away"]["lineup"]
-        else:
-            home_lu = playbook.optimal_lineup(world, home)
-            away_lu = playbook.optimal_lineup(world, away)
-        models, factions, _ = _models_factions(
-            world, idx, _lineup_pids(home_lu), _lineup_pids(away_lu))
+    def _orders(home_strat, away_strat) -> Optional[dict]:
+        o = {}
+        for i, slot in enumerate(HOME_SLOTS):
+            o[slot] = strategy_order_for_slot(home_strat, i)
+        for i, slot in enumerate(AWAY_SLOTS):
+            o[slot] = strategy_order_for_slot(away_strat, i)
+        return o
 
+    def play(home: str, away: str, best_of: int) -> dict:
         needed = best_of // 2 + 1
         game_spawner = Spawner(series_spawner.seed())  # independent per-game seeds
         mh = ma = 0
+        streak_h = streak_a = 0          # consecutive-loss streaks for the comeback IF-THEN rules
+        last_meta = None
         for _ in range(best_of):  # hard cap: a Bo-N can't exceed N games even with draws
             if mh >= needed or ma >= needed:
                 break
+            # RE-RESOLVE the playbook with the live series score -> conditional strategy switch +
+            # substitution fire here (the club can change its three nets between games).
+            if use_playbook:
+                sh = {"series_won": mh, "series_lost": ma, "playoff_losing_streak": streak_h}
+                sa = {"series_won": ma, "series_lost": mh, "playoff_losing_streak": streak_a}
+                _dh, _da, meta = playbook.matchup_modifiers(world, home, away, best_of,
+                                                            state_home=sh, state_away=sa)
+                home_lu, away_lu = meta["home"]["lineup"], meta["away"]["lineup"]
+                orders = _orders(meta["home"]["strategy"], meta["away"]["strategy"])
+                last_meta = meta
+            else:
+                home_lu = playbook.optimal_lineup(world, home)
+                away_lu = playbook.optimal_lineup(world, away)
+                orders = None
+            models, factions, _ = _models_factions(
+                world, idx, _lineup_pids(home_lu), _lineup_pids(away_lu))
+
             gseed = game_spawner.seed()
             rec = rdir is not None
             result = run_match_fn(seed=gseed, bot_type="league",
                                   mode="replay" if rec else "training",
                                   replay_path=str(rdir / f"league_{gseed}.json") if rec else None,
-                                  player_models=models, player_factions=factions)
+                                  player_models=models, player_factions=factions, orders=orders)
             if result.winner == "TEAM_A":
-                mh += 1
+                mh += 1; streak_h = 0; streak_a += 1
             elif result.winner == "TEAM_B":
-                ma += 1
+                ma += 1; streak_a = 0; streak_h += 1
             # a draw counts as a played game toward the cap but clinches nothing
+            if use_playbook and record_positions:        # credit THIS game's lineup with its result
+                playbook.record_position_results(world, home_lu, result.winner == "TEAM_A")
+                playbook.record_position_results(world, away_lu, result.winner == "TEAM_B")
         winner = home if mh > ma else (away if ma > mh else home)  # tie on the cap -> home seed
         out = {"home": home, "away": away, "maps_home": mh, "maps_away": ma, "winner": winner}
-        if meta:
-            out["playbook"] = meta
-            if record_positions:
-                playbook.record_position_results(world, home_lu, winner == home)
-                playbook.record_position_results(world, away_lu, winner == away)
+        if last_meta:
+            out["playbook"] = last_meta
         return out
 
     return play
