@@ -59,6 +59,7 @@
           <span id="viewCounts" class="view-counts"></span>
         </div>
         <div class="view-actions">
+          <button id="reservesBtn" class="ghost is-hidden">🎒 Резерв</button>
           <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
           <button id="offseasonBtn" class="ghost">⟳ Межсезонье</button>
         </div>
@@ -102,6 +103,40 @@
         <div class="os-actions">
           <button id="osRun" class="primary">Запустить межсезонье</button>
           <button id="osCancel" class="ghost">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Season-0 player selection -->
+    <div id="selModal" class="os-overlay is-hidden">
+      <div class="os-card sel-card">
+        <h3>Кто выйдет в сезон 0</h3>
+        <p class="muted">Отметь конкретных игроков (они выйдут точно) и задай, сколько ВСЕГО
+          дебютирует — остальные доберутся случайно. Невыставленные уходят в резерв (введёшь
+          новичками в любом сезоне).</p>
+        <div class="sel-controls">
+          <label>Всего дебютирует (X)<input id="selX" type="number" min="66" max="90" value="90"></label>
+          <span id="selNamed" class="muted">отмечено: 0</span>
+          <span class="muted" id="selHint"></span>
+        </div>
+        <div id="selList" class="sel-list">Загрузка…</div>
+        <div class="os-actions">
+          <button id="selCreate" class="primary">Создать World</button>
+          <button id="selCancel" class="ghost">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Reserves: debut held-out players later -->
+    <div id="resModal" class="os-overlay is-hidden">
+      <div class="os-card sel-card">
+        <h3>Резерв — ввести новичков</h3>
+        <p class="muted">Отметь резервистов, чтобы ввести их в этом сезоне (попадут в пул новичков
+          и будут задрафтованы, помимо натренированных).</p>
+        <div id="resList" class="sel-list">—</div>
+        <div class="os-actions">
+          <button id="resIntro" class="primary">Ввести выбранных</button>
+          <button id="resCancel" class="ghost">Закрыть</button>
         </div>
       </div>
     </div>

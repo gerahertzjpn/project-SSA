@@ -420,7 +420,11 @@ function renderHeader(w) {
   el("viewSeason").textContent = `Сезон ${w.season}`;
   const c = w.counts || {};
   el("viewCounts").textContent =
-    `${c.players} игроков · ${c.rostered} в составах · ${c.streamers} стримеров`;
+    `${c.players} игроков · ${c.rostered} в составах · ${c.streamers} стримеров` +
+    (c.reserves ? ` · ${c.reserves} в резерве` : "");
+  const nRes = (w.reserves || []).length;
+  el("reservesBtn").classList.toggle("is-hidden", nRes === 0);
+  el("reservesBtn").textContent = `🎒 Резерв (${nRes})`;
   el("advanceBtn").disabled = state.busy;
   el("offseasonBtn").disabled = state.busy;
 }
@@ -441,13 +445,50 @@ async function openWorld(worldId) {
   }
 }
 
-async function start() {
+// Season-0 player selection ------------------------------------------------- //
+const FAC_SHORT = { humans: "H", infected: "I", robots: "R" };
+async function openSelModal() {
   if (state.locked || state.busy || state.selected.size !== TEAM_COUNT) return;
+  state.selNamed = new Set();
+  el("selList").innerHTML = `<div class="muted">Загрузка…</div>`;
+  show("selModal", true);
+  try {
+    const data = await fetchJson("/api/world/players-pool");
+    state.pool = data.pool || [];
+    el("selX").min = data.min_enter; el("selX").value = data.total;
+    renderSelList();
+  } catch (e) { el("selList").innerHTML = `<div class="result-error">${esc(e.message)}</div>`; }
+}
+function renderSelList() {
+  el("selList").innerHTML = state.pool.map((p) =>
+    `<label class="sel-row"><input type="checkbox" data-net="${esc(p.net_id)}"${state.selNamed.has(p.net_id) ? " checked" : ""}>` +
+    `<span class="sel-ov">${p.overall}</span>` +
+    `<span class="sel-fac">${FAC_SHORT[p.faction] || "?"}</span>` +
+    `<span class="sel-nm">${esc(p.archetype || p.net_id)}</span>` +
+    `<span class="sel-net">${esc(p.net_id)}</span></label>`).join("");
+  el("selList").querySelectorAll("input[data-net]").forEach((cb) =>
+    cb.addEventListener("change", () => {
+      cb.checked ? state.selNamed.add(cb.dataset.net) : state.selNamed.delete(cb.dataset.net);
+      updateSelHint();
+    }));
+  updateSelHint();
+}
+function updateSelHint() {
+  const named = state.selNamed.size;
+  const x = Math.max(parseInt(el("selX").value || "0", 10) || 0, named);
+  el("selNamed").textContent = `отмечено: ${named}`;
+  el("selHint").textContent = x > named ? `+ ${x - named} случайно из остальных` :
+    (x ? "ровно отмеченные" : "");
+}
+async function createWithSelection() {
+  show("selModal", false);
   refreshPicker();
   try {
+    const x = Math.max(parseInt(el("selX").value || "90", 10) || 90, state.selNamed.size);
     const job = await runJob("/api/world/create", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ franchises: [...state.selected] }),
+      body: JSON.stringify({ franchises: [...state.selected],
+        entered_net_ids: [...state.selNamed], n_enter: x }),
     }, "Создаём мир — реальные матчи нейронок");
     await refreshWorldList(job.world_id);
     await openWorld(job.world_id);
@@ -455,6 +496,34 @@ async function start() {
     show("resultPanel", true);
     el("resultPanel").innerHTML = `<div class="result-error">Ошибка: ${esc(e.message)}</div>`;
   } finally { refreshPicker(); }
+}
+
+// Reserves: debut held-out players later ------------------------------------ //
+function openResModal() {
+  const res = (state.world && state.world.reserves) || [];
+  state.resPick = new Set();
+  el("resList").innerHTML = res.length ? res.map((p) =>
+    `<label class="sel-row"><input type="checkbox" data-pid="${esc(p.player_id)}">` +
+    `<span class="sel-ov">${p.rating}</span>${factionChip(p.faction)}` +
+    `<span class="sel-nm">${esc(p.nickname)}</span>` +
+    `<span class="sel-net">${esc(p.archetype || "")}</span></label>`).join("")
+    : `<div class="muted">Резерв пуст.</div>`;
+  el("resList").querySelectorAll("input[data-pid]").forEach((cb) =>
+    cb.addEventListener("change", () =>
+      cb.checked ? state.resPick.add(cb.dataset.pid) : state.resPick.delete(cb.dataset.pid)));
+  show("resModal", true);
+}
+async function introduceReserves() {
+  if (!state.resPick || !state.resPick.size) { show("resModal", false); return; }
+  show("resModal", false);
+  try {
+    await fetchJson(`/api/world/${state.worldId}/introduce`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ player_ids: [...state.resPick] }),
+    });
+    flashResult(`<div class="season-done">Введено новичков из резерва: ${state.resPick.size}. Будут задрафтованы в межсезонье.</div>`);
+    await openWorld(state.worldId);
+  } catch (e) { flashResult(`<div class="result-error">Ошибка: ${esc(e.message)}</div>`); }
 }
 
 function flashResult(html) {
@@ -587,7 +656,13 @@ async function init() {
     el("teamGrid").innerHTML = `<div class="result-error">Не удалось загрузить: ${esc(e.message)}</div>`;
     return;
   }
-  el("startBtn").addEventListener("click", start);
+  el("startBtn").addEventListener("click", openSelModal);
+  el("selCreate").addEventListener("click", createWithSelection);
+  el("selCancel").addEventListener("click", () => show("selModal", false));
+  el("selX").addEventListener("input", updateSelHint);
+  el("reservesBtn").addEventListener("click", openResModal);
+  el("resIntro").addEventListener("click", introduceReserves);
+  el("resCancel").addEventListener("click", () => show("resModal", false));
   el("advanceBtn").addEventListener("click", advance);
   el("offseasonBtn").addEventListener("click", openOsModal);
   el("osRun").addEventListener("click", submitOffseason);

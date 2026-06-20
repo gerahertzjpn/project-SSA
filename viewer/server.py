@@ -191,6 +191,10 @@ def start_world_create_job(payload: dict) -> dict:
     if unknown:
         raise ValueError(f"unknown franchises: {unknown}")
     specs = [by_id[fid] for fid in selected]
+    # Season-0 player selection (optional): owner-named pros (by net id) + a total to debut.
+    entered_net_ids = list(payload.get("entered_net_ids") or []) or None
+    n_enter = payload.get("n_enter")
+    n_enter = int(n_enter) if n_enter else None
 
     job_id = uuid.uuid4().hex
     with WORLD_JOBS_LOCK:
@@ -204,7 +208,8 @@ def start_world_create_job(payload: dict) -> dict:
             use_pop = FROZEN_POP.exists()
             _set_world_job(job_id, phase="Привязываем нейронок к составам…")
             world = new_world(world_id, specs, name=world_id, seed=seed,
-                              population=str(FROZEN_POP) if use_pop else None)
+                              population=str(FROZEN_POP) if use_pop else None,
+                              entered_net_ids=entered_net_ids, n_enter=n_enter)
             soloq_mf, play_fn = _world_net_fns(world) if use_pop else (None, None)
             llm = _world_llm()
             draft_fn = None
@@ -431,11 +436,13 @@ def world_view_payload(world_id: str) -> dict:
     history = [{"season": s["season"], "upper_champion": _team_name(w, s["upper_champion"]),
                 "lower_champion": _team_name(w, s["lower_champion"])}
                for s in w.get("history", [])[-10:]]
+    reserves = [pcard(pid) for pid in w.get("reserves", []) if pid in players]
     return {"world_id": w["world_id"], "name": w.get("name"), "season": w["season"],
             "phase": w.get("phase"), "upper": upper, "lower": lower, "ladder": ladder,
-            "history": history,
+            "history": history, "reserves": reserves,
             "counts": {"players": len(players), "free_agents": len(w.get("free_agents", [])),
-                       "streamers": len(w.get("streamers", [])), "rostered": len(pid_team)}}
+                       "streamers": len(w.get("streamers", [])), "rostered": len(pid_team),
+                       "reserves": len(reserves)}}
 
 
 # -- tabbed-UI read models (src/world/views.py) ---------------------------------- #
@@ -463,6 +470,36 @@ def world_schedule_payload(world_id: str, season=None) -> dict:
     from src.world import views
     w = load_world(world_id)
     return views.schedule_view(w, season)
+
+
+def world_players_pool_payload() -> dict:
+    """The frozen pool the owner picks from at world creation (Season-0 selection). Pros only,
+    with their card overall + per-attribute, sorted strongest-first."""
+    manifest = json.loads(FROZEN_POP.read_text(encoding="utf-8"))
+    try:
+        cards = json.loads((FROZEN_POP.parent / "player_cards_v1.json").read_text(encoding="utf-8")).get("cards", {})
+    except (OSError, ValueError):
+        cards = {}
+    ATTRS = ("attack", "defense", "economy", "tempo", "consistency", "potential")
+    pool = []
+    for e in manifest.get("descendants", []):
+        c = cards.get(e["net_id"], {})
+        vals = [c[k] for k in ATTRS if isinstance(c.get(k), (int, float))]
+        pool.append({"net_id": e["net_id"], "faction": e["faction"], "archetype": e.get("archetype"),
+                     "overall": round(sum(vals) / len(vals)) if vals else 0,
+                     "attrs": {k: c.get(k) for k in ATTRS}})
+    pool.sort(key=lambda p: -p["overall"])
+    return {"pool": pool, "total": len(pool), "n_teams": WORLD_TEAM_COUNT,
+            "min_enter": WORLD_TEAM_COUNT * 3}
+
+
+def introduce_reserves_action(world_id: str, player_ids: list) -> dict:
+    """Debut held-out reserve players (any season) -> the rookies pool."""
+    from src.world.world import introduce_reserves
+    w = load_world(world_id)
+    intro = introduce_reserves(w, list(player_ids or []))
+    save_world(w)
+    return {"introduced": len(intro), "reserves_left": len(w.get("reserves", []))}
 
 
 REPLAY_DIR = ROOT / "replays"
@@ -1064,6 +1101,9 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error)}, status=404)
             return
+        if path == "/api/world/players-pool":
+            self._send_json(world_players_pool_payload())
+            return
         world_train = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/training$", path)
         if world_train:
             self._send_json(training_jobs_status(world_train.group("wid")))
@@ -1198,6 +1238,15 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             except world_flags.FeatureLocked as error:
                 self._send_json({"error": str(error), "locked": True,
                                  "server": server_info()}, status=403)
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error), "server": server_info()}, status=400)
+            return
+        world_intro = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/introduce$", path)
+        if world_intro:
+            try:
+                body = self._read_json() if int(self.headers.get("Content-Length") or 0) else {}
+                self._send_json(introduce_reserves_action(world_intro.group("wid"),
+                                                          body.get("player_ids") or []))
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error), "server": server_info()}, status=400)
             return

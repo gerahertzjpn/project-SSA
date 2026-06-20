@@ -451,3 +451,19 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .cr-msg { flex: 1; color: #e6edf4; }
 .cr-src { color: #8493a4; font-size: 11px; font-weight: 700; }
 @keyframes slidein { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+
+/* Season-0 selection + reserves */
+.sel-card { width: min(640px, 96vw); max-height: 86vh; display: flex; flex-direction: column; }
+.sel-controls { display: flex; align-items: center; gap: 16px; margin: 8px 0 10px; flex-wrap: wrap; }
+.sel-controls label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9fb0c2; }
+.sel-controls input { background: #1a2029; color: #eef4fa; border: 1px solid #2a323d; border-radius: 8px;
+  padding: 7px 10px; font-size: 14px; font-weight: 700; width: 120px; }
+.sel-list { overflow-y: auto; flex: 1; border: 1px solid #232c38; border-radius: 10px; padding: 6px; }
+.sel-row { display: grid; grid-template-columns: 20px 34px 22px 1fr auto; align-items: center; gap: 8px;
+  padding: 5px 8px; font-size: 12px; border-radius: 7px; cursor: pointer; }
+.sel-row:hover { background: #18222f; }
+.sel-row input { accent-color: #2e7d52; }
+.sel-ov { font-weight: 800; color: #8fb8ff; text-align: right; }
+.sel-fac { color: #9fb0c2; font-weight: 700; text-align: center; }
+.sel-nm { color: #e6edf4; font-weight: 600; }
+.sel-net { color: #6b7886; font-family: ui-monospace, monospace; font-size: 10px; }
