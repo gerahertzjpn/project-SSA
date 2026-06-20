@@ -33,14 +33,22 @@ MANIFEST = ROOT / "population" / "frozen_population_v1.json"
 OUT = ROOT / "analysis" / "player_cards_v1.json"
 LEAGUE_REG = ROOT / "training_runs" / "league_population_v1" / "registry.json"
 
-# ABSOLUTE references (tunable after eyeballing the smoke).
-REF_CORE_TOTAL = 240.0     # all 3 enemy cores broken (3 x CORE_HP 80)
+# ABSOLUTE references (tunable; raw values are saved so re-scaling needs no re-run).
+REF_ATTACK = 150.0         # core dmg of a DOMINANT attacking game (~2 enemy cores); 100 = this, head-room above
 REF_OWN_CORE = 80.0        # full own core
-REF_TEMPO_RATE = 3.0       # core dmg / tick of a fast rush (240/80)
+REF_TEMPO_RATE = 1.5       # core dmg / tick of a strong push
 REF_ECO_BLD = 3.0          # booster/collector count that reads as "heavy economy"
 REF_RES = 30.0            # resources held that reads as "rich"
 POT_MIN_STEPS, POT_MAX_STEPS = 1_000_000.0, 200_000_000.0
 ECO_BUILDINGS = {"BOOSTER", "ECONOMY_COLLECTOR"}
+
+# consistency = how EVENLY the net performs across DIFFERENT opponents (low winrate spread = stable).
+CONSISTENCY_TRIOS = (
+    ("robots_3", "humans_3", "infected_3"),
+    ("robots_5", "humans_5", "infected_5"),
+    ("robots_6", "humans_6", "infected_6"),
+    ("robots_2", "humans_1", "infected_2"),
+)
 
 HOME, AWAY = ("A1", "A2", "A3"), ("B1", "B2", "B3")
 
@@ -94,10 +102,11 @@ def clamp100(x):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true")
-    ap.add_argument("--games", type=int, default=15)
+    ap.add_argument("--games", type=int, default=12)
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
     N = 4 if args.smoke else args.games
+    N_c = max(2, N // 3)          # games per opponent-trio for the consistency spread
 
     man = json.loads(MANIFEST.read_text(encoding="utf-8"))
     idx = _idx(man)
@@ -121,29 +130,31 @@ def main():
         push = [play(idx, net, teammates, opponents, "all_in", 1000 + g) for g in range(N)]
         turt = [play(idx, net, teammates, opponents, "turtle", 2000 + g) for g in range(N)]
         free = [play(idx, net, teammates, opponents, None, 3000 + g) for g in range(N)]
-        allg = push + turt + free
-        attack = statistics.mean(p["core_dmg"] for p in push) / REF_CORE_TOTAL
-        defense = statistics.mean(p["own_hp"] for p in turt) / REF_OWN_CORE
-        tempo = statistics.mean(p["core_dmg"] / p["ticks"] for p in push) / REF_TEMPO_RATE
+        # consistency: winrate vs each of several DIFFERENT opponent trios; low spread = stable.
+        trio_wr = []
+        for ti, opp in enumerate(CONSISTENCY_TRIOS):
+            gms = [play(idx, net, teammates, opp, None, 4000 + ti * 100 + g) for g in range(N_c)]
+            trio_wr.append(statistics.mean(g["won"] for g in gms))
+
+        raw_attack = statistics.mean(p["core_dmg"] for p in push)
+        raw_defense = statistics.mean(p["own_hp"] for p in turt)
+        raw_tempo = statistics.mean(p["core_dmg"] / p["ticks"] for p in push)
         tech_ww = statistics.mean((g["tier"] / 2.0) * (1.0 if g["won"] else 0.5) for g in free)
-        eco_bld = statistics.mean(g["eco"] for g in free) / REF_ECO_BLD
-        res = statistics.mean(g["res"] for g in free) / REF_RES
-        economy = 0.5 * tech_ww + 0.3 * eco_bld + 0.2 * res
-        # consistency = stability of a per-game performance score (dmg dealt + own core kept)
-        # WITHIN each order condition (NOT across conditions — those differ by design), averaged.
-        cvs = []
-        for cond in (push, turt, free):
-            scores = [g["core_dmg"] + g["own_hp"] for g in cond]
-            md = statistics.mean(scores)
-            if md > 1 and len(scores) > 1:
-                cvs.append(statistics.pstdev(scores) / md)
-        cv = statistics.mean(cvs) if cvs else 1.0
-        consistency = 1.0 - min(1.0, cv)
+        raw_eco = statistics.mean(g["eco"] for g in free)
+        raw_res = statistics.mean(g["res"] for g in free)
+        economy = 0.5 * tech_ww + 0.3 * (raw_eco / REF_ECO_BLD) + 0.2 * (raw_res / REF_RES)
+        spread = statistics.pstdev(trio_wr) if len(trio_wr) > 1 else 0.0
+        consistency = 1.0 - min(1.0, 2.0 * spread)         # spread 0 -> 100, spread .5 -> 0
         st = steps.get(net, POT_MAX_STEPS)
         pot = 1.0 - (math.log10(max(st, 1) / POT_MIN_STEPS) / math.log10(POT_MAX_STEPS / POT_MIN_STEPS))
-        cards[net] = {"attack": clamp100(attack), "defense": clamp100(defense),
-                      "economy": clamp100(economy), "tempo": clamp100(tempo),
-                      "consistency": clamp100(consistency), "potential": clamp100(pot)}
+        cards[net] = {"attack": clamp100(raw_attack / REF_ATTACK), "defense": clamp100(raw_defense / REF_OWN_CORE),
+                      "economy": clamp100(economy), "tempo": clamp100(raw_tempo / REF_TEMPO_RATE),
+                      "consistency": clamp100(consistency), "potential": clamp100(pot),
+                      "raw": {"attack_dmg": round(raw_attack, 1), "defense_hp": round(raw_defense, 1),
+                              "tempo_rate": round(raw_tempo, 3), "tech_ww": round(tech_ww, 3),
+                              "eco_bld": round(raw_eco, 2), "res": round(raw_res, 1),
+                              "trio_winrates": [round(w, 2) for w in trio_wr],
+                              "steps": int(st)}}
         if args.smoke or (i + 1) % 10 == 0:
             c = cards[net]
             print(f"  [{i+1}/{len(nets)}] {net:<26} {role_by.get(net,''):<8} "
@@ -155,7 +166,7 @@ def main():
         "schema": "player_cards/v1",
         "method": "order-conditioned gauntlet, GLOBAL + ABSOLUTE scales",
         "games_per_order": N, "reference_teammates": teammates, "reference_opponents": opponents,
-        "absolute_refs": {"core_total": REF_CORE_TOTAL, "own_core": REF_OWN_CORE,
+        "absolute_refs": {"attack_dmg": REF_ATTACK, "own_core": REF_OWN_CORE,
                           "tempo_rate": REF_TEMPO_RATE, "eco_buildings": REF_ECO_BLD, "resources": REF_RES,
                           "potential_steps": [POT_MIN_STEPS, POT_MAX_STEPS]},
         "cards": cards,
