@@ -54,6 +54,19 @@ def test_league_tables_split_by_group_with_places():
     assert [r["place"] for r in tables["upper"]] == list(range(1, 11))
 
 
+def test_team_power_is_global_upper_generally_above_lower():
+    import statistics
+    w = _world_after_a_season()
+    tables = views.league_tables(w)
+    upper_pow = [r["power"] for r in tables["upper"]]
+    lower_pow = [r["power"] for r in (tables["lower_A"] + tables["lower_Z"])]
+    # GLOBAL power: upper teams are generally stronger (median), since they earned promotion;
+    # this is NOT absolute (a strong lower team can out-power a weak upper one).
+    assert statistics.median(upper_pow) > statistics.median(lower_pow)
+    # power is the global number; raw intra-league elo is exposed separately
+    assert all("elo" in r and "power" in r for r in tables["upper"])
+
+
 def test_team_view_has_record_and_roster():
     w = _world_after_a_season()
     tid = next(t["team_id"] for t in w["teams"].values() if t.get("league") == "upper")

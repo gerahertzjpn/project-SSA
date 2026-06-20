@@ -18,8 +18,24 @@ from typing import Optional
 
 from src.world.world import get_player
 
+_BASE = 1000.0          # START_RATING / START_ELO
+_ELO_WEIGHT = 0.5       # how much the intra-league record shifts the global power
+
 # Playoff stages in bracket order (for rendering a bracket left-to-right).
 PLAYOFF_STAGE_ORDER = ("lb_r1", "lb_r2", "ub", "lb_final", "grand_final")
+
+
+def team_power(world: dict, team: dict) -> int:
+    """GLOBAL team Power. Elo alone is intra-league (upper & lower pools never meet, both centred
+    on 1000), so it can't rank a lower team vs an upper one. We anchor Power to the team's roster
+    SoloQ strength — which IS global (all players share one SoloQ ladder) and is higher for upper
+    teams (they earned promotion by winning) — then shift it by the intra-league Elo record. So
+    upper teams generally outrank lower ones, but a strong lower roster + dominant record CAN beat a
+    weak upper team (not an absolute rule)."""
+    roster = [world["players"][pid] for pid in team.get("roster", []) if pid in world["players"]]
+    base = (sum(float(p.get("soloq_rating", _BASE)) for p in roster) / len(roster)) if roster else _BASE
+    elo_adj = (float(team.get("elo", _BASE)) - _BASE) * _ELO_WEIGHT
+    return round(base + elo_adj)
 STAGE_LABEL = {
     "ub": "Верхняя сетка", "lb_r1": "Нижняя сетка — 1", "lb_r2": "Нижняя сетка — 2",
     "lb_final": "Финал нижней сетки", "grand_final": "Гранд-финал", "league": "Регулярка",
@@ -110,7 +126,8 @@ def _team_row(world: dict, t: dict, place: int) -> dict:
     return {
         "team_id": t["team_id"], "name": t["name"], "abbrev": t["abbrev"],
         "league": t.get("league"), "group": t.get("group"),
-        "power": round(float(t.get("elo", 0))), "titles": t.get("titles", 0),
+        "power": team_power(world, t), "elo": round(float(t.get("elo", 0))),
+        "titles": t.get("titles", 0),
         "treasury": round(float(t.get("treasury", 0))), "place": place,
         "roster": [world["players"][pid]["nickname"]
                    for pid in t.get("roster", []) if pid in world["players"]],
@@ -125,7 +142,7 @@ def _table(world: dict, league: str, group: Optional[str]) -> list[dict]:
     def place_key(t):
         if ranking and t["team_id"] in ranking:
             return (0, ranking.index(t["team_id"]))
-        return (1, -float(t.get("elo", 0)))      # no ranking yet -> by power
+        return (1, -team_power(world, t))         # no ranking yet -> by global power
 
     teams.sort(key=place_key)
     return [_team_row(world, t, i + 1) for i, t in enumerate(teams)]
@@ -172,7 +189,8 @@ def team_view(world: dict, team_id: str) -> dict:
     return {
         "team_id": team_id, "name": t["name"], "abbrev": t["abbrev"],
         "manager": t.get("manager"), "league": t.get("league"), "group": t.get("group"),
-        "power": round(float(t.get("elo", 0))), "titles": t.get("titles", 0),
+        "power": team_power(world, t), "elo": round(float(t.get("elo", 0))),
+        "titles": t.get("titles", 0),
         "treasury": round(float(t.get("treasury", 0))),
         "elo_history": [round(float(e)) for e in t.get("elo_history", [])],
         "trophies": t.get("trophies", []),

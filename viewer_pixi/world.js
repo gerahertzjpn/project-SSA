@@ -358,7 +358,7 @@ function renderTeamPage(t) {
       `<div class="tp-stat"><b>${t.treasury}</b><span>Казна</span></div>` +
       `<div class="tp-stat"><b>${t.certificates || 0}</b><span>Сертификаты</span></div>` +
     `</div>` +
-    `<div class="tp-power">Кривая Power ${sparkline(t.elo_history, 240, 40)}</div>` +
+    `<div class="tp-power">Динамика Elo (внутри лиги) ${sparkline(t.elo_history, 240, 40)}</div>` +
     (t.trophies && t.trophies.length ? `<div class="tp-trophies">🏆 ${t.trophies.map((x) => `S${x.season} ${esc(x.title)}`).join(", ")}</div>` : "") +
     `<h4>Состав</h4><div class="tp-roster">${roster || "<em>пусто</em>"}</div>`;
   page.querySelector(".tp-close").addEventListener("click", () => page.classList.add("is-hidden"));
