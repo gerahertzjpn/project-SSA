@@ -297,7 +297,7 @@
     if (method === "POST" && url.endsWith("/offseason")) return doOffseason();
     if (method === "POST" && url.endsWith("/introduce")) return { introduced: 0, reserves_left: players.filter((p) => p.reserve).length };
     const path = url.replace(/^\/api\/world\/[^/]+/, "");
-    if (path === "") return overview();
+    if (path === "") return { world: overview() };       // real /api/world/<id> wraps in {world}
     if (path === "/leagues") return { season: CUR, leagues: leaguesView() };
     if (path === "/players") return { season: CUR, players: rankedPlayers() };
     if (path === "/schedule") return { season: CUR, regular: snap().fixtures, bracket: snap().bracket, n_matches: snap().fixtures.length };
