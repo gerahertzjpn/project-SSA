@@ -23,7 +23,8 @@ from __future__ import annotations
 import os
 from typing import Callable, Optional
 
-from src.world import events, feature_flags, manager, playbook, scouting, transfers
+from src.world import events, feature_flags, manager, playbook, scouting, transfers, valuation
+from src.world.world import get_player
 
 DEFAULT_MODEL = (os.environ.get("WORLD_LLM_MODEL")
                  or os.environ.get("REGIONALS_LLM_MODEL")
@@ -265,6 +266,113 @@ def _llm_market(world: dict, team: dict, llm, profile) -> dict:
                          manager.build_manager_situation(world, team), schema, max_tokens=400)
     return {"buy": [], "sell": ans.get("sell", []),
             "spend": ans.get("spend") or manager.certificate_intent(profile, has_fork_budget=False)}
+
+
+# --------------------------------------------------------------------------- #
+# Training — L1 (one call per team: train? which op? which player(s)/parent?). The
+# manager (LLM) is the single brain: it DECIDES whether to buy training and picks the
+# op + target. manager.decide_training is the deterministic FALLBACK (notified).
+# --------------------------------------------------------------------------- #
+def training_plan(world: dict, team: dict, *, llm=None, feed: Optional[list] = None,
+                  profile: Optional[manager.ManagerProfile] = None,
+                  steps: Optional[int] = None, allow_fork: bool = False) -> Optional[dict]:
+    """The manager's off-season training decision. LLM when active (it chooses WHETHER to train,
+    WHICH op, and WHO/whom-to-fork); else (or on any failure) the heuristic
+    ``manager.decide_training`` with a fallback notification. Returns a job dict or None."""
+    profile = profile or manager.natural_profile(team["franchise_id"])
+    if _active(llm):
+        try:
+            job = _llm_training(world, team, llm, steps=steps, allow_fork=allow_fork)
+            msg = (f"{op_label(job['spend_type'])} → {job['player_name']}" if job
+                   else "без тренировки в это межсезонье")
+            events.emit(feed, "training", f"{team['name']}: ЛЛМ — {msg}",
+                        team_id=team["team_id"], source="ЛЛМ")
+            return job
+        except Exception as exc:
+            events.fallback(feed, f"training:{team['team_id']}", str(exc))
+    return manager.decide_training(world, team, profile, steps=steps, allow_fork=allow_fork)
+
+
+def run_training_decisions(world: dict, *, llm=None, feed: Optional[list] = None,
+                           steps: Optional[int] = None, allow_fork: bool = False) -> list[dict]:
+    """Every manager decides its off-season training (LLM, heuristic fallback). Returns the chosen
+    jobs, weakest-team-first so a capped launch trains those who need it most."""
+    jobs = [j for team in world["teams"].values()
+            if (j := training_plan(world, team, llm=llm, feed=feed, steps=steps,
+                                   allow_fork=allow_fork)) is not None]
+    jobs.sort(key=lambda j: j["priority"], reverse=True)
+    return jobs
+
+
+_OP_LABELS = {"skill_up": "общий буст", "meta_adapt": "против меты", "style_spec": "специализация",
+              "obedience_tune": "послушание", "teamplay": "сыгранность", "create_player": "новичок"}
+
+
+def op_label(op: str) -> str:
+    return _OP_LABELS.get(op, op)
+
+
+def _llm_training(world: dict, team: dict, llm, *, steps=None, allow_fork=False) -> Optional[dict]:
+    from src.world import training_ops
+    netted = [p for p in (get_player(world, pid) for pid in team.get("roster", [])) if p.get("net_id")]
+    if len(netted) < 3:
+        return None
+    by_pid = {p["player_id"]: p for p in netted}
+    ids = list(by_pid)
+    ops = ["skill_up", "meta_adapt", "style_spec", "obedience_tune", "teamplay"]
+    if allow_fork:
+        ops.append("create_player")
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "train": {"type": "boolean"},
+            "op": {"type": "string", "enum": ops},
+            "player_id": {"type": "string", "enum": ids},      # trainee, or parent for create_player
+            "player_ids": {"type": "array", "items": {"type": "string", "enum": ids}, "maxItems": 3},
+            "reason": {"type": "string"},
+        },
+        "required": ["train"],
+    }
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, _training_prompt(world, team, netted, allow_fork),
+                         schema, max_tokens=300)
+    if not ans.get("train"):
+        return None
+    op = ans.get("op")
+    if op not in ops:
+        raise ValueError(f"LLM returned bad training op {op!r}")
+    steps = int(steps or training_ops.MIN_TRAINING_STEPS)
+    priority = round(-min(valuation.skill_score(p) for p in netted), 4)
+    if op == "teamplay":
+        pids = [pid for pid in (ans.get("player_ids") or []) if pid in by_pid][:3]
+        if len(pids) < 3:                              # LLM gave a partial set -> top 3 by skill
+            pids = [p["player_id"] for p in sorted(netted, key=valuation.skill_score, reverse=True)[:3]]
+        target = {"kind": "team", "net_ids": [by_pid[pid]["net_id"] for pid in pids], "player_ids": pids}
+        name = f"{team['name']} · тройка"
+    else:
+        pid = ans.get("player_id")
+        if pid not in by_pid:
+            raise ValueError(f"LLM returned bad player_id {pid!r}")
+        p = by_pid[pid]
+        target = {"kind": "parent" if op == "create_player" else "player",
+                  "net_id": p["net_id"], "player_id": pid}
+        name = f"{team['name']} · новичок от {p['nickname']}" if op == "create_player" else p["nickname"]
+    return {"team_id": team["team_id"], "spend_type": op, "target": target, "total_steps": steps,
+            "player_name": name, "priority": priority}
+
+
+def _training_prompt(world: dict, team: dict, netted: list, allow_fork: bool) -> str:
+    rows = "; ".join(f"{p['player_id']}:{p['nickname']}({p['faction']},SoloQ{int(p['soloq_rating'])},"
+                     f"скилл{valuation.skill_score(p):.2f})" for p in netted)
+    menu = ("skill_up=общий буст; meta_adapt=тренировка ПРОТИВ топов меты; "
+            "style_spec=специализация в своём стиле; obedience_tune=послушание приказам; "
+            "teamplay=сыгранность тройки; create_player=ФОРК нового игрока от выбранного родителя")
+    forkline = "" if allow_fork else "\nВ это межсезонье create_player (форк) НЕдоступен — нет бюджета."
+    return (f"Клуб {team['name']}. Казна: {team['treasury']}. Игроки с нейронками:\n{rows}.\n"
+            f"Виды тренировки: {menu}.{forkline}\n--- РЕШЕНИЕ ---\n"
+            f"Реши как менеджер: покупать ли тренировку в это межсезонье (train). Если да — выбери "
+            f"вид (op) и КОГО тренировать (player_id; для teamplay — троих в player_ids; для "
+            f"create_player player_id = родитель для форка). Усиливай клуб к титулу; можешь и "
+            f"отказаться, если состав силён или казну важнее сберечь.")
 
 
 # --------------------------------------------------------------------------- #
