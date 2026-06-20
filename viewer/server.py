@@ -252,8 +252,11 @@ def start_world_advance_job(world_id: str) -> dict:
                 for t in world["teams"].values():       # L1: one playbook call per team
                     if len(t.get("roster", [])) >= 3:
                         llm_manager.author_playbook(world, t, llm=llm)
+            from src.world import commentary
+            open_line = commentary.season_open(world, llm=llm)      # 📻 broadcast: season open
             _set_world_job(job_id, phase="Группы + плей-офф (реальные матчи)…")
             summary = world_season.run_regular_season(world, play=play_fn)
+            close_line = commentary.season_close(world, summary, llm=llm)   # 📻 champions + promo/releg
             world["season"] = int(world.get("season", 0)) + 1  # roll to the next season
             save_world(world)
             _set_world_job(job_id, status="done", phase="Сезон сыгран", summary={
@@ -262,6 +265,7 @@ def start_world_advance_job(world_id: str) -> dict:
                 "lower_champion": _team_name(world, summary["lower_champion"]),
                 "promoted": [_team_name(world, t) for t in summary["promoted"]],
                 "relegated": [_team_name(world, t) for t in summary["relegated"]],
+                "commentary": [open_line, close_line],
             })
         except Exception as error:  # noqa: BLE001
             traceback.print_exc()
@@ -308,9 +312,12 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None) -> di
             soloq_mf, _ = _world_net_fns(world)
             rookie_budget, fa_budget, cfg, slots, rounds = _offseason_budgets(settings)
             _set_world_job(job_id, phase="SoloQ + аукцион + трансферы (LLM-менеджер)…")
+            llm = _world_llm()
             report = offseason.run_offseason(
-                world, soloq_match_fn=soloq_mf, llm=_world_llm(), rookie_budget=rookie_budget,
+                world, soloq_match_fn=soloq_mf, llm=llm, rookie_budget=rookie_budget,
                 fa_budget=fa_budget, training_config=cfg, auction_slots=slots, soloq_rounds=rounds)
+            from src.world import commentary
+            commentary.offseason_note(world, report, llm=llm)       # 📻 off-season recap
             save_world(world)
             events = [e for e in (report.get("events") or []) if isinstance(e, dict) and e.get("msg")]
             chronicle = [{"seq": e.get("seq"), "kind": e.get("kind"), "msg": e.get("msg"),
@@ -440,6 +447,7 @@ def world_view_payload(world_id: str) -> dict:
     return {"world_id": w["world_id"], "name": w.get("name"), "season": w["season"],
             "phase": w.get("phase"), "upper": upper, "lower": lower, "ladder": ladder,
             "history": history, "reserves": reserves,
+            "commentary": (w.get("commentary") or [])[-40:],
             "counts": {"players": len(players), "free_agents": len(w.get("free_agents", [])),
                        "streamers": len(w.get("streamers", [])), "rostered": len(pid_team),
                        "reserves": len(reserves)}}

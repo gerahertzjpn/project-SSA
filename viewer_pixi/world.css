@@ -479,3 +479,13 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .sq-d.up { color: #6ee7a8; font-weight: 700; }
 .sq-d.down { color: #ff8a8a; font-weight: 700; }
 .sq-with, .sq-vs { color: #8493a4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Broadcast (commentator) tab */
+.broadcast { display: flex; flex-direction: column; gap: 8px; }
+.bc-host { color: #ff8a5c; font-weight: 800; font-size: 13px; margin-bottom: 4px; }
+.bc-line { display: flex; gap: 12px; background: #14202c; border: 1px solid #244055; border-radius: 10px;
+  padding: 11px 14px; align-items: flex-start; }
+.bc-ic { font-size: 18px; }
+.bc-body { display: flex; flex-direction: column; gap: 3px; }
+.bc-season { color: #8493a4; font-size: 11px; font-weight: 700; }
+.bc-text { color: #e6edf4; font-size: 14px; line-height: 1.45; }

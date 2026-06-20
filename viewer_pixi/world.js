@@ -156,13 +156,14 @@ function switchTab(name) {
   state.tab = name;
   document.querySelectorAll("#tabbar .tab").forEach((b) =>
     b.classList.toggle("is-active", b.dataset.tab === name));
-  ["leagues", "ratings", "schedule", "teams", "history"].forEach((t) =>
+  ["leagues", "ratings", "schedule", "teams", "broadcast", "history"].forEach((t) =>
     show(`panel-${t}`, t === name));
   loadTab(name);
 }
 async function loadTab(name) {
   const panel = el(`panel-${name}`);
   if (name === "history") return renderHistory(state.world ? state.world.history : []);
+  if (name === "broadcast") return renderBroadcast(state.world ? state.world.commentary : []);
   panel.innerHTML = `<div class="muted loading">Загрузка…</div>`;
   try {
     if (name === "leagues") renderLeagues((await api("/leagues")).leagues);
@@ -382,6 +383,21 @@ function renderHistory(history) {
         `<div class="hist-row"><span class="hs">S${s.season}</span>` +
         `<span class="hc">🏆 ${esc(s.upper_champion)}</span>` +
         `<span class="hc lo">↑ ${esc(s.lower_champion)}</span></div>`).join("")}</div>`;
+}
+
+// --------------------------------------------------------------------------- //
+// Tab: 📻 Эфир (commentator)
+// --------------------------------------------------------------------------- //
+const COMMENT_ICON = { season_open: "🎬", season_close: "🏆", offseason: "🔁", match: "🎙️" };
+function renderBroadcast(lines) {
+  lines = lines || [];
+  el("panel-broadcast").innerHTML = !lines.length
+    ? `<div class="muted">Эфир пуст — сыграй сезон или проведи межсезонье.</div>`
+    : `<div class="broadcast"><div class="bc-host">📻 Гарри «Голос» Вольский</div>` +
+      lines.slice().reverse().map((c) =>
+        `<div class="bc-line"><span class="bc-ic">${COMMENT_ICON[c.kind] || "•"}</span>` +
+        `<div class="bc-body"><span class="bc-season">Сезон ${c.season}</span>` +
+        `<span class="bc-text">${esc(c.text)}</span></div></div>`).join("") + `</div>`;
 }
 
 // --------------------------------------------------------------------------- //
