@@ -8,7 +8,7 @@ Every decision goes through a GATE:
     never silent (owner requirement).
 
 So the world runs IDENTICALLY with or without the LLM; the LLM only adds character.
-Model is env-switchable (``WORLD_LLM_MODEL`` → ``REGIONALS_LLM_MODEL`` → opus-4-8) so
+Model is env-switchable (``WORLD_LLM_MODEL`` → ``REGIONALS_LLM_MODEL`` → haiku-4-5 default) so
 the same world can be replayed on Haiku/Sonnet/Opus and compared by eye.
 
 Decision surfaces (WORLD_MODE_SPEC §0-bis):
@@ -29,7 +29,7 @@ from src.world.world import get_player
 
 DEFAULT_MODEL = (os.environ.get("WORLD_LLM_MODEL")
                  or os.environ.get("REGIONALS_LLM_MODEL")
-                 or "claude-opus-4-8")
+                 or "claude-haiku-4-5")     # cheap default (~5x cheaper than Opus); env can override
 
 
 # --------------------------------------------------------------------------- #
