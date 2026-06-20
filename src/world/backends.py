@@ -58,55 +58,74 @@ def _rederive_card(net_id: str) -> None:
                     "--nets", net_id, "--games", "12"], cwd=str(root), check=False)
 
 
-def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None) -> dict:
+def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
+                  *, workers: int = 26, sparring: Optional[list] = None) -> dict:
     """REAL single-net PPO — continue training ONE population net for ~steps_goal steps vs the
-    league opponent mix (frozen ancestors + co-evo snapshot + scripted), then save ONLY this net's
-    checkpoint, merge its registry row, and re-derive its card.
+    league opponent mix (frozen ancestors + scripted), then save ONLY this net's checkpoint, merge
+    its registry row, and re-derive its card.
 
     The LeagueTrainer schedules controlled play in faction-balanced TRIPLES (one net per faction;
     `_triples()` needs >=1 descendant per faction or it yields zero plans). So to continue-train a
     single target we add ONE sparring partner from each OTHER faction — that forms exactly one valid
     triple. The target trains faction-locked in its slot; the two partners co-train in-memory only and
-    are DISCARDED (never saved), so their on-disk checkpoints are untouched. Faithful to the original
-    league recipe, and it isolates the write to the target alone."""
+    are DISCARDED (never saved), so their on-disk checkpoints are untouched.
+
+    ``sparring`` optionally pins the partner net_ids (must be one per OTHER faction) — used to honour
+    the "no nets from other teams as allies" rule (the caller passes own-team / free-agent nets).
+    Default picks the first roster-agnostic candidate per faction.
+
+    ``workers`` fans episodes across a spawn pool; episodes_per_triple is matched to it so every
+    worker gets an episode."""
+    import multiprocessing as mp
     import torch
     from pathlib import Path
-    from src.training.league_trainer import LeagueTrainer, LeagueConfig, FACTIONS
+    from src.training.league_trainer import LeagueTrainer, LeagueConfig, FACTIONS, _init_worker
     from src.training.population_roster import build_population
     from src.training.policy import to_cpu_state_dict
 
     pop = build_population()
-    target = next((d for d in pop if d.net_id == net_id), None)
+    by_id = {d.net_id: d for d in pop}
+    target = by_id.get(net_id)
     if target is None:
         raise ValueError(f"net {net_id!r} is not in the population roster")
 
     # one sparring partner per OTHER faction -> exactly one faction-balanced triple
-    partners = []
-    for fac in FACTIONS:
-        if fac == target.faction:
-            continue
-        cand = next((d for d in pop if d.faction == fac and d.net_id != net_id), None)
-        if cand is None:
-            raise RuntimeError(f"no sparring partner available for faction {fac!r}")
-        partners.append(cand)
+    other_facs = [f for f in FACTIONS if f != target.faction]
+    if sparring is not None:
+        partners = [by_id[s] for s in sparring]
+        have = {p.faction for p in partners}
+        if have != set(other_facs):
+            raise ValueError(f"sparring must be one net per other faction {other_facs}, got {sorted(have)}")
+    else:
+        partners = []
+        for fac in other_facs:
+            cand = next((d for d in pop if d.faction == fac and d.net_id != net_id), None)
+            if cand is None:
+                raise RuntimeError(f"no sparring partner available for faction {fac!r}")
+            partners.append(cand)
     descendants = [target, *partners]
 
     # target_steps_per_net is effectively unbounded here; we stop on the target's own step delta.
     # No co-evo descendant opponents: the only descendants loaded are the controlled triple itself,
     # so the "descendants" opponent branch would have nobody to draw -> train vs frozen ancestors
     # (the rush pressure) + scripted baselines, which is the faithful single-net opponent mix.
-    cfg = LeagueConfig(run_dir=run_dir, workers=1, episodes_per_triple=2,
+    workers = max(1, int(workers))
+    cfg = LeagueConfig(run_dir=run_dir, workers=workers, episodes_per_triple=max(2, workers),
                        target_steps_per_net=1_000_000_000_000,
                        ancestor_opponent_prob=0.7, descendant_opponent_prob=0.0)
     trainer = LeagueTrainer(cfg, descendants=descendants)   # auto-resumes the 3 nets + builds a pool
     fresh_pool = getattr(trainer, "pool_path", None)        # the pool_v0 we just created (cleanup later)
 
+    pool = None
+    if workers > 1:
+        pool = mp.get_context("spawn").Pool(processes=workers, initializer=_init_worker,
+                                            initargs=(cfg.torch_threads,))
     start = int(trainer.steps_by_net[net_id])
     update = 0
     try:
         while int(trainer.steps_by_net[net_id]) - start < steps_goal:
             update += 1
-            trainer.run_update(update, pool=None)
+            trainer.run_update(update, pool=pool)
             if progress_cb:
                 progress_cb(min(steps_goal, int(trainer.steps_by_net[net_id]) - start), steps_goal)
 
@@ -120,6 +139,9 @@ def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None) 
         _merge_registry_steps(run_dir, net_id, int(trainer.steps_by_net[net_id]), update)
         _rederive_card(net_id)
     finally:
+        if pool is not None:
+            pool.close()
+            pool.join()
         # drop the transient pool we wrote in __init__ so the canonical run dir stays clean
         if fresh_pool and Path(fresh_pool).name.startswith("pool_v0") and Path(fresh_pool).exists():
             try:
