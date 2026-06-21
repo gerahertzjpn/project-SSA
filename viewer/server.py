@@ -235,6 +235,13 @@ def start_world_create_job(payload: dict) -> dict:
                            if llm else "SoloQ + драфт + лиги (реальные матчи)…")
             world_season.bootstrap_world(world, seed=seed, play=play_fn, soloq_match_fn=soloq_mf,
                                          draft_pick_fn=draft_fn)
+            # Season 0 is done (still in bootstrap) -> managers author their SEASON-1 playbooks now,
+            # so the plans are ready before the owner plays season 1.
+            from src.world import llm_manager
+            _set_world_job(job_id, phase="Менеджеры пишут плейбуки на сезон 1…")
+            for t in world["teams"].values():
+                if len(t.get("roster", [])) >= 3:
+                    llm_manager.author_playbook(world, t, llm=llm)
             _set_world_job(job_id, phase="Сохраняем…")
             save_world(world)
             _set_world_job(job_id, status="done", phase="Готово", world_id=world_id)
@@ -265,12 +272,15 @@ def start_world_advance_job(world_id: str) -> dict:
                 raise ValueError("идёт раскрытие сезона по дням — сначала доиграй его")
             _, play_fn = _world_net_fns(world)
             llm = _world_llm()
-            if llm is not None:
-                from src.world import llm_manager
+            # Playbooks are normally authored at bootstrap (season 1) / off-season (later seasons);
+            # only fill any team that is somehow still missing one, so we don't overwrite them.
+            from src.world import llm_manager
+            missing = [t for t in world["teams"].values()
+                       if len(t.get("roster", [])) >= 3 and not t.get("tournament_plan")]
+            if missing:
                 _set_world_job(job_id, phase="Менеджеры пишут плейбуки (LLM)…")
-                for t in world["teams"].values():       # L1: one playbook call per team
-                    if len(t.get("roster", [])) >= 3:
-                        llm_manager.author_playbook(world, t, llm=llm)
+                for t in missing:
+                    llm_manager.author_playbook(world, t, llm=llm)
             from src.world import commentary
             open_line = commentary.season_open(world, llm=llm)      # 📻 broadcast: season open
             _set_world_job(job_id, phase="Группы + плей-офф (реальные матчи)…")
@@ -565,12 +575,14 @@ def start_world_live_job(world_id: str) -> dict:
                 raise ValueError("сезон по дням уже идёт — доиграй его до конца")
             _, play_fn = _world_net_fns(world)
             llm = _world_llm()
-            if llm is not None:
-                from src.world import llm_manager
+            # Playbooks come from bootstrap (season 1) / off-season (later); only fill missing ones.
+            from src.world import llm_manager
+            missing = [t for t in world["teams"].values()
+                       if len(t.get("roster", [])) >= 3 and not t.get("tournament_plan")]
+            if missing:
                 _set_world_job(job_id, phase="Менеджеры пишут плейбуки (LLM)…")
-                for t in world["teams"].values():
-                    if len(t.get("roster", [])) >= 3:
-                        llm_manager.author_playbook(world, t, llm=llm)
+                for t in missing:
+                    llm_manager.author_playbook(world, t, llm=llm)
             commentary.season_open(world, llm=llm)        # 📻 season opens (no result yet)
             _set_world_job(job_id, phase="Играем весь сезон нейросетями…")
             rep = live_season.play_and_store(world, play=play_fn)
