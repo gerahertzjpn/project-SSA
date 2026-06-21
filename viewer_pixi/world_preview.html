@@ -160,7 +160,9 @@
     </div>
   </main>
 
-  <!-- Hardcoded data source FIRST (defines window.__PREVIEW__), then the real renderers. -->
+  <!-- Real franchises + emblems (auto-generated from src/regionals/franchises.py), then the
+       hardcoded data source (defines window.__PREVIEW__), then the real renderers. -->
+  <script src="./world_preview_franchises.js"></script>
   <script src="./world_preview.js"></script>
   <script src="./world.js"></script>
 </body>

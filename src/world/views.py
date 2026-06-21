@@ -50,7 +50,14 @@ def team_power(world: dict, team: dict) -> int:
       - a league-FINISH bonus from last season's standing (1st > last).
     Elo is global across leagues (one continuous per-club number, seeded at bootstrap from who
     earned promotion, carried through promotion/relegation) so upper clubs generally outrank lower
-    ones — not absolutely; a strong lower club can overtake by results."""
+    ones — not absolutely; a strong lower club can overtake by results.
+
+    During a day-by-day reveal canonical Elo is held at pre-season (no spoilers), so Power tracks
+    the PROVISIONAL Elo up to the revealed day instead — so the column moves as the season unfolds."""
+    from src.world import live_season
+    rp = live_season.revealed_power(world)
+    if rp is not None:
+        return rp.get(team["team_id"], round(float(team.get("elo", 1000.0))))
     return round(float(team.get("elo", 1000.0)) + _position_bonus(world, team["team_id"]))
 STAGE_LABEL = {
     "ub": "Верхняя сетка", "lb": "Нижняя сетка", "lb_r1": "Нижняя сетка — 1",
@@ -206,6 +213,20 @@ def _team_row(world: dict, t: dict, place: int, stand: Optional[dict] = None) ->
 
 
 def _table(world: dict, league: str, group: Optional[str]) -> list[dict]:
+    from src.world import live_season
+    rev = live_season.revealed(world)
+    if rev is not None:
+        # A day-by-day season is being revealed -> show the standings AS OF the revealed day (at
+        # day 0 everyone is on 0 points; each revealed day fills them in). Group membership is who
+        # is playing this season's group.
+        out = []
+        for i, r in enumerate(rev["standings"][_standings_key(league, group)]):
+            if r["team_id"] not in world["teams"]:
+                continue
+            row = _team_row(world, world["teams"][r["team_id"]], i + 1, r)
+            row["league"], row["group"] = league, group
+            out.append(row)
+        return out
     standings = _last_standings(world, league, group)
     if standings:
         # Promotion/relegation is applied as soon as a season ends, so CURRENT league
@@ -324,9 +345,35 @@ def draft_view(world: dict) -> dict:
     return {"season": d["season"], "kind": d["kind"], "picks": picks, "n": len(picks)}
 
 
+def _live_schedule(world: dict, rev: dict) -> dict:
+    """Schedule view during a day-by-day reveal — only the matches revealed so far (from the live
+    store, since the calendar isn't written until the season is finalised)."""
+    def ev(s):
+        pb = s.get("playbook") or {}
+        return {**s, "played": True, "home_strategy": (pb.get("home") or {}).get("strategy"),
+                "away_strategy": (pb.get("away") or {}).get("strategy")}
+    flat_reg = rev["regular"]["upper"] + rev["regular"]["lower_A"] + rev["regular"]["lower_Z"]
+    regular = [_match_row(world, ev(s), i) for i, s in enumerate(flat_reg, 1)]
+    playoff: dict = {}
+    for s in rev["playoff_series"]:
+        playoff.setdefault(s.get("league"), {}).setdefault(s.get("stage"), []).append(
+            _match_row(world, ev(s), 0))
+    bracket = {}
+    for lg, by_stage in playoff.items():
+        bracket[lg] = [{"stage": st, "label": STAGE_LABEL.get(st, st), "matches": by_stage[st]}
+                       for st in PLAYOFF_STAGE_ORDER if st in by_stage]
+    return {"season": rev["season"], "regular": regular, "bracket": bracket,
+            "n_matches": len(flat_reg) + len(rev["playoff_series"])}
+
+
 def schedule_view(world: dict, season: Optional[int] = None) -> dict:
     """A season's fixtures as a day-by-day list (1 series = 1 day, in calendar order)
-    plus the playoff bracket grouped per league + stage for a bracket render."""
+    plus the playoff bracket grouped per league + stage for a bracket render. During a day-by-day
+    reveal it shows only what's been revealed."""
+    from src.world import live_season
+    rev = live_season.revealed(world)
+    if rev is not None:
+        return _live_schedule(world, rev)
     season = world["season"] if season is None else season
     evs = [e for e in world.get("calendar", []) if e.get("season") == season]
     regular, playoff = [], {}
@@ -353,19 +400,26 @@ def league_matrix(world: dict, season: Optional[int] = None) -> dict:
     """For the 'Таблица' tab: per group, a square head-to-head grid (cell = the
     series score from the row team's view) plus the current standings (place +
     points + map delta). Built from the recorded group-stage calendar; the hidden
-    cores tiebreaker is never exposed — only the resulting place is."""
+    cores tiebreaker is never exposed — only the resulting place is. During a day-by-day reveal the
+    grid + positions reflect only the matches revealed so far."""
+    from src.world import live_season
+    rev = live_season.revealed(world)
     hist = world.get("history") or []
     if season is None:
-        season = hist[-1]["season"] if hist else world.get("season", 0)
+        season = rev["season"] if rev else (hist[-1]["season"] if hist else world.get("season", 0))
+
+    def _series_for(group_key: str) -> list[dict]:
+        if rev is not None:                              # revealed-so-far regular series for the group
+            return rev["regular"].get(group_key, [])
+        return [e for e in world.get("calendar", [])     # last completed season, from the calendar
+                if e.get("season") == season and e.get("stage") == "league" and e.get("played")]
 
     def grid(league: str, group: Optional[str], label: str) -> dict:
         rows = _table(world, league, group)              # ordered by place, with points
         ids = [r["team_id"] for r in rows]
         idset = set(ids)
         h2h: dict = {}
-        for e in world.get("calendar", []):
-            if e.get("season") != season or e.get("stage") != "league" or not e.get("played"):
-                continue
+        for e in _series_for(_standings_key(league, group)):
             h, a = e.get("home"), e.get("away")
             if h not in idset or a not in idset:
                 continue

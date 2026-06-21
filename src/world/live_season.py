@@ -227,6 +227,48 @@ def is_live(world: dict) -> bool:
     return bool(ls) and ls.get("cursor", 0) < ls.get("n_days", 0)
 
 
+def is_revealing(world: dict) -> bool:
+    """A day-by-day season exists (being revealed, or fully revealed but not yet off-season'd).
+    While true, the read-models must show the season SO FAR, not last season's finished data."""
+    return bool(world.get("live_replay"))
+
+
+def revealed_power(world: dict) -> Optional[dict]:
+    """Provisional per-team Power at the revealed day (cheap — no standings recompute), or None."""
+    ls = world.get("live_replay")
+    if not ls:
+        return None
+    pbd = ls["power_by_day"]
+    return pbd[min(ls["cursor"], len(pbd) - 1)]
+
+
+def revealed(world: dict) -> Optional[dict]:
+    """Raw revealed-so-far data the read-models render the CURRENT season from (everything up to the
+    reveal cursor — nothing past it): group standings rows, the revealed regular + playoff series,
+    the bracket, and provisional per-team Power. None when no day-by-day season is active.
+
+    This is what makes EVERY tab day-accurate during a reveal: at cursor 0 nobody has points; each
+    revealed day adds its results. cores_destroyed stays internal (callers must not surface it)."""
+    ls = world.get("live_replay")
+    if not ls:
+        return None
+    c = ls["cursor"]
+    reg = {"upper": [], "lower_A": [], "lower_Z": []}
+    playoff_series = []
+    for day in ls["days"][:c]:
+        if day["phase"] == "regular":
+            for s in day["series"]:
+                reg[s["group"]].append(s)
+        else:
+            playoff_series.extend(day["series"])
+    standings = {g: brackets.standings(ls["groups"][g], reg[g]) for g in reg}
+    power = ls["power_by_day"][min(c, len(ls["power_by_day"]) - 1)]
+    return {"cursor": c, "season": ls["season"], "groups": ls["groups"],
+            "n_regular_days": ls["n_regular_days"], "regular": reg,
+            "playoff_series": playoff_series, "standings": standings, "power": power,
+            "playoff": ls["playoff"]}
+
+
 def _team(world: dict, tid: Optional[str]) -> dict:
     t = world["teams"].get(tid) if tid else None
     return {"team_id": tid, "abbrev": t["abbrev"] if t else tid, "name": t["name"] if t else tid}

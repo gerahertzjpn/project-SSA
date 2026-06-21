@@ -35,26 +35,16 @@
     "Mir", "Nyx", "Orb", "Pyr", "Quo", "Rho", "Syl", "Tau", "Umb", "Vex", "Wol", "Xan", "Ymi", "Zed"];
   const SUF = ["an", "ix", "or", "us", "ai", "en", "ra", "os", "yn", "el", "ar", "io", "ux", "is",
     "ov", "ek", "ym", "ad", "ul", "ez"];
-  const TEAMS22 = [
-    ["Iron Falcons", "IRF"], ["Void Reapers", "VDR"], ["Solar Kings", "SLK"], ["Drift Wolves", "DRW"],
-    ["Neon Serpents", "NES"], ["Crimson Apex", "CRA"], ["Ember Vanguard", "EMV"], ["Storm Kraken", "STK"],
-    ["Nova Drakes", "NVD"], ["Glacier Born", "GLB"], ["Echo Sentinels", "ECS"], ["Pulse Riders", "PLR"],
-    ["Astral Wardens", "ASW"], ["Cobalt Giants", "CBG"], ["Molten Lynx", "MLX"], ["Vortex Hydra", "VXH"],
-    ["Onyx Vipers", "ONV"], ["Prism Raptors", "PRR"], ["Tidal Forge", "TDF"], ["Frost Hollow", "FRH"],
-    ["Ether Cobras", "ETC"], ["Quasar Bulls", "QSB"],
-  ];
-  const COLORS = ["#5aa9ff", "#9b6bff", "#ffb347", "#6ee7a8", "#ff7a7a", "#f15bb5", "#ffd166",
-    "#48c9b0", "#7aa5ff", "#b388ff", "#ff8c69", "#4dd0e1"];
-
   const usedNick = new Set();
   function nick() { let n; do { n = pk(PRE) + pk(SUF); } while (usedNick.has(n)); usedNick.add(n); return n; }
 
   const WID = "world-preview";
 
-  // ---- teams + leagues -------------------------------------------------- //
-  let teams = TEAMS22.map((t, i) => ({
-    team_id: `${WID}-t-fr${String(i).padStart(2, "0")}`, name: t[0], abbrev: t[1],
-    franchise_id: `fr${i}`, color: COLORS[i % COLORS.length], base: ri(965, 1175),
+  // ---- teams + leagues (REAL franchises + emblems from src/regionals/franchises.py) ----- //
+  const PF = (window.__PREVIEW_FRANCHISES__ || []).slice(0, 22);
+  let teams = PF.map((f) => ({
+    team_id: `${WID}-t-${f.franchise_id}`, name: f.name, abbrev: f.abbrev,
+    franchise_id: f.franchise_id, color: f.color, accent: f.accent, base: ri(965, 1175),
   }));
   teams.sort((a, b) => b.base - a.base);
   teams.forEach((t, i) => {
@@ -67,15 +57,8 @@
   const byId = Object.fromEntries(teams.map((t) => [t.team_id, t]));
   const tname = (id) => (byId[id] ? byId[id].name : id);
   const tabbr = (id) => (byId[id] ? byId[id].abbrev : id);
-  // simple generated emblems (the real World uses regionals emblem_svg server-side)
-  function previewEmblem(t) {
-    return `<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">` +
-      `<rect width="120" height="120" rx="22" fill="#11161d"/>` +
-      `<path d="M60 14 L102 30 V64 Q102 96 60 110 Q18 96 18 64 V30 Z" fill="${t.color}"/>` +
-      `<path d="M60 14 L102 30 V64 Q102 96 60 110 Q18 96 18 64 V30 Z" fill="none" stroke="#0c1116" stroke-width="4"/>` +
-      `<text x="60" y="74" font-family="Arial" font-size="36" font-weight="800" text-anchor="middle" fill="#0c1116">${t.abbrev.slice(0, 2)}</text></svg>`;
-  }
-  const EMBLEMS = Object.fromEntries(teams.map((t) => [t.team_id, previewEmblem(t)]));
+  // REAL emblems (emblem_svg output), keyed by the preview team_id — no invented emblems.
+  const EMBLEMS = Object.fromEntries(PF.map((f) => [`${WID}-t-${f.franchise_id}`, f.emblem]));
 
   // ---- players (90: 78 debut, 12 reserve) + Season-0 draft --------------- //
   let players = [];
@@ -283,6 +266,14 @@
       roster: ts.roster.map((pid) => pById[pid].nickname), elo: Math.round(ts.power) };
   }
   function leaguesView() {
+    if (LIVE) {       // a day-by-day reveal: standings AS OF the revealed day (0 points at day 0)
+      const st = lvStandSoFar();
+      const f = (gk, lg, grp) => st[gk].map((r, i) => ({ ...teamRow(r.team_id), place: i + 1,
+        points: r.points, series_wins: r.series_wins, series_losses: r.series_losses,
+        map_diff: r.map_diff, power: r.power, league: lg, group: grp }));
+      return { upper: f("upper", "upper", null), lower_A: f("lower_A", "lower", "A"),
+        lower_Z: f("lower_Z", "lower", "Z") };
+    }
     const ids = Object.keys(snap().teamSnap);
     const f = (lg, grp) => ids.filter((id) => snap().teamSnap[id].league === lg &&
       (grp === undefined || snap().teamSnap[id].group === grp))
@@ -290,14 +281,20 @@
       .map((id, i) => ({ ...teamRow(id), place: i + 1 }));
     return { upper: f("upper"), lower_A: f("lower", "A"), lower_Z: f("lower", "Z") };
   }
+  function lvRevealedRegular() {     // revealed-so-far regular series (for matrix + schedule)
+    const out = [];
+    if (LIVE) LIVE.days.slice(0, LIVE.cursor).forEach((d) => { if (d.phase === "regular") out.push(...d.series); });
+    return out;
+  }
   function matrixView() {
     const lv = leaguesView();
+    const series = LIVE ? lvRevealedRegular() : snap().fixtures.filter((e) => e.stage === "league");
     const grid = (teamsRows, label) => {
       const ids = teamsRows.map((t) => t.team_id);
       const idset = new Set(ids);
       const h2h = {};
-      snap().fixtures.forEach((e) => {
-        if (e.stage !== "league" || !idset.has(e.home) || !idset.has(e.away)) return;
+      series.forEach((e) => {
+        if (!idset.has(e.home) || !idset.has(e.away)) return;
         h2h[`${e.home}|${e.away}`] = { for: e.maps_home, against: e.maps_away, won: e.winner === e.home };
         h2h[`${e.away}|${e.home}`] = { for: e.maps_away, against: e.maps_home, won: e.winner === e.away };
       });
@@ -547,6 +544,22 @@
         played: shown, maps_home: shown ? res.maps_home : null,
         maps_away: shown ? res.maps_away : null, winner: shown ? res.winner : null }; });
   }
+  function lvSchedule() {        // schedule SO FAR during a reveal (matches the real live-aware view)
+    const toRow = (s) => ({ day: 0, league: s.league, stage: s.stage,
+      stage_label: STAGE_LABEL[s.stage] || s.stage, home: s.home, away: s.away,
+      home_abbrev: tabbr(s.home), away_abbrev: tabbr(s.away), home_name: tname(s.home), away_name: tname(s.away),
+      best_of: s.best_of, played: true, maps_home: s.maps_home, maps_away: s.maps_away, winner: s.winner });
+    const regular = lvRevealedRegular().map(toRow);
+    const playoff = {};
+    LIVE.days.slice(0, LIVE.cursor).forEach((d) => { if (d.phase !== "playoff") return;
+      d.series.forEach((s) => { (playoff[s.league] = playoff[s.league] || {});
+        (playoff[s.league][s.stage] = playoff[s.league][s.stage] || []).push(toRow(s)); }); });
+    const order = ["lb_r1", "lb_r2", "ub", "lb", "lb_final", "grand_final"];
+    const bracket = {}; let pn = 0;
+    Object.keys(playoff).forEach((lg) => { bracket[lg] = order.filter((st) => playoff[lg][st])
+      .map((st) => { pn += playoff[lg][st].length; return { stage: st, label: STAGE_LABEL[st] || st, matches: playoff[lg][st] }; }); });
+    return { season: LIVE.season, regular, bracket, n_matches: regular.length + pn };
+  }
   function lvView() {
     if (!LIVE) return { active: false };
     const c = LIVE.cursor, n = LIVE.nDays, playoffStarted = c >= LIVE.nreg;
@@ -569,9 +582,9 @@
     if (url === "/api/world/franchises") {
       const TEMPO = ["balanced", "aggressive", "defensive"], WP = ["economy", "core_rush", "map_control"];
       return { franchises: teams.map((t, i) => ({ franchise_id: t.franchise_id, name: t.name, abbrev: t.abbrev,
-        color: t.color, accent: t.color, manager: `Менеджер ${t.abbrev}`,
+        color: t.color, accent: t.accent || t.color, manager: `Менеджер ${t.abbrev}`,
         persona: `Клуб «${t.name}» — ${pk(["амбициозный", "хладнокровный", "дерзкий", "расчётливый"])}, ставит на ${pk(["молодёжь", "опыт", "агрессию", "экономику"])}.`,
-        default_plan: { tempo: TEMPO[i % 3], win_path: WP[i % 3] }, emblem: "" })) };
+        default_plan: { tempo: TEMPO[i % 3], win_path: WP[i % 3] }, emblem: EMBLEMS[t.team_id] || "" })) };
     }
     if (url === "/api/world/players-pool") return playersPool();
     if (url.startsWith("/api/world/job/")) return { status: "done", world_id: WID, phase: "Готово", summary: lastSummary };
@@ -595,7 +608,8 @@
     if (path === "/live") return { live: LIVE ? lvView() : { active: false } };
     if (path === "/matrix") return matrixView();
     if (path === "/players") return { season: CUR, players: rankedPlayers() };
-    if (path === "/schedule") return { season: CUR, regular: snap().fixtures, bracket: snap().bracket, n_matches: snap().fixtures.length };
+    if (path === "/schedule") return LIVE ? lvSchedule()
+      : { season: CUR, regular: snap().fixtures, bracket: snap().bracket, n_matches: snap().fixtures.length };
     if (path === "/draft") return draftView();
     if (path === "/training") return { jobs: showTraining ? snaps[Math.max(0, CUR - 1)].training : [] };
     if (path.startsWith("/team/")) return { season: CUR, team: teamView(path.slice("/team/".length)) };

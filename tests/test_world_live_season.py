@@ -130,6 +130,24 @@ def test_bracket_reveals_progressively_in_playoffs():
     assert up["gf"]["played"] is False               # grand final still hidden
 
 
+def test_all_read_models_track_the_revealed_day():
+    # Every tab (league table / H2H matrix / schedule / Power) must reflect ONLY the revealed days.
+    from src.world import views
+    w = _played(_bootstrapped())
+    lt0 = views.league_tables(w)
+    assert sum(r["points"] for r in lt0["upper"]) == 0            # day 0: nobody has points
+    assert views.schedule_view(w)["regular"] == []                # nothing scheduled-as-played yet
+    assert all(c is None for g in views.league_matrix(w)["groups"] for row in g["cells"] for c in row)
+    LS.reveal_next_day(w)
+    assert sum(r["points"] for r in views.league_tables(w)["upper"]) == 15   # 5 upper series revealed
+    assert len(views.schedule_view(w)["regular"]) == 11           # day-1 fixtures now shown
+    # fully revealed == the finalised numbers
+    while LS.is_live(w):
+        LS.reveal_next_day(w)
+    assert sum(r["points"] for r in views.league_tables(w)["upper"]) == 135
+    assert len(views.schedule_view(w)["regular"]) == 75
+
+
 def test_watch_returns_a_map_sequence_for_a_next_fixture():
     w = _played(_bootstrapped(seed=6), seed=7)
     fx = LS.view(w)["next_fixtures"][0]

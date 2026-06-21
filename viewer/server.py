@@ -361,14 +361,15 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None) -> di
                           "source": e.get("source"), "team": e.get("team_id")} for e in events][:200]
             st = report.get("stages", {})
             train_jobs = (st.get("training", {}) or {}).get("jobs", []) or []
-            launched = [start_training_job(world_id, j, j.get("player_name"))
-                        for j in train_jobs[:TRAINING_LAUNCH_CAP]]
+            # NO cap on how many trainings launch — every won training runs (serially, via
+            # TRAINING_SEM). The only training limit in this project is MIN_TRAINING_STEPS (800k).
+            launched = [start_training_job(world_id, j, j.get("player_name")) for j in train_jobs]
             _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
                 "next_season": report.get("next_season"),
                 "rookies": (st.get("rookies") or {}).get("n", 0),
                 "training_auctioned": ((st.get("training", {}) or {}).get("auction") or {}).get("awarded", 0),
                 "training_launched": len(launched),
-                "training_skipped": max(0, len(train_jobs) - len(launched)),
+                "training_skipped": 0,
                 "chronicle": chronicle,
                 "log": [e["msg"] for e in events][:50],
             })
@@ -392,11 +393,9 @@ def world_job_status(job_id: str) -> dict:
 TRAINING_JOBS: dict[str, dict] = {}
 TRAINING_JOBS_LOCK = threading.Lock()
 # Each training op spins up a many-worker PPO pool, so only ONE heavy run executes at a time;
-# the rest queue (shown as "queued" in the tracker) and run as the slot frees.
+# the rest queue (shown as "queued" in the tracker) and run as the slot frees. There is NO cap on
+# how many trainings an off-season launches — all of them run, serially.
 TRAINING_SEM = threading.Semaphore(1)
-# Cap how many manager-decided trainings one off-season launches (they queue + run serially);
-# the remainder are reported as skipped rather than silently dropped.
-TRAINING_LAUNCH_CAP = 6
 TRAINING_RUN_DIR = str(FROZEN_POP.parent.parent / "training_runs" / "league_population_v1")
 _OP_METHOD = {"skill_up": "continue_ppo", "meta_adapt": "continue_ppo", "style_spec": "continue_ppo",
               "obedience_tune": "continue_ppo", "teamplay": "cotrain", "create_player": "fork"}

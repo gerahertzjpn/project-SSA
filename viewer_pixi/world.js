@@ -933,7 +933,6 @@ function renderLive(live) {
 
 // Off-season settings + ETA -------------------------------------------------- //
 const STEPS_PER_SEC = 300;   // ~26 воркеров (оценка); серийно (один тяжёлый запуск за раз)
-const LAUNCH_CAP = 6;        // server TRAINING_LAUNCH_CAP
 function fmtMin(min) {
   if (min < 1) return "<1 мин";
   if (min < 90) return `≈ ${Math.round(min)} мин`;
@@ -950,14 +949,14 @@ function osSettings() {
 }
 function updateEta() {
   const s = osSettings();
-  const jobs = Math.min(s.auction.slots, LAUNCH_CAP);
-  const totalSteps = jobs * s.auction.steps_per_slot;           // launched serially after the off-season
+  const jobs = s.auction.slots;                                 // ALL won trainings launch (no cap)
+  const totalSteps = jobs * s.auction.steps_per_slot;           // run serially after the off-season
   const min = totalSteps / STEPS_PER_SEC / 60;
   el("osEta").innerHTML =
     `⏱ Тренировки нейронок: до <b>${jobs}</b> запусков × ${s.auction.steps_per_slot.toLocaleString("ru")} шагов ` +
     `<b>${fmtMin(min)}</b> <span class="muted">(серийно, в фоне после межсезонья — можно следить в трекере)</span>` +
     (s.rookies.n ? `<br>👶 ${s.rookies.n} новичков (форк) — карточки создаются сразу` : "") +
-    (s.auction.slots > LAUNCH_CAP ? `<br><span class="muted">Аукцион разыграет ${s.auction.slots} слотов, но запустится максимум ${LAUNCH_CAP} тренировок (остальное в очередь/банк).</span>` : "");
+    `<br><span class="muted">Лимитов на число тренировок нет — единственный предел 800k шагов на тренировку. Все разыгранные слоты запустятся (по очереди).</span>`;
 }
 function openOsModal() {
   if (!state.worldId || state.busy) return;
