@@ -634,6 +634,23 @@
     };
     return { upper: cols(LIVE.playoff.upper), lower: cols(LIVE.playoff.lower) };
   }
+  const LV_STAGE = { league: "Регулярный сезон", ub: "Плей-офф · Верхняя сетка", lb: "Плей-офф · Нижняя сетка",
+    lb_r1: "Плей-офф · Нижняя сетка, раунд 1", lb_r2: "Плей-офф · Нижняя сетка, раунд 2",
+    lb_final: "Финал нижней сетки", grand_final: "ГРАНД-ФИНАЛ" };
+  function lvMatchCard(c) {
+    const s = LIVE.days[c].series;
+    const power = LIVE.powerByDay[Math.min(c, LIVE.powerByDay.length - 1)];
+    const rows = {}; const st = lvStandSoFar();
+    ["upper", "lower_A", "lower_Z"].forEach((k) => st[k].forEach((r) => (rows[r.team_id] = r)));
+    const info = (tid) => { const row = rows[tid] || {}; const form = [];
+      LIVE.days.slice(0, c).forEach((d) => { const ser = d.series;
+        if (ser.home === tid || ser.away === tid) form.push(ser.winner === tid ? "W" : "L"); });
+      return { team_id: tid, abbrev: tabbr(tid), name: tname(tid), power: power[tid] != null ? power[tid] : 0,
+        place: row.place, points: row.points || 0, series_wins: row.series_wins || 0,
+        series_losses: row.series_losses || 0, map_diff: row.map_diff || 0, form: form.slice(-6) }; };
+    return { stage: s.stage, stage_label: LV_STAGE[s.stage] || s.stage, best_of: s.best_of,
+      league: s.league, group: s.group, day: c + 1, home: info(s.home), away: info(s.away) };
+  }
   function lvView() {
     if (!LIVE) return { active: false };
     const c = LIVE.cursor, n = LIVE.nDays, playoffStarted = c >= LIVE.nreg;
@@ -642,6 +659,7 @@
       day: Math.min(c + 1, n), cursor: c, total_days: n, n_regular_days: LIVE.nreg,
       next_fixtures: c < n ? [lvFixture(LIVE.days[c].series)] : [],
       just_played: c > 0 ? [lvResult(LIVE.days[c - 1].series, false)] : [],
+      match: c < n ? lvMatchCard(c) : null,
       standings: lvStandSoFar(),
       bracket: { upper: playoffStarted ? lvBracketAt(LIVE.playoff.upper, c) : [],
         lower: playoffStarted ? lvBracketAt(LIVE.playoff.lower, c) : [] },

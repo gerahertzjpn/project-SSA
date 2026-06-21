@@ -335,6 +335,39 @@ def _bracket_so_far(world: dict, bracket: Optional[dict], cursor: int) -> list[d
     return out
 
 
+def _match_card(world: dict, ls: dict, cursor: int) -> dict:
+    """Rich card for the NEXT match (the LIVE tab's centerpiece): both teams with their provisional
+    Power, current place/points/record, and recent form — all from what's been revealed so far."""
+    s = ls["days"][cursor]["series"]
+    power = ls["power_by_day"][min(cursor, len(ls["power_by_day"]) - 1)]
+    standings = _standings_so_far(world, ls, cursor)
+    rows = {r["team_id"]: r for g in standings.values() for r in g}
+
+    def info(tid):
+        row = rows.get(tid, {})
+        form = []
+        for d in ls["days"][:cursor]:
+            ser = d["series"]
+            if tid in (ser["home"], ser["away"]):
+                form.append("W" if ser["winner"] == tid else "L")
+        t = world["teams"].get(tid, {})
+        return {"team_id": tid, "abbrev": t.get("abbrev", tid), "name": t.get("name", tid),
+                "power": power.get(tid, round(float(t.get("elo", 1000)))),
+                "place": row.get("place"), "points": row.get("points", 0),
+                "series_wins": row.get("series_wins", 0), "series_losses": row.get("series_losses", 0),
+                "map_diff": row.get("map_diff", 0), "form": form[-6:]}
+
+    return {"stage": s["stage"], "stage_label": STAGE_LABEL_LIVE.get(s["stage"], s["stage"]),
+            "best_of": s.get("best_of"), "league": s.get("league"), "group": s.get("group"),
+            "day": cursor + 1, "home": info(s["home"]), "away": info(s["away"])}
+
+
+STAGE_LABEL_LIVE = {"league": "Регулярный сезон", "ub": "Плей-офф · Верхняя сетка",
+                    "lb": "Плей-офф · Нижняя сетка", "lb_r1": "Плей-офф · Нижняя сетка, раунд 1",
+                    "lb_r2": "Плей-офф · Нижняя сетка, раунд 2", "lb_final": "Финал нижней сетки",
+                    "grand_final": "ГРАНД-ФИНАЛ"}
+
+
 def view(world: dict) -> dict:
     """Spoiler-free snapshot at the current cursor: what's been revealed, the next day's fixtures
     (the only matches you may watch), standings + bracket SO FAR, provisional Power."""
@@ -353,6 +386,7 @@ def view(world: dict) -> dict:
         "day": min(c + 1, n), "cursor": c, "total_days": n, "n_regular_days": ls["n_regular_days"],
         "next_fixtures": next_fixtures,
         "just_played": just_played,
+        "match": _match_card(world, ls, c) if c < n else None,
         "standings": _standings_so_far(world, ls, c),
         "bracket": {
             "upper": _bracket_so_far(world, ls["playoff"]["upper"], c) if playoff_started else [],

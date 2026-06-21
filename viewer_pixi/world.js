@@ -1004,6 +1004,22 @@ function liveStandingsMini(rows, title) {
   }</tbody></table></div>`;
 }
 
+function lvFormDots(form) {
+  return `<span class="lvm-form">${(form || []).map((r) =>
+    `<span class="lvm-dot ${r === "W" ? "w" : "l"}">${r}</span>`).join("") || `<span class="muted">—</span>`}</span>`;
+}
+function lvTeamSide(t, side) {
+  return `<div class="lvm-team ${side}" data-team="${esc(t.team_id)}">` +
+    `${emblem(t.team_id, "xl")}` +
+    `<div class="lvm-nm">${esc(t.name)}</div><div class="lvm-ab">${esc(t.abbrev)}</div>` +
+    `<div class="lvm-stats">` +
+      `<div class="lvm-st"><b>⚡ ${t.power}</b><span>Power</span></div>` +
+      `<div class="lvm-st"><b>${t.place ? "#" + t.place : "—"}</b><span>место</span></div>` +
+      `<div class="lvm-st"><b>${t.points}</b><span>очки</span></div>` +
+      `<div class="lvm-st"><b>${t.series_wins}–${t.series_losses}</b><span>В–П</span></div>` +
+    `</div>` +
+    `<div class="lvm-formrow"><span class="muted">форма</span> ${lvFormDots(t.form)}</div></div>`;
+}
 function renderLive(live) {
   const panel = el("panel-live");
   if (!live || (!live.active && !live.done)) {
@@ -1012,42 +1028,39 @@ function renderLive(live) {
       `день за днём, без подсказок о будущем. Каждый матч можно открыть в <b>прямом эфире</b>.</p></div>`;
     return;
   }
-  const phaseLbl = live.phase === "playoff" ? "Плей-офф" : (live.phase === "done" ? "Сезон раскрыт" : "Регулярный сезон");
   const pct = Math.min(100, Math.round(live.cursor / live.total_days * 100));
-  const fixtures = live.active ? (live.next_fixtures || []) : [];
-  const fxCards = fixtures.map((f) =>
-    `<div class="lv-fx"><span class="lv-fx-stage">${esc(STAGE_LBL[f.stage] || f.stage)}</span>` +
-    `<span class="lv-fx-tm">${emblem(f.home)}${esc(f.home_abbrev)}</span><span class="lv-vs">vs</span>` +
-    `<span class="lv-fx-tm">${emblem(f.away)}${esc(f.away_abbrev)}</span>` +
-    `<button class="ghost lv-watch" data-h="${esc(f.home)}" data-a="${esc(f.away)}">📺 Эфир</button></div>`).join("");
-  const playedToday = (live.just_played || []).map((p) =>
-    `<span class="lv-res ${p.winner === p.home ? "h" : "a"}">${esc(p.home_abbrev)} ${p.maps_home}:${p.maps_away} ${esc(p.away_abbrev)}</span>`).join("");
-  const st = live.standings || {};
-  const brk = live.bracket || {};
-  const hasBracket = (brk.upper || []).length || (brk.lower || []).length;
+  const m = live.match;
+  const jp = (live.just_played || [])[0];
+  const just = jp ? `<div class="lv-just"><span class="muted">Только что:</span> ` +
+    `<b>${esc(jp.home_abbrev)}</b> <span class="lv-just-sc">${jp.maps_home}:${jp.maps_away}</span> <b>${esc(jp.away_abbrev)}</b>` +
+    `<span class="lv-just-w">🏆 ${esc(jp.winner === jp.home ? jp.home_abbrev : jp.away_abbrev)}</span></div>` : "";
+
+  const card = m ? (
+    `<div class="lvm-card">` +
+      `<div class="lvm-ctx"><span class="lvm-stage${m.stage === "grand_final" ? " gf" : ""}">${esc(m.stage_label)}</span>` +
+      `<span class="lvm-bo">Bo${m.best_of}</span><span class="lvm-day">День ${m.day} / ${live.total_days}</span></div>` +
+      `<div class="lvm-vs">${lvTeamSide(m.home, "home")}` +
+        `<div class="lvm-mid"><div class="lvm-vs-big">VS</div>` +
+        `<button class="primary lvm-watch" data-h="${esc(m.home.team_id)}" data-a="${esc(m.away.team_id)}">📺 Смотреть эфир</button>` +
+        `<div class="lvm-hint muted">реальный матч, по картам</div></div>` +
+        `${lvTeamSide(m.away, "away")}</div>` +
+    `</div>`) : `<div class="lv-done">✅ Сезон раскрыт полностью — открой «⟳ Межсезонье», чтобы продолжить.</div>`;
 
   panel.innerHTML =
-    `<div class="lv-bar"><div class="lv-day">🔴 День <b>${live.day}</b> / ${live.total_days} · ${phaseLbl}</div>` +
+    `<div class="lv-bar"><div class="lv-day">🔴 День <b>${live.day}</b> / ${live.total_days}</div>` +
     `<div class="lv-prog"><div class="lv-prog-fill" style="width:${pct}%"></div></div>` +
-    (live.active ? `<button id="lvNext" class="primary">▶ Следующий день</button>` :
-      `<div class="lv-done">✅ Сезон раскрыт — открой «⟳ Межсезонье»</div>`) + `</div>` +
+    (live.active ? `<button id="lvNext" class="primary">▶ Следующий день</button>` : "") + `</div>` +
+    just +
     `<div id="liveBroadcast" class="lv-broadcast">${state.lastBroadcast || ""}</div>` +
-    (playedToday ? `<div class="lv-today"><span class="muted">Сыграно в этот день:</span> ${playedToday}</div>` : "") +
-    (fixtures.length ? `<h4>Следующие матчи <span class="muted">(можно смотреть в прямом эфире)</span></h4>` +
-      `<div class="lv-fxs">${fxCards}</div>` : "") +
-    (hasBracket ? `<h4>Сетка плей-офф <span class="muted">(заполняется по ходу)</span></h4>` +
-      `<div class="lv-brackets">` +
-      ((brk.upper || []).length ? `<div class="bracket-block"><h5>🏆 Верхняя</h5>${liveBracketCols(brk.upper)}</div>` : "") +
-      ((brk.lower || []).length ? `<div class="bracket-block"><h5>Нижняя</h5>${liveBracketCols(brk.lower)}</div>` : "") +
-      `</div>` : "") +
-    `<h4>Таблицы <span class="muted">(обновляются по ходу)</span></h4>` +
-    `<div class="lv-tbls">${liveStandingsMini(st.upper || [], "Высшая")}` +
-    `${liveStandingsMini(st.lower_A || [], "Низшая · A")}${liveStandingsMini(st.lower_Z || [], "Низшая · Z")}</div>`;
+    card +
+    `<p class="lv-foot muted">Таблицы, сетка и расписание обновляются по ходу — на вкладках «Лиги», «Очные», «Расписание».</p>`;
 
   const nx = document.getElementById("lvNext");
   if (nx) nx.addEventListener("click", playNextDay);
-  panel.querySelectorAll(".lv-watch").forEach((b) =>
+  panel.querySelectorAll(".lvm-watch").forEach((b) =>
     b.addEventListener("click", () => watchMatch(b.dataset.h, b.dataset.a)));
+  panel.querySelectorAll(".lvm-team").forEach((tdiv) =>
+    tdiv.addEventListener("click", (e) => { if (e.target.closest(".lvm-watch")) return; openTeam(tdiv.dataset.team); }));
 }
 
 // Off-season settings + ETA -------------------------------------------------- //
