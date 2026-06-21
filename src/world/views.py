@@ -283,13 +283,120 @@ def team_record(world: dict, team_id: str, *, season: Optional[int] = None) -> d
     return {"series_wins": sw, "series_losses": sl, "maps_won": mw, "maps_lost": ml}
 
 
+def _abbr(world: dict, tid: str) -> str:
+    return world["teams"][tid]["abbrev"] if tid in world.get("teams", {}) else tid
+
+
+def _match_summary(world: dict, team_id: str, s: dict, played: bool, season_num: int) -> dict:
+    is_home = s.get("home") == team_id
+    opp = s.get("away") if is_home else s.get("home")
+    mf = (s.get("maps_home") if is_home else s.get("maps_away")) if played else None
+    ma = (s.get("maps_away") if is_home else s.get("maps_home")) if played else None
+    return {"season": season_num, "day": s.get("day"), "stage": s.get("stage"),
+            "stage_label": STAGE_LABEL.get(s.get("stage"), s.get("stage")),
+            "opponent": opp, "opponent_abbrev": _abbr(world, opp), "home": is_home,
+            "played": played, "maps_for": mf, "maps_against": ma,
+            "won": (s.get("winner") == team_id) if played else None}
+
+
+def team_matches(world: dict, team_id: str) -> list[dict]:
+    """The team's matches THIS season: during a day-by-day reveal from the live store (results only
+    for revealed days, upcoming fixtures shown without a result); otherwise the last completed
+    season from the calendar. Sorted by day."""
+    from src.world import live_season
+    rev = live_season.revealed(world)
+    out = []
+    if rev is not None:
+        for s in list(rev["all_regular"]) + list(rev["playoff_series"]):
+            if team_id in (s.get("home"), s.get("away")):
+                out.append(_match_summary(world, team_id, s, s.get("day", 0) <= rev["cursor"], rev["season"]))
+    else:
+        hist = world.get("history") or []
+        season_num = hist[-1]["season"] if hist else world.get("season", 0)
+        for e in world.get("calendar", []):
+            if e.get("season") == season_num and team_id in (e.get("home"), e.get("away")):
+                out.append(_match_summary(world, team_id, e, e.get("played", False), season_num))
+    out.sort(key=lambda m: m.get("day") or 0)
+    return out
+
+
+def _team_transfers(world: dict, team_id: str) -> dict:
+    """In/out moves involving the team from the most recent off-season's transactions."""
+    tx = ((world.get("last_offseason") or {}).get("transactions") or {})
+    incoming = [{"player": s["player"], "kind": s.get("kind"), "bonus": s.get("bonus"), "dir": "signed"}
+                for s in tx.get("signings", []) if s.get("team_id") == team_id]
+    incoming += [{"player": b["player"], "from": b.get("from_team"), "price": b.get("price"), "dir": "bought"}
+                 for b in tx.get("buys", []) if b.get("to_team_id") == team_id]
+    outgoing = [{"player": b["player"], "to": b.get("to_team"), "price": b.get("price"), "dir": "sold"}
+                for b in tx.get("buys", []) if b.get("from_team_id") == team_id]
+    outgoing += [{"player": r["player"], "dir": "released"}
+                 for r in tx.get("releases", []) if r.get("team_id") == team_id]
+    return {"in": incoming, "out": outgoing}
+
+
+def _team_season_history(world: dict, team_id: str) -> list[dict]:
+    """Per-season finish: which league + final place + champion/promotion flags."""
+    out = []
+    for h in world.get("history", []):
+        up, lo = h.get("upper_ranking") or [], h.get("lower_ranking") or []
+        if team_id in up:
+            place, league = up.index(team_id) + 1, "upper"
+        elif team_id in lo:
+            place, league = lo.index(team_id) + 1, "lower"
+        else:
+            continue
+        out.append({"season": h["season"], "league": league, "place": place,
+                    "champion": team_id in (h.get("upper_champion"), h.get("lower_champion")),
+                    "promoted": team_id in (h.get("promoted") or []),
+                    "relegated": team_id in (h.get("relegated") or [])})
+    return out
+
+
+def team_power_ranking(world: dict) -> list[dict]:
+    """GLOBAL power ranking of ALL clubs (not split by league) — for the Teams tab sort."""
+    rows = [{"team_id": t["team_id"], "name": t["name"], "abbrev": t["abbrev"],
+             "league": t.get("league"), "group": t.get("group"),
+             "power": team_power(world, t), "titles": t.get("titles", 0),
+             "treasury": round(float(t.get("treasury", 0))),
+             "roster": [world["players"][pid]["nickname"]
+                        for pid in t.get("roster", []) if pid in world["players"]]}
+            for t in world["teams"].values()]
+    rows.sort(key=lambda r: (-r["power"], r["name"]))
+    for i, r in enumerate(rows, 1):
+        r["rank"] = i
+    return rows
+
+
+def _power_rank_of(world: dict, team_id: str) -> int:
+    for r in team_power_ranking(world):
+        if r["team_id"] == team_id:
+            return r["rank"]
+    return 0
+
+
+def _live_record(world: dict, team_id: str) -> dict:
+    """Series/map W-L from team_matches (so it tracks the revealed day during a live season)."""
+    sw = sl = mw = ml = 0
+    for m in team_matches(world, team_id):
+        if not m["played"]:
+            continue
+        mw += int(m["maps_for"] or 0)
+        ml += int(m["maps_against"] or 0)
+        sw += 1 if m["won"] else 0
+        sl += 0 if m["won"] else 1
+    return {"series_wins": sw, "series_losses": sl, "maps_won": mw, "maps_lost": ml}
+
+
 def team_view(world: dict, team_id: str) -> dict:
-    """Full per-team page: identity, league/group, power curve, trophies, roster, record."""
+    """Full per-team page (liquipedia-style): identity + global power rank, power curve, trophies,
+    roster, THIS season's record (live-aware), played + upcoming matches, transfers, season history."""
     t = world["teams"][team_id]
+    matches = team_matches(world, team_id)
     return {
         "team_id": team_id, "name": t["name"], "abbrev": t["abbrev"],
         "manager": t.get("manager"), "league": t.get("league"), "group": t.get("group"),
         "power": team_power(world, t), "elo": round(float(t.get("elo", 0))),
+        "power_rank": _power_rank_of(world, team_id), "n_teams": len(world["teams"]),
         "titles": t.get("titles", 0),
         "treasury": round(float(t.get("treasury", 0))),
         "elo_history": [round(float(e)) for e in t.get("elo_history", [])],
@@ -297,7 +404,11 @@ def team_view(world: dict, team_id: str) -> dict:
         "certificates": len(t.get("training_certificates", [])),
         "roster": [player_view(world, pid) for pid in t.get("roster", [])
                    if pid in world["players"]],
-        "record": team_record(world, team_id),
+        "record": _live_record(world, team_id),
+        "matches_played": [m for m in matches if m["played"]],
+        "matches_upcoming": [m for m in matches if not m["played"]],
+        "transfers": _team_transfers(world, team_id),
+        "season_history": _team_season_history(world, team_id),
     }
 
 

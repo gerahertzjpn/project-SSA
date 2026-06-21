@@ -185,7 +185,7 @@ async function loadTab(name) {
     else if (name === "schedule") renderSchedule(await api("/schedule"));
     else if (name === "draft") renderDraft(await api("/draft"));
     else if (name === "teams") {
-      renderTeams((await api("/leagues")).leagues);
+      renderTeams((await api("/teams")).ranking);
       if (state.pendingTeam) { const tid = state.pendingTeam; state.pendingTeam = null; loadTeamPage(tid); }
     }
   } catch (e) {
@@ -425,21 +425,24 @@ function renderSchedule(data) {
 // --------------------------------------------------------------------------- //
 // Tab: Команды + страница команды
 // --------------------------------------------------------------------------- //
-function renderTeams(leagues) {
-  const group = (title, rows) => !rows.length ? "" :
-    `<h3 class="tgroup-h">${title}</h3><div class="tcards">${rows.map((t) =>
-      `<button class="tcard" data-team="${esc(t.team_id)}" style="--tc:${state._colors && state._colors[t.team_id] || "#3a4757"}">` +
-        emblem(t.team_id, "lg") +
-        `<div class="tc-body"><div class="tc-nm">${esc(t.name)} <span class="tc-ab">${esc(t.abbrev)}</span></div>` +
-        `<div class="tc-pw">⚡ ${t.power} · ${"★".repeat(Math.min(5, t.titles || 0)) || "без титулов"}</div></div>` +
-        `<span class="tc-go">→</span>` +
-      `</button>`).join("")}</div>`;
+function renderTeams(ranking) {
+  ranking = ranking || [];
+  const lgBadge = (t) => t.league === "upper"
+    ? `<span class="trk-lg up">Высшая</span>`
+    : `<span class="trk-lg lo">Низшая${t.group ? " · " + esc(t.group) : ""}</span>`;
+  const rows = ranking.map((t) =>
+    `<button class="trk-row" data-team="${esc(t.team_id)}">` +
+      `<span class="trk-rank">${t.rank}</span>${emblem(t.team_id, "lg")}` +
+      `<div class="trk-body"><div class="trk-nm">${esc(t.name)} <span class="trk-ab">${esc(t.abbrev)}</span></div>` +
+      `<div class="trk-sub">${lgBadge(t)} · ${"★".repeat(Math.min(5, t.titles || 0)) || "без титулов"} · ` +
+      `<span class="muted">${esc((t.roster || []).join(", "))}</span></div></div>` +
+      `<span class="trk-pw">⚡ ${t.power}</span><span class="tc-go">→</span>` +
+    `</button>`).join("");
   el("panel-teams").innerHTML =
     `<div id="teamPage" class="team-page is-hidden"></div>` +
-    group("Верхняя лига", leagues.upper || []) +
-    group("Нижняя · группа A", leagues.lower_A || []) +
-    group("Нижняя · группа Z", leagues.lower_Z || []);
-  el("panel-teams").querySelectorAll(".tcard").forEach((b) =>
+    `<div class="trk-head">🌍 Глобальный рейтинг силы <span class="muted">(все клубы вместе, без деления на лиги)</span></div>` +
+    `<div class="trk-list">${rows}</div>`;
+  el("panel-teams").querySelectorAll(".trk-row").forEach((b) =>
     b.addEventListener("click", () => openTeam(b.dataset.team)));
 }
 function openTeam(teamId) {
@@ -456,6 +459,19 @@ async function loadTeamPage(teamId) {
   try { renderTeamPage((await api(`/team/${teamId}`)).team); }
   catch (e) { page.innerHTML = `<div class="result-error">Ошибка: ${esc(e.message)}</div>`; }
 }
+function matchLine(m) {
+  const stage = m.stage && m.stage !== "league" ? esc(m.stage_label || m.stage) : "Регулярка";
+  const venue = m.home ? "дома" : "в гостях";
+  if (!m.played) {
+    return `<div class="tpm upcoming"><span class="tpm-day">Д${m.day || "?"}</span>` +
+      `<span class="tpm-st">${stage}</span><span class="tpm-vs">${m.home ? "vs" : "@"} ${emblem(m.opponent)}${esc(m.opponent_abbrev)}</span>` +
+      `<span class="tpm-res muted">— · ${venue}</span></div>`;
+  }
+  const won = m.won;
+  return `<div class="tpm ${won ? "w" : "l"}"><span class="tpm-day">Д${m.day || "?"}</span>` +
+    `<span class="tpm-st">${stage}</span><span class="tpm-vs">${m.home ? "vs" : "@"} ${emblem(m.opponent)}${esc(m.opponent_abbrev)}</span>` +
+    `<span class="tpm-res"><b>${won ? "W" : "L"}</b> ${m.maps_for}:${m.maps_against}</span></div>`;
+}
 function renderTeamPage(t) {
   const page = document.getElementById("teamPage");
   if (!page) return;
@@ -467,23 +483,54 @@ function renderTeamPage(t) {
       `<span class="tpp-rr">${p.rating} ${deltaBadge(p.delta)}</span>` +
       `<span class="tpp-net">${esc(p.net_id || "")}</span>` +
     `</div>`).join("");
+  const played = (t.matches_played || []).slice().reverse();
+  const upcoming = t.matches_upcoming || [];
+  const tf = t.transfers || { in: [], out: [] };
+  const txLine = (x) => {
+    if (x.dir === "bought") return `🟢 куплен <b>${esc(x.player)}</b> у ${esc(x.from || "?")}${x.price != null ? " за " + x.price : ""}`;
+    if (x.dir === "signed") return `🟢 подписан <b>${esc(x.player)}</b> <span class="muted">(${x.kind === "rookie" ? "новичок" : "св. агент"})</span>${x.bonus != null ? ", бонус " + x.bonus : ""}`;
+    if (x.dir === "sold") return `🔴 продан <b>${esc(x.player)}</b> в ${esc(x.to || "?")}${x.price != null ? " за " + x.price : ""}`;
+    return `🔴 отпущен <b>${esc(x.player)}</b>`;
+  };
+  const transfers = [...tf.in, ...tf.out];
+  const histRows = (t.season_history || []).slice().reverse().map((h) =>
+    `<div class="tph-row"><span class="tph-s">Сезон ${h.season}</span>` +
+    `<span class="tph-lg ${h.league}">${h.league === "upper" ? "Высшая" : "Низшая"}</span>` +
+    `<span class="tph-pl">${h.place} место</span>` +
+    `${h.champion ? '<span class="tph-badge ch">🏆 чемпион</span>' : ""}` +
+    `${h.promoted ? '<span class="tph-badge up">↑ повышение</span>' : ""}` +
+    `${h.relegated ? '<span class="tph-badge down">↓ вылет</span>' : ""}</div>`).join("");
+  const sect = (title, body) => `<h4>${title}</h4>${body}`;
   page.innerHTML =
     `<div class="tp-head">` +
       `<button class="ghost tp-close">← к командам</button>` +
       emblem(t.team_id, "xl") +
-      `<h3>${esc(t.name)} <span class="muted">${esc(t.abbrev)} · ${t.league === "upper" ? "Верхняя" : "Нижняя " + (t.group || "")}</span></h3>` +
+      `<h3>${esc(t.name)} <span class="muted">${esc(t.abbrev)} · ${t.league === "upper" ? "Высшая лига" : "Низшая лига " + (t.group || "")}</span></h3>` +
     `</div>` +
     `<div class="tp-stats">` +
+      `<div class="tp-stat"><b>#${t.power_rank || "—"}</b><span>в глоб. рейтинге</span></div>` +
       `<div class="tp-stat"><b>${t.power}</b><span>Power</span></div>` +
-      `<div class="tp-stat"><b>${rec.series_wins || 0}–${rec.series_losses || 0}</b><span>Серии</span></div>` +
-      `<div class="tp-stat"><b>${rec.maps_won || 0}–${rec.maps_lost || 0}</b><span>Карты</span></div>` +
+      `<div class="tp-stat"><b>${rec.series_wins || 0}–${rec.series_losses || 0}</b><span>Серии (сезон)</span></div>` +
+      `<div class="tp-stat"><b>${rec.maps_won || 0}–${rec.maps_lost || 0}</b><span>Карты (сезон)</span></div>` +
       `<div class="tp-stat"><b>${t.titles || 0}</b><span>Титулы</span></div>` +
       `<div class="tp-stat"><b>${t.treasury}</b><span>Казна</span></div>` +
       `<div class="tp-stat"><b>${t.certificates || 0}</b><span>Сертификаты</span></div>` +
     `</div>` +
-    `<div class="tp-power">Динамика Elo (внутри лиги) ${sparkline(t.elo_history, 240, 40)}</div>` +
+    `<div class="tp-power">Динамика Power (Elo) ${sparkline(t.elo_history, 240, 40)}</div>` +
     (t.trophies && t.trophies.length ? `<div class="tp-trophies">🏆 ${t.trophies.map((x) => `S${x.season} ${esc(x.title)}`).join(", ")}</div>` : "") +
-    `<h4>Состав</h4><div class="tp-roster">${roster || "<em>пусто</em>"}</div>`;
+    `<div class="tp-cols">` +
+      `<div class="tp-col">` +
+        sect("Состав", `<div class="tp-roster">${roster || "<em>пусто</em>"}</div>`) +
+        (upcoming.length ? sect(`Предстоящие матчи <span class="muted">(${upcoming.length})</span>`,
+          `<div class="tpm-list">${upcoming.map(matchLine).join("")}</div>`) : "") +
+      `</div>` +
+      `<div class="tp-col">` +
+        sect(`Сыгранные матчи <span class="muted">(${played.length})</span>`,
+          played.length ? `<div class="tpm-list">${played.map(matchLine).join("")}</div>` : `<div class="muted">Пока не сыграно.</div>`) +
+        sect("Трансферы", transfers.length ? `<div class="tp-tx">${transfers.map((x) => `<div class="tp-tx-row">${txLine(x)}</div>`).join("")}</div>` : `<div class="muted">Без движений в последнее межсезонье.</div>`) +
+        sect("История по сезонам", histRows ? `<div class="tph">${histRows}</div>` : `<div class="muted">Ещё не сыграно сезонов.</div>`) +
+      `</div>` +
+    `</div>`;
   page.querySelector(".tp-close").addEventListener("click", () => page.classList.add("is-hidden"));
   page.querySelectorAll(".tp-player").forEach((r) =>
     r.addEventListener("click", () => openPlayer(r.dataset.pid)));

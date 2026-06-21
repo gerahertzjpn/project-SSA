@@ -512,6 +512,12 @@ def world_leagues_payload(world_id: str) -> dict:
     return {"season": w["season"], "leagues": views.league_tables(w)}
 
 
+def world_teams_ranking_payload(world_id: str) -> dict:
+    from src.world import views
+    w = load_world(world_id)
+    return {"season": w["season"], "ranking": views.team_power_ranking(w)}
+
+
 def world_team_payload(world_id: str, team_id: str) -> dict:
     from src.world import views
     w = load_world(world_id)
@@ -1257,6 +1263,7 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/leagues$", world_leagues_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/schedule$", world_schedule_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/matrix$", world_matrix_payload),
+            (r"^/api/world/(?P<wid>world-[0-9a-f]+)/teams$", world_teams_ranking_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/live$", world_live_view_payload),
             (r"^/api/world/(?P<wid>world-[0-9a-f]+)/draft$", world_draft_payload),
         ):

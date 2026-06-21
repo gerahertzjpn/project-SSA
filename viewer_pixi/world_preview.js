@@ -335,13 +335,71 @@
       archetype: pById[p.player_id].archetype, rating: Math.round(pById[p.player_id].ratingHist[0]) }));
     return { season: d.season, kind: d.kind, picks, n: picks.length };
   }
+  function powerOf(id) {
+    if (LIVE) { const p = LIVE.powerByDay[Math.min(LIVE.cursor, LIVE.powerByDay.length - 1)];
+      if (p && p[id] != null) return p[id]; }
+    return Math.round(snap().teamSnap[id].power);
+  }
+  function teamRanking() {
+    const rows = Object.keys(snap().teamSnap).map((id) => { const ts = snap().teamSnap[id];
+      return { team_id: id, name: tname(id), abbrev: tabbr(id), league: ts.league, group: ts.group,
+        power: powerOf(id), titles: ts.titles, treasury: Math.round(ts.treasury),
+        roster: ts.roster.map((pid) => pById[pid].nickname) }; });
+    rows.sort((a, b) => (b.power - a.power) || a.name.localeCompare(b.name));
+    rows.forEach((r, i) => (r.rank = i + 1));
+    return rows;
+  }
+  function teamMatches(id) {
+    const out = [];
+    const add = (s, played) => { const isHome = s.home === id, opp = isHome ? s.away : s.home;
+      out.push({ season: LIVE ? LIVE.season : CUR, day: s.day, stage: s.stage,
+        stage_label: STAGE_LABEL[s.stage] || s.stage, opponent: opp, opponent_abbrev: tabbr(opp), home: isHome, played,
+        maps_for: played ? (isHome ? s.maps_home : s.maps_away) : null,
+        maps_against: played ? (isHome ? s.maps_away : s.maps_home) : null,
+        won: played ? (s.winner === id) : null }); };
+    if (LIVE) {
+      LIVE.days.filter((d) => d.phase === "regular").forEach((d) => { const s = d.series;
+        if (s.home === id || s.away === id) add(s, (s.day || 0) <= LIVE.cursor); });
+      LIVE.days.slice(0, LIVE.cursor).forEach((d) => { if (d.phase !== "playoff") return; const s = d.series;
+        if (s.home === id || s.away === id) add(s, true); });
+    } else {
+      snap().fixtures.forEach((m) => { if (m.home === id || m.away === id) add(m, true); });
+      Object.values(snap().bracket).forEach((cols) => cols.forEach((col) => col.matches.forEach((m) => {
+        if (m.home === id || m.away === id) add(m, true); })));
+    }
+    out.sort((a, b) => (a.day || 0) - (b.day || 0));
+    return out;
+  }
+  function teamTransfers(id) {
+    const tx = snap().transactions || {};
+    const tin = (tx.signings || []).filter((s) => s.team_id === id).map((s) => ({ player: s.player, kind: s.kind, bonus: s.bonus, dir: "signed" }))
+      .concat((tx.buys || []).filter((b) => b.to_team_id === id).map((b) => ({ player: b.player, from: b.from_team, price: b.price, dir: "bought" })));
+    const tout = (tx.buys || []).filter((b) => b.from_team_id === id).map((b) => ({ player: b.player, to: b.to_team, price: b.price, dir: "sold" }))
+      .concat((tx.releases || []).filter((r) => r.team_id === id).map((r) => ({ player: r.player, dir: "released" })));
+    return { in: tin, out: tout };
+  }
+  function teamSeasonHistory(id) {
+    const out = [];
+    for (let s = 0; s < CUR; s++) { const snp = snaps[s], ts = snp.teamSnap[id]; if (!ts) continue;
+      out.push({ season: s, league: ts.league, place: ts.place,
+        champion: id === snp.champ.upper_champion || id === snp.champ.lower_champion,
+        promoted: (snp.champ.promoted || []).includes(id), relegated: (snp.champ.relegated || []).includes(id) }); }
+    return out;
+  }
   function teamView(id) {
     const ts = snap().teamSnap[id];
+    const matches = teamMatches(id);
+    const rk = teamRanking().find((r) => r.team_id === id);
+    const rec = { series_wins: 0, series_losses: 0, maps_won: 0, maps_lost: 0 };
+    matches.forEach((m) => { if (!m.played) return; rec.maps_won += m.maps_for;
+      rec.maps_lost += m.maps_against; m.won ? rec.series_wins++ : rec.series_losses++; });
     return { team_id: id, name: tname(id), abbrev: tabbr(id), manager: "Менеджер", league: ts.league,
-      group: ts.group, power: Math.round(ts.power), titles: ts.titles, treasury: Math.round(ts.treasury),
-      elo_history: ts.eloHist, trophies: ts.trophies, certificates: ts.certs,
-      roster: ts.roster.map((pid) => playerView(pById[pid])),
-      record: { series_wins: ts.rec.sw, series_losses: ts.rec.sl, maps_won: ts.rec.mw, maps_lost: ts.rec.ml } };
+      group: ts.group, power: powerOf(id), power_rank: rk ? rk.rank : 0, n_teams: 22,
+      titles: ts.titles, treasury: Math.round(ts.treasury), elo_history: ts.eloHist,
+      trophies: ts.trophies, certificates: ts.certs, roster: ts.roster.map((pid) => playerView(pById[pid])),
+      record: rec, matches_played: matches.filter((m) => m.played),
+      matches_upcoming: matches.filter((m) => !m.played),
+      transfers: teamTransfers(id), season_history: teamSeasonHistory(id) };
   }
   function playerPage(pid) {
     const p = pById[pid]; if (!p) return null;
@@ -609,6 +667,7 @@
     if (path === "/leagues") return { season: CUR, leagues: leaguesView() };
     if (path === "/live") return { live: LIVE ? lvView() : { active: false } };
     if (path === "/matrix") return matrixView();
+    if (path === "/teams") return { season: CUR, ranking: teamRanking() };
     if (path === "/players") return { season: CUR, players: rankedPlayers() };
     if (path === "/schedule") return LIVE ? lvSchedule()
       : { season: CUR, regular: snap().fixtures, bracket: snap().bracket, n_matches: snap().fixtures.length };

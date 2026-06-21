@@ -421,10 +421,58 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .tpp-rr { font-weight: 800; color: #8fb8ff; }
 .tpp-net { color: #6b7886; font-family: ui-monospace, monospace; font-size: 10px; }
 
+/* Teams — global power ranking list */
+.trk-head { font-size: 15px; font-weight: 800; color: #e6edf4; margin: 4px 0 12px; }
+.trk-list { display: flex; flex-direction: column; gap: 5px; }
+.trk-row { display: flex; align-items: center; gap: 11px; width: 100%; text-align: left;
+  background: #11161d; border: 1px solid #1d242e; border-radius: 10px; padding: 8px 12px; cursor: pointer; color: inherit; }
+.trk-row:hover { background: #1b2530; border-color: #2f6df0; }
+.trk-rank { font-size: 18px; font-weight: 900; color: #6b7886; min-width: 30px; text-align: center; }
+.trk-body { flex: 1; min-width: 0; }
+.trk-nm { font-weight: 800; color: #e6edf4; }
+.trk-ab { color: #8493a4; font-weight: 600; font-size: 12px; }
+.trk-sub { font-size: 11px; color: #8493a4; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trk-lg { font-weight: 800; border-radius: 999px; padding: 1px 8px; font-size: 10px; }
+.trk-lg.up { background: rgba(110, 231, 168, .12); color: #6ee7a8; }
+.trk-lg.lo { background: rgba(143, 184, 255, .12); color: #8fb8ff; }
+.trk-pw { font-weight: 900; color: #ffd58a; font-size: 15px; white-space: nowrap; }
+
+/* Team page — liquipedia-style detail */
+.tp-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 6px; }
+.tp-cols h4 { margin: 14px 0 8px; color: #cdd9e6; }
+.tp-cols .tp-col > h4:first-child { margin-top: 0; }
+.tpm-list { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; }
+.tpm { display: grid; grid-template-columns: 38px 1fr auto; align-items: center; gap: 8px;
+  background: #161b22; border: 1px solid #1d242e; border-left-width: 3px; border-radius: 7px; padding: 6px 9px; font-size: 12px; }
+.tpm.w { border-left-color: #2c8a5a; }
+.tpm.l { border-left-color: #a33; }
+.tpm.upcoming { border-left-color: #2a3a4a; opacity: .8; }
+.tpm-day { color: #6b7886; font-weight: 800; }
+.tpm-st { color: #8493a4; }
+.tpm-vs { display: inline-flex; align-items: center; gap: 5px; font-weight: 700; color: #cdd9e6; justify-self: start; }
+.tpm-vs .tlogo svg { width: 16px; height: 16px; }
+.tpm-res { font-weight: 800; color: #8fb8ff; white-space: nowrap; }
+.tpm.w .tpm-res b { color: #6ee7a8; }
+.tpm.l .tpm-res b { color: #ff8a8a; }
+.tp-tx { display: flex; flex-direction: column; gap: 4px; }
+.tp-tx-row { background: #161b22; border-radius: 7px; padding: 6px 10px; font-size: 12px; color: #cdd9e6; }
+.tph { display: flex; flex-direction: column; gap: 4px; }
+.tph-row { display: flex; align-items: center; gap: 9px; background: #161b22; border-radius: 7px; padding: 6px 10px; font-size: 12px; flex-wrap: wrap; }
+.tph-s { font-weight: 800; color: #cdd9e6; }
+.tph-lg { font-weight: 700; border-radius: 999px; padding: 1px 7px; font-size: 10px; }
+.tph-lg.upper { background: rgba(110, 231, 168, .12); color: #6ee7a8; }
+.tph-lg.lower { background: rgba(143, 184, 255, .12); color: #8fb8ff; }
+.tph-pl { color: #aeb9c6; }
+.tph-badge { font-size: 11px; font-weight: 700; }
+.tph-badge.ch { color: #ffd58a; }
+.tph-badge.up { color: #6ee7a8; }
+.tph-badge.down { color: #ff8a8a; }
+
 @media (max-width: 720px) {
   .ltable .lt-roster, .rt-sp, .rt-ar { display: none; }
   .tp-player { grid-template-columns: auto 1fr auto; }
   .tpp-ar, .tpp-net { display: none; }
+  .tp-cols { grid-template-columns: 1fr; }
 }
 
 /* Off-season settings modal */
