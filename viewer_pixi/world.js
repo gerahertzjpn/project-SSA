@@ -69,9 +69,19 @@ function sparkline(values, w = 88, h = 24) {
     `<polyline points="${pts}" fill="none" stroke-width="1.8" /></svg>`;
 }
 const teamLabelFA = (p) => p.team || (p.role === "streamer" ? "Стример" : "Свободный агент");
+let _emblemSeq = 0;
+function uniqSvg(svg) {
+  // The same emblem SVG is inlined many times across the (always-present) tab panels. Its internal
+  // clipPath/gradient ids would then collide — duplicate ids make url(#id) resolve to the FIRST
+  // match (often inside a hidden panel), so e.g. the "split" clip fails and the dark half spills.
+  // Suffix every id + url(#…) reference with a unique counter per render so each instance is self-contained.
+  if (!svg || svg.indexOf("id=") === -1) return svg || "";
+  const n = ++_emblemSeq;
+  return svg.replace(/id="([^"]+)"/g, (m, id) => `id="${id}-${n}"`)
+            .replace(/url\(#([^)]+)\)/g, (m, id) => `url(#${id}-${n})`);
+}
 function emblem(teamId, cls) {
-  const svg = state.emblems && state.emblems[teamId];
-  return `<span class="tlogo ${cls || ""}">${svg || ""}</span>`;
+  return `<span class="tlogo ${cls || ""}">${uniqSvg(state.emblems && state.emblems[teamId])}</span>`;
 }
 
 // --------------------------------------------------------------------------- //
@@ -104,7 +114,7 @@ function renderCards() {
     cb.addEventListener("change", () => toggle(c.franchise_id, cb.checked));
     const emblem = document.createElement("span");
     emblem.className = "team-emblem";
-    emblem.innerHTML = c.emblem || "";
+    emblem.innerHTML = uniqSvg(c.emblem);
     const body = document.createElement("div");
     body.className = "team-body";
     body.innerHTML =
@@ -245,26 +255,54 @@ function renderLeagues(leagues) {
 // Playoff bracket GRAPH (a real tree with connectors, not a table) — used by the Лиги→Плей-офф
 // segment and the Расписание tab. `bracket` = {upper:[{stage,label,matches}], lower:[...]}.
 function bgNode(m) {
-  const winH = m.played && m.winner === m.home, winA = m.played && m.winner === m.away;
+  const tbd = (ab) => !ab || ab === "TBD";
+  const winH = m.played && m.winner && m.winner === m.home, winA = m.played && m.winner && m.winner === m.away;
   const side = (id, ab, sc, win) =>
-    `<div class="bg-side${win ? " win" : ""}">${id ? emblem(id) : ""}<span class="bg-tm">${esc(ab || "—")}</span>` +
-    `<span class="bg-sc">${m.played ? sc : "·"}</span></div>`;
-  return `<div class="bg-node${m.played ? " played" : ""}" title="Bo${m.best_of || 5}">` +
+    `<div class="bg-side${win ? " win" : ""}${tbd(ab) ? " tbd" : ""}">${id && !tbd(ab) ? emblem(id) : `<span class="bg-dot"></span>`}` +
+    `<span class="bg-tm">${esc(tbd(ab) ? "TBD" : ab)}</span><span class="bg-sc">${m.played ? sc : "·"}</span></div>`;
+  return `<div class="bg-node${m.played ? " played" : ""}" data-key="${esc(m.key || "")}" data-from="${esc((m.from || []).join(","))}" title="Bo${m.best_of || 5}">` +
     side(m.home, m.home_abbrev, m.maps_home, winH) +
     side(m.away, m.away_abbrev, m.maps_away, winA) + `</div>`;
 }
 function bgCols(cols) {
   if (!cols || !cols.length) return `<div class="muted">Ещё не начался.</div>`;
-  return `<div class="bgraph">${cols.map((col) =>
+  return `<div class="bgraph"><svg class="bg-svg" aria-hidden="true"></svg>${cols.map((col) =>
     `<div class="bg-col"><div class="bg-stage">${esc(col.label || col.stage)}</div>` +
     `<div class="bg-bouts">${(col.matches || []).map(bgNode).join("")}</div></div>`).join("")}</div>`;
 }
 function renderBracketGraph(bracket) {
   const up = bracket.upper || [], lo = bracket.lower || [];
   if (!up.length && !lo.length) return `<div class="muted" style="margin-top:14px">Плей-офф ещё не начался — он откроется, когда сыграется регулярка.</div>`;
+  // connectors are drawn after the HTML is in the DOM (see drawBracketConnectors)
+  setTimeout(drawBracketConnectors, 0);
   return `<div class="bg-block"><h4 class="bg-h">🏆 Верхняя лига</h4>${bgCols(up)}</div>` +
-    `<div class="bg-block"><h4 class="bg-h">Нижняя лига <span class="muted">(повышение)</span></h4>${bgCols(lo)}</div>`;
+    `<div class="bg-block"><h4 class="bg-h">Нижняя лига <span class="muted">(2 повышаются)</span></h4>${bgCols(lo)}</div>`;
 }
+// Draw L-shaped connector lines from each feeder match to the one it flows into (read from
+// data-key / data-from), measured from the rendered node positions — a real bracket tree.
+function drawBracketConnectors() {
+  document.querySelectorAll(".bgraph").forEach((g) => {
+    const svg = g.querySelector(".bg-svg"); if (!svg) return;
+    const gr = g.getBoundingClientRect();
+    const nodes = {};
+    g.querySelectorAll(".bg-node").forEach((n) => { if (n.dataset.key) nodes[n.dataset.key] = n; });
+    let paths = "";
+    g.querySelectorAll(".bg-node").forEach((n) => {
+      const tr = n.getBoundingClientRect();
+      const tx = tr.left - gr.left, ty = tr.top - gr.top + tr.height / 2;
+      (n.dataset.from || "").split(",").filter(Boolean).forEach((fk) => {
+        const f = nodes[fk]; if (!f) return;
+        const fr = f.getBoundingClientRect();
+        const fx = fr.right - gr.left, fy = fr.top - gr.top + fr.height / 2;
+        const mx = fx + Math.max(12, (tx - fx) / 2);
+        paths += `<path d="M ${fx} ${fy} H ${mx} V ${ty} H ${tx}" />`;
+      });
+    });
+    svg.setAttribute("width", g.scrollWidth); svg.setAttribute("height", g.scrollHeight);
+    svg.innerHTML = paths;
+  });
+}
+window.addEventListener("resize", () => { clearTimeout(window._bgRz); window._bgRz = setTimeout(drawBracketConnectors, 120); });
 
 // --------------------------------------------------------------------------- //
 // Tab: Очные — H2H matrix (who-beat-whom + score) + current positions
@@ -752,14 +790,14 @@ function renderHeader(w) {
   // Off-season is MANDATORY between seasons: after a played season you must run it before the next.
   const due = w.phase === "offseason_due";
   const live = w.live && w.live.active;        // a day-by-day season is in progress
-  show("nextDayBtn", !!live);
+  show("nextDayBtn", false);                   // the «Следующий день» button lives ONLY on the LIVE tab
   show("liveProgress", !!live);
   show("advanceBtn", !live);
   show("liveStartBtn", !live && !due);
   if (live) {
     const ph = w.live.phase === "playoff" ? "плей-офф" : "регулярка";
-    el("liveProgress").textContent = `🔴 День ${w.live.day}/${w.live.total_days} · ${ph}`;
-    el("nextDayBtn").disabled = state.busy;
+    el("liveProgress").innerHTML = `🔴 День ${w.live.day}/${w.live.total_days} · ${ph} <span class="lp-go">→ LIVE</span>`;
+    el("liveProgress").onclick = () => switchTab("live");
   }
   el("advanceBtn").disabled = state.busy || due;
   el("liveStartBtn").disabled = state.busy || due;

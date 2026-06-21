@@ -456,6 +456,43 @@ def draft_view(world: dict) -> dict:
     return {"season": d["season"], "kind": d["kind"], "picks": picks, "n": len(picks)}
 
 
+def _live_bracket(world: dict, rev: dict) -> dict:
+    """The playoff bracket in schedule shape — shown FROM DAY 0 with TBD slots and filled
+    progressively: round-1 SEEDS appear only once the regular season is fully revealed (never a
+    spoiler), later matchups + results appear as their feeder games are revealed."""
+    from src.world import live_season
+    cursor, nreg = rev["cursor"], rev["n_regular_days"]
+
+    def slot(ref, nodes):
+        if isinstance(ref, str):                     # a concrete seed — hide until the regular is done
+            return ref if cursor >= nreg else None
+        return live_season._resolve(ref, nodes, max_day=cursor)
+
+    def cols(bracket):
+        nodes = bracket["nodes"]
+        by_stage: dict = {}
+        for key in bracket["order"]:
+            n = nodes[key]
+            home, away = slot(n["home"], nodes), slot(n["away"], nodes)
+            res = n.get("result")
+            shown = bool(res) and n.get("day", 0) <= cursor
+            feeders = [(r.get("w") or r.get("l")) for r in (n["home"], n["away"]) if isinstance(r, dict)]
+            by_stage.setdefault(n["stage"], []).append({
+                "stage": n["stage"], "stage_label": STAGE_LABEL.get(n["stage"], n["stage"]),
+                "key": key, "from": feeders,            # for the bracket graph's connector lines
+                "home": home, "away": away,
+                "home_abbrev": _abbr(world, home) if home else "TBD",
+                "away_abbrev": _abbr(world, away) if away else "TBD",
+                "best_of": n.get("best_of"), "played": shown,
+                "maps_home": res["maps_home"] if shown else None,
+                "maps_away": res["maps_away"] if shown else None,
+                "winner": res["winner"] if shown else None})
+        return [{"stage": st, "label": STAGE_LABEL.get(st, st), "matches": by_stage[st]}
+                for st in PLAYOFF_STAGE_ORDER if st in by_stage]
+
+    return {"upper": cols(rev["playoff"]["upper"]), "lower": cols(rev["playoff"]["lower"])}
+
+
 def _live_schedule(world: dict, rev: dict) -> dict:
     """Schedule during a day-by-day reveal. The full regular fixture list is shown FROM DAY 0
     (who plays whom on which day) — results appear only once a fixture's day is revealed. The
@@ -472,15 +509,8 @@ def _live_schedule(world: dict, rev: dict) -> dict:
                 "home_strategy": (pb.get("home") or {}).get("strategy") if played else None,
                 "away_strategy": (pb.get("away") or {}).get("strategy") if played else None}
     regular = [_match_row(world, ev(s), s.get("day", 0)) for s in rev["all_regular"]]
-    playoff: dict = {}
-    for s in rev["playoff_series"]:                  # revealed playoff series only (matchups are TBD)
-        playoff.setdefault(s.get("league"), {}).setdefault(s.get("stage"), []).append(
-            _match_row(world, ev(s), s.get("day", 0)))
-    bracket = {}
-    for lg, by_stage in playoff.items():
-        bracket[lg] = [{"stage": st, "label": STAGE_LABEL.get(st, st), "matches": by_stage[st]}
-                       for st in PLAYOFF_STAGE_ORDER if st in by_stage]
-    return {"season": rev["season"], "regular": regular, "bracket": bracket,
+    # the bracket is shown from day 0 with TBD slots, filling in as the playoff is revealed
+    return {"season": rev["season"], "regular": regular, "bracket": _live_bracket(world, rev),
             "n_matches": len(rev["all_regular"]) + len(rev["playoff_series"])}
 
 

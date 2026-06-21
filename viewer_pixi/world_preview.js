@@ -52,7 +52,7 @@
     t.group = i < 10 ? null : ((i - 10) % 2 === 0 ? "A" : "Z");
     t.power = i < 10 ? t.base + 120 : t.base;     // upper seeded above lower (earned promotion)
     t.titles = 0; t.trophies = []; t.eloHist = [Math.round(t.power)]; t.certs = 0;
-    t.treasury = t.league === "upper" ? 600 : 400; t.roster = [];
+    t.treasury = t.league === "upper" ? 300 : 200; t.roster = [];
   });
   const byId = Object.fromEntries(teams.map((t) => [t.team_id, t]));
   const tname = (id) => (byId[id] ? byId[id].name : id);
@@ -371,7 +371,8 @@
     return out;
   }
   function teamTransfers(id) {
-    const tx = snap().transactions || {};
+    if (CUR === 0) return { in: [], out: [] };     // no off-season has happened yet -> no transfers
+    const tx = (snaps[Math.max(0, CUR - 1)] || {}).transactions || {};
     const tin = (tx.signings || []).filter((s) => s.team_id === id).map((s) => ({ player: s.player, kind: s.kind, bonus: s.bonus, dir: "signed" }))
       .concat((tx.buys || []).filter((b) => b.to_team_id === id).map((b) => ({ player: b.player, from: b.from_team, price: b.price, dir: "bought" })));
     const tout = (tx.buys || []).filter((b) => b.from_team_id === id).map((b) => ({ player: b.player, to: b.to_team, price: b.price, dir: "sold" }))
@@ -610,15 +611,28 @@
         maps_home: played ? s.maps_home : null, maps_away: played ? s.maps_away : null,
         winner: played ? s.winner : null }; };
     const regular = LIVE.days.filter((d) => d.phase === "regular").map((d) => toRow(d.series));
-    const playoff = {};
-    LIVE.days.slice(0, c).forEach((d) => { if (d.phase !== "playoff") return; const s = d.series;
-      (playoff[s.league] = playoff[s.league] || {});
-      (playoff[s.league][s.stage] = playoff[s.league][s.stage] || []).push(toRow(s)); });
-    const order = ["lb_r1", "lb_r2", "ub", "lb", "lb_final", "grand_final"];
-    const bracket = {}; let pn = 0;
-    Object.keys(playoff).forEach((lg) => { bracket[lg] = order.filter((st) => playoff[lg][st])
-      .map((st) => { pn += playoff[lg][st].length; return { stage: st, label: STAGE_LABEL[st] || st, matches: playoff[lg][st] }; }); });
-    return { season: LIVE.season, regular, bracket, n_matches: regular.length + pn };
+    return { season: LIVE.season, regular, bracket: lvBracketSched(),
+      n_matches: regular.length + LIVE.days.filter((d) => d.phase === "playoff" && d.day <= c).length };
+  }
+  // Full bracket structure with TBD slots (seeds appear only after the regular is fully revealed) +
+  // feeder keys for the connector graph — mirrors views._live_bracket.
+  function lvBracketSched() {
+    if (!LIVE) return {};
+    const c = LIVE.cursor, nreg = LIVE.nreg;
+    const cols = (br) => { const nodes = br.nodes;
+      const slot = (ref) => (typeof ref === "string") ? (c >= nreg ? ref : null) : lvResolve(ref, nodes, c);
+      const byStage = {};
+      br.order.forEach((k) => { const n = nodes[k], h = slot(n.home), a = slot(n.away), res = n.result;
+        const shown = !!res && (n.day || 0) <= c;
+        const feeders = [n.home, n.away].filter((r) => typeof r === "object").map((r) => r.w || r.l);
+        (byStage[n.stage] = byStage[n.stage] || []).push({ stage: n.stage, stage_label: STAGE_LABEL[n.stage] || n.stage,
+          key: k, from: feeders, home: h, away: a, home_abbrev: h ? tabbr(h) : "TBD", away_abbrev: a ? tabbr(a) : "TBD",
+          best_of: 5, played: shown, maps_home: shown ? res.maps_home : null, maps_away: shown ? res.maps_away : null,
+          winner: shown ? res.winner : null }); });
+      const order = ["lb_r1", "lb_r2", "ub", "lb", "lb_final", "grand_final"];
+      return order.filter((st) => byStage[st]).map((st) => ({ stage: st, label: STAGE_LABEL[st] || st, matches: byStage[st] }));
+    };
+    return { upper: cols(LIVE.playoff.upper), lower: cols(LIVE.playoff.lower) };
   }
   function lvView() {
     if (!LIVE) return { active: false };

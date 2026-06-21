@@ -31,8 +31,8 @@ class EconomyConfig:
     upper_playoff_bonus: int = 800
     lower_playoff_bonus: int = 500
     # Starting treasury seed at the first regular season (Season 0 gives none).
-    upper_seed_treasury: int = 600
-    lower_seed_treasury: int = 400
+    upper_seed_treasury: int = 300
+    lower_seed_treasury: int = 200
     # Salary model.
     salary_base: float = 50.0       # salary of a 1000-rating, average-attr player
     salary_alpha: float = 0.25      # EWMA smoothing (slow-moving salaries)

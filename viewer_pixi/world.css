@@ -360,32 +360,30 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .lt-ab { display: flex; align-items: center; gap: 7px; font-weight: 800; color: #cdd9e6; }
 
 /* Schedule — 2-row match cards with logos */
-/* Playoff bracket GRAPH (left-to-right tree with connectors) */
+/* Playoff bracket GRAPH (real tree: columns + SVG connector lines) */
 .bg-block { margin: 10px 0 24px; }
 .bg-h { margin: 0 0 10px; color: #cdd9e6; font-size: 14px; }
-.bgraph { display: flex; overflow-x: auto; padding: 4px 0 14px; align-items: stretch; }
-.bg-col { display: flex; flex-direction: column; min-width: 172px; padding: 0 24px; position: relative; }
+.bgraph { position: relative; display: flex; overflow-x: auto; padding: 4px 0 14px; align-items: stretch; }
+.bg-svg { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible; }
+.bg-svg path { fill: none; stroke: #33455a; stroke-width: 2; }
+.bg-col { position: relative; z-index: 1; display: flex; flex-direction: column; min-width: 184px; padding: 0 26px; }
 .bg-stage { text-align: center; font-size: 11px; font-weight: 800; color: #8493a4;
   text-transform: uppercase; letter-spacing: .4px; margin-bottom: 12px; }
-.bg-bouts { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 16px; }
+.bg-bouts { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 18px; }
 .bg-node { background: #11161d; border: 1px solid #2a323d; border-radius: 9px; overflow: hidden;
-  position: relative; box-shadow: 0 2px 8px rgba(0, 0, 0, .25); }
-.bg-node.played { border-color: #34404e; }
-.bg-side { display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 7px;
-  padding: 7px 11px; font-size: 12px; }
+  box-shadow: 0 2px 10px rgba(0, 0, 0, .3); }
+.bg-node.played { border-color: #3a4756; }
+.bg-side { display: grid; grid-template-columns: 18px 1fr auto; align-items: center; gap: 8px;
+  padding: 8px 11px; font-size: 12px; }
 .bg-side + .bg-side { border-top: 1px solid #1a212b; }
-.bg-side .tlogo svg { width: 18px; height: 18px; }
-.bg-tm { font-weight: 700; color: #aeb9c6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-side .tlogo svg { width: 17px; height: 17px; }
+.bg-dot { width: 10px; height: 10px; border-radius: 3px; background: #232c38; }
+.bg-tm { font-weight: 700; color: #cdd9e6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-side.tbd .bg-tm { color: #5a6675; font-weight: 600; }
+.bg-side.win { background: rgba(110, 231, 168, .07); }
 .bg-side.win .bg-tm { color: #6ee7a8; }
-.bg-side.win { background: rgba(110, 231, 168, .06); }
 .bg-sc { font-weight: 900; color: #6b7886; min-width: 14px; text-align: right; }
 .bg-side.win .bg-sc { color: #8fb8ff; }
-.bg-col:not(:last-child) .bg-node::after { content: ""; position: absolute; right: -24px; top: 50%;
-  width: 24px; height: 2px; background: #2c3a48; }
-.bg-col:not(:first-child) .bg-node::before { content: ""; position: absolute; left: -24px; top: 50%;
-  width: 24px; height: 2px; background: #2c3a48; }
-.bg-col:not(:first-child)::before { content: ""; position: absolute; left: 0; top: 38px; bottom: 14px;
-  border-left: 2px solid #1d2935; }
 
 .sched-lg { margin: 14px 0 8px; color: #cdd9e6; font-size: 14px; }
 .sched-note { font-size: 12px; margin: 6px 0 10px; }
@@ -638,8 +636,10 @@ button.ghost.required { border-color: #2f6df0; color: #fff; background: #18222f;
 .dp-rr { color: #8fb8ff; font-weight: 800; }
 
 /* Day-by-day LIVE season */
-.live-progress { font-weight: 800; color: #ff8a8a; font-size: 13px; align-self: center;
+.live-progress { font-weight: 800; color: #ff8a8a; font-size: 13px; align-self: center; cursor: pointer;
   background: rgba(255, 138, 138, .1); border: 1px solid #4a2a2a; border-radius: 999px; padding: 4px 12px; }
+.live-progress:hover { border-color: #ff8a8a; }
+.lp-go { color: #8fb8ff; font-weight: 700; margin-left: 4px; }
 .lv-empty { max-width: 560px; }
 .lv-empty p { color: #cdd9e6; line-height: 1.5; }
 .lv-bar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 12px 0 4px; }

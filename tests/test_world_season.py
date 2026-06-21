@@ -83,8 +83,8 @@ def test_bootstrap_fills_leagues_and_seeds_season_one():
     assert all(p["salary"] == 0.0 for p in w["players"].values())
     # ready for season 1 with seeded treasuries
     assert w["season"] == 1 and w["phase"] == "regular"
-    assert all(t["treasury"] == 600 for t in upper_teams(w))
-    assert all(t["treasury"] == 400 for t in lower_teams(w))
+    assert all(t["treasury"] == 300 for t in upper_teams(w))
+    assert all(t["treasury"] == 200 for t in lower_teams(w))
     assert w["bootstrap"]["upper_filled"] is True
 
 
