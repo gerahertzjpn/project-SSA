@@ -14,7 +14,9 @@
       <div class="world-title">
         <h1>World — предпросмотр <span class="wip-badge">demo</span></h1>
         <p>Полная копия World, всё захардкожено: никаких матчей, запросов и тренировок. Сезоны 0·1·2
-          уже «отыграны», решения приняты за тебя и подсвечены. Жми «Сыграть сезон» / «Межсезонье».</p>
+          уже «отыграны», решения приняты за тебя и подсвечены. Все вкладки живые — «🔴 LIVE»
+          (сезон по дням + эфир), «🆚 Очные», «💸 Трансферы», личные страницы игроков. Жми
+          «Сыграть сезон» / «📅 По дням» / «Межсезонье».</p>
       </div>
       <div class="world-open">
         <select id="worldSelect" class="world-select" title="Открыть существующий мир"></select>
@@ -60,19 +62,25 @@
           <span id="viewCounts" class="view-counts"></span>
         </div>
         <div class="view-actions">
-          <button id="reservesBtn" class="ghost is-hidden">🎒 Резерв</button>
+          <span id="liveProgress" class="live-progress is-hidden"></span>
+          <button id="nextDayBtn" class="primary is-hidden">▶ Следующий день</button>
           <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
+          <button id="liveStartBtn" class="ghost">📅 По дням</button>
           <button id="offseasonBtn" class="ghost">⟳ Межсезонье</button>
         </div>
       </div>
 
       <nav id="tabbar" class="tabbar">
         <button class="tab is-active" data-tab="leagues">🏆 Лиги</button>
+        <button class="tab" data-tab="live">🔴 LIVE</button>
+        <button class="tab" data-tab="matrix">🆚 Очные</button>
         <button class="tab" data-tab="ratings">📊 Рейтинг</button>
         <button class="tab" data-tab="schedule">📅 Расписание</button>
         <button class="tab" data-tab="teams">🛡️ Команды</button>
         <button class="tab" data-tab="draft">✍️ Драфт</button>
+        <button class="tab" data-tab="transfers">💸 Трансферы</button>
         <button class="tab" data-tab="broadcast">📻 Эфир</button>
+        <button class="tab" data-tab="managers">💬 Менеджеры</button>
         <button class="tab" data-tab="history">📜 История</button>
       </nav>
 
@@ -80,11 +88,15 @@
 
       <div class="tab-panels">
         <div id="panel-leagues" class="tab-panel"></div>
+        <div id="panel-live" class="tab-panel is-hidden"></div>
+        <div id="panel-matrix" class="tab-panel is-hidden"></div>
         <div id="panel-ratings" class="tab-panel is-hidden"></div>
         <div id="panel-schedule" class="tab-panel is-hidden"></div>
         <div id="panel-teams" class="tab-panel is-hidden"></div>
         <div id="panel-draft" class="tab-panel is-hidden"></div>
+        <div id="panel-transfers" class="tab-panel is-hidden"></div>
         <div id="panel-broadcast" class="tab-panel is-hidden"></div>
+        <div id="panel-managers" class="tab-panel is-hidden"></div>
         <div id="panel-history" class="tab-panel is-hidden"></div>
       </div>
     </section>
@@ -102,6 +114,7 @@
           <label>Свободных агентов<input id="osFaN" type="number" min="0" max="10" value="2"></label>
           <label>Шагов на агента<input id="osFaS" type="number" min="800000" step="100000" value="800000"></label>
         </div>
+        <div id="osReserves" class="os-reserves"></div>
         <div id="osEta" class="os-eta"></div>
         <div class="os-actions">
           <button id="osRun" class="primary">Запустить межсезонье</button>
@@ -127,15 +140,11 @@
       </div>
     </div>
 
-    <div id="resModal" class="os-overlay is-hidden">
-      <div class="os-card sel-card">
-        <h3>Резерв — ввести новичков</h3>
-        <p class="muted">Отметь резервистов, чтобы ввести их в этом сезоне (попадут в пул новичков).</p>
-        <div id="resList" class="sel-list">—</div>
-        <div class="os-actions">
-          <button id="resIntro" class="primary">Ввести выбранных</button>
-          <button id="resCancel" class="ghost">Закрыть</button>
-        </div>
+    <!-- Player personal page -->
+    <div id="playerModal" class="os-overlay is-hidden">
+      <div class="player-card">
+        <button id="plClose" class="ghost pl-close">✕</button>
+        <div id="plBody"></div>
       </div>
     </div>
 

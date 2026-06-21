@@ -18,8 +18,9 @@ from typing import Optional
 
 from src.world.world import get_player
 
-# Playoff stages in bracket order (for rendering a bracket left-to-right).
-PLAYOFF_STAGE_ORDER = ("lb_r1", "lb_r2", "ub", "lb_final", "grand_final")
+# Playoff stages in bracket order (for rendering a bracket left-to-right). "lb" is the upper
+# league's single loser-bracket round (lower league uses lb_r1/lb_r2 instead).
+PLAYOFF_STAGE_ORDER = ("lb_r1", "lb_r2", "ub", "lb", "lb_final", "grand_final")
 
 
 _MAX_POSITION_BONUS = 80.0
@@ -52,8 +53,9 @@ def team_power(world: dict, team: dict) -> int:
     ones — not absolutely; a strong lower club can overtake by results."""
     return round(float(team.get("elo", 1000.0)) + _position_bonus(world, team["team_id"]))
 STAGE_LABEL = {
-    "ub": "Верхняя сетка", "lb_r1": "Нижняя сетка — 1", "lb_r2": "Нижняя сетка — 2",
-    "lb_final": "Финал нижней сетки", "grand_final": "Гранд-финал", "league": "Регулярка",
+    "ub": "Верхняя сетка", "lb": "Нижняя сетка", "lb_r1": "Нижняя сетка — 1",
+    "lb_r2": "Нижняя сетка — 2", "lb_final": "Финал нижней сетки",
+    "grand_final": "Гранд-финал", "league": "Регулярка",
 }
 
 

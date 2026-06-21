@@ -861,7 +861,7 @@ function liveBracketCols(nodes) {
   if (!nodes || !nodes.length) return "";
   const byStage = {};
   nodes.forEach((n) => (byStage[n.stage] = byStage[n.stage] || []).push(n));
-  const order = ["ub", "lb", "lb_r1", "lb_r2", "lb_final", "grand_final"];
+  const order = ["lb_r1", "lb_r2", "ub", "lb", "lb_final", "grand_final"];  // == views.PLAYOFF_STAGE_ORDER
   const slot = (t) => t ? `${emblem(t.team_id)}<span>${esc(t.abbrev)}</span>` : `<span class="br-tbd">—</span>`;
   return `<div class="bracket">${order.filter((s) => byStage[s]).map((s) =>
     `<div class="br-col"><div class="br-stage">${esc(STAGE_LBL[s] || s)}</div><div class="br-matches">` +

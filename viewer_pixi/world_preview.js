@@ -116,7 +116,8 @@
   }
 
   // ---- season simulation helpers ---------------------------------------- //
-  const STAGE_LABEL = { ub: "Верхняя сетка", lb_r1: "Нижняя сетка — 1", lb_final: "Финал нижней сетки", grand_final: "Гранд-финал" };
+  const STAGE_LABEL = { ub: "Верхняя сетка", lb: "Нижняя сетка", lb_r1: "Нижняя сетка — 1",
+    lb_r2: "Нижняя сетка — 2", lb_final: "Финал нижней сетки", grand_final: "Гранд-финал" };
   function mrow(league, stage, label, home, away, mh, ma, day) {
     return { day, league, stage, stage_label: label, home, away,
       home_abbrev: tabbr(home), away_abbrev: tabbr(away), home_name: tname(home), away_name: tname(away),
@@ -133,14 +134,29 @@
     }
     return { row: mrow(league, stage, label, home, away, mh, ma, day), winner: hw ? home : away };
   }
-  function playoff(s1, s2, s3, s4, league, dayRef) {
-    const col = (stage, matches) => ({ stage, label: STAGE_LABEL[stage], matches });
-    const ub = series(s1, s2, 3, STAGE_LABEL.ub, "ub", league, dayRef.d++);
-    const lb1 = series(s3, s4, 3, STAGE_LABEL.lb_r1, "lb_r1", league, dayRef.d++);
-    const ubLoser = ub.winner === s1 ? s2 : s1;
-    const lbf = series(lb1.winner, ubLoser, 3, STAGE_LABEL.lb_final, "lb_final", league, dayRef.d++);
-    const gf = series(ub.winner, lbf.winner, 3, STAGE_LABEL.grand_final, "grand_final", league, dayRef.d++);
-    return { cols: [col("ub", [ub.row]), col("lb_r1", [lb1.row]), col("lb_final", [lbf.row]), col("grand_final", [gf.row])],
+  const _col = (stage, matches) => ({ stage, label: STAGE_LABEL[stage], matches });
+  // Upper playoff (mirrors brackets.upper_playoff): UB 1v2, LB 3v4, LB-final, grand final.
+  function upperPlayoff(seeds, dayRef) {
+    const ub = series(seeds[0], seeds[1], 3, STAGE_LABEL.ub, "ub", "upper", dayRef.d++);
+    const lb = series(seeds[2], seeds[3], 3, STAGE_LABEL.lb, "lb", "upper", dayRef.d++);
+    const ubLoser = ub.winner === seeds[0] ? seeds[1] : seeds[0];
+    const lbf = series(lb.winner, ubLoser, 3, STAGE_LABEL.lb_final, "lb_final", "upper", dayRef.d++);
+    const gf = series(ub.winner, lbf.winner, 3, STAGE_LABEL.grand_final, "grand_final", "upper", dayRef.d++);
+    return { cols: [_col("ub", [ub.row]), _col("lb", [lb.row]), _col("lb_final", [lbf.row]),
+      _col("grand_final", [gf.row])], champ: gf.winner, finalists: [ub.winner, lbf.winner] };
+  }
+  // Lower playoff (mirrors brackets.lower_playoff): UB A1vZ1; LB-r1 A2vZ3 & Z2vA3; LB-r2; LB-final;
+  // grand final. Both grand finalists promote. Cols ordered as views.PLAYOFF_STAGE_ORDER.
+  function lowerPlayoff(a, z, dayRef) {
+    const ub = series(a[0], z[0], 3, STAGE_LABEL.ub, "ub", "lower", dayRef.d++);
+    const lb1a = series(a[1], z[2], 3, STAGE_LABEL.lb_r1, "lb_r1", "lower", dayRef.d++);
+    const lb1b = series(z[1], a[2], 3, STAGE_LABEL.lb_r1, "lb_r1", "lower", dayRef.d++);
+    const lb2 = series(lb1a.winner, lb1b.winner, 3, STAGE_LABEL.lb_r2, "lb_r2", "lower", dayRef.d++);
+    const ubLoser = ub.winner === a[0] ? z[0] : a[0];
+    const lbf = series(lb2.winner, ubLoser, 3, STAGE_LABEL.lb_final, "lb_final", "lower", dayRef.d++);
+    const gf = series(ub.winner, lbf.winner, 3, STAGE_LABEL.grand_final, "grand_final", "lower", dayRef.d++);
+    return { cols: [_col("lb_r1", [lb1a.row, lb1b.row]), _col("lb_r2", [lb2.row]), _col("ub", [ub.row]),
+      _col("lb_final", [lbf.row]), _col("grand_final", [gf.row])],
       champ: gf.winner, finalists: [ub.winner, lbf.winner] };
   }
 
@@ -158,8 +174,8 @@
     const stand = (ids) => ids.slice().sort((x, y) => (rec[y].sw - rec[x].sw) ||
       ((rec[y].mw - rec[y].ml) - (rec[x].mw - rec[x].ml)) || (byId[y].power - byId[x].power));
     const upStand = stand(upper), aStand = stand(lowA), zStand = stand(lowZ);
-    const upPlay = playoff(upStand[0], upStand[1], upStand[2], upStand[3], "upper", dayRef);
-    const loPlay = playoff(aStand[0], zStand[0], aStand[1], zStand[1], "lower", dayRef);
+    const upPlay = upperPlayoff(upStand, dayRef);
+    const loPlay = lowerPlayoff(aStand, zStand, dayRef);
     const upperChamp = upPlay.champ, lowerChamp = loPlay.champ;
     const relegated = [upStand[8], upStand[9]];
     const promoted = [lowerChamp, loPlay.finalists.find((x) => x !== lowerChamp) || loPlay.finalists[0]];
