@@ -234,9 +234,11 @@ def is_revealing(world: dict) -> bool:
 
 
 def revealed_power(world: dict) -> Optional[dict]:
-    """Provisional per-team Power at the revealed day (cheap — no standings recompute), or None."""
+    """Provisional per-team Power at the revealed day (cheap — no standings recompute), or None.
+    Only while the reveal is in progress — once the last day is revealed the season is finalised, so
+    the read-models switch back to canonical Elo/standings (history), not the provisional snapshot."""
     ls = world.get("live_replay")
-    if not ls:
+    if not ls or ls.get("cursor", 0) >= ls.get("n_days", 0):
         return None
     pbd = ls["power_by_day"]
     return pbd[min(ls["cursor"], len(pbd) - 1)]
@@ -248,9 +250,10 @@ def revealed(world: dict) -> Optional[dict]:
     the bracket, and provisional per-team Power. None when no day-by-day season is active.
 
     This is what makes EVERY tab day-accurate during a reveal: at cursor 0 nobody has points; each
-    revealed day adds its results. cores_destroyed stays internal (callers must not surface it)."""
+    revealed day adds its results. cores_destroyed stays internal (callers must not surface it).
+    Returns None once the reveal is complete (the season is finalised — tabs use canonical data)."""
     ls = world.get("live_replay")
-    if not ls:
+    if not ls or ls.get("cursor", 0) >= ls.get("n_days", 0):
         return None
     c = ls["cursor"]
     reg = {"upper": [], "lower_A": [], "lower_Z": []}

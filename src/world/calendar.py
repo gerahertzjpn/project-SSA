@@ -21,10 +21,12 @@ def add_match(world: dict, *, season: int, stage: str, league: str,
               home: str, away: str, best_of: int,
               maps_home: int | None = None, maps_away: int | None = None,
               winner: str | None = None,
-              home_strategy: str | None = None, away_strategy: str | None = None) -> dict:
+              home_strategy: str | None = None, away_strategy: str | None = None,
+              sequence: list | None = None) -> dict:
     """Append a (scheduled or played) match to the calendar. ``home_strategy`` /
     ``away_strategy`` record the CALLS each manager made (the playbook's active
-    strategy) so the scouting layer can learn from past games."""
+    strategy) so the scouting layer can learn from past games. ``sequence`` is the
+    per-map winner list (for the match-detail page) — public; the hidden cores stat is NOT stored."""
     event = {
         "season": season,
         "month": world.get("month", 0),
@@ -38,6 +40,7 @@ def add_match(world: dict, *, season: int, stage: str, league: str,
         "winner": winner,
         "home_strategy": home_strategy,      # the manager's CALL (None if unknown)
         "away_strategy": away_strategy,
+        "sequence": sequence,                # per-map winner team-ids (None if unknown)
         "played": winner is not None,
     }
     world.setdefault("calendar", []).append(event)
@@ -55,6 +58,7 @@ def record_series(world: dict, season: int, league: str, series: list[dict]) -> 
             maps_home=r["maps_home"], maps_away=r["maps_away"], winner=r["winner"],
             home_strategy=(pb.get("home") or {}).get("strategy"),
             away_strategy=(pb.get("away") or {}).get("strategy"),
+            sequence=r.get("sequence"),
         )
 
 

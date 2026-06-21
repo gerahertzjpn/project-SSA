@@ -172,10 +172,17 @@ def apply_soloq(world: dict, *, rounds: int = DEFAULT_ROUNDS, seed: int = 0,
         p = players[pid]
         p["soloq_rating"] = r
         p["soloq_history"].append(r)
-    # per-match history (with/against whom + points delta) — capped to the recent games
+    # per-match history (with/against whom + points delta) — capped to the recent games. The stored
+    # round is offset past the player's already-recorded games for this season, so several
+    # pre-seasons in one Season 0 (the bootstrap loop) keep (season, round) UNIQUE — the SoloQ
+    # match-detail page navigates by that key. (The returned log keeps its 0..N-1 numbering.)
+    base = {pid: 1 + max((x["round"] for x in (players[pid].get("soloq_matches") or [])
+                          if x.get("season") == season), default=-1)
+            for pid in new_ratings}
     for entry in log:
         for pid, m in (entry.get("player_matches") or {}).items():
-            players[pid].setdefault("soloq_matches", []).append({"season": season, "round": entry["round"], **m})
+            players[pid].setdefault("soloq_matches", []).append(
+                {"season": season, "round": base.get(pid, 0) + entry["round"], **m})
     for pid in new_ratings:
         sm = players[pid].get("soloq_matches") or []
         if len(sm) > SOLOQ_MATCH_CAP:
