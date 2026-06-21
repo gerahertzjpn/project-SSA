@@ -360,6 +360,33 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 .lt-ab { display: flex; align-items: center; gap: 7px; font-weight: 800; color: #cdd9e6; }
 
 /* Schedule — 2-row match cards with logos */
+/* Playoff bracket GRAPH (left-to-right tree with connectors) */
+.bg-block { margin: 10px 0 24px; }
+.bg-h { margin: 0 0 10px; color: #cdd9e6; font-size: 14px; }
+.bgraph { display: flex; overflow-x: auto; padding: 4px 0 14px; align-items: stretch; }
+.bg-col { display: flex; flex-direction: column; min-width: 172px; padding: 0 24px; position: relative; }
+.bg-stage { text-align: center; font-size: 11px; font-weight: 800; color: #8493a4;
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 12px; }
+.bg-bouts { flex: 1; display: flex; flex-direction: column; justify-content: space-around; gap: 16px; }
+.bg-node { background: #11161d; border: 1px solid #2a323d; border-radius: 9px; overflow: hidden;
+  position: relative; box-shadow: 0 2px 8px rgba(0, 0, 0, .25); }
+.bg-node.played { border-color: #34404e; }
+.bg-side { display: grid; grid-template-columns: 20px 1fr auto; align-items: center; gap: 7px;
+  padding: 7px 11px; font-size: 12px; }
+.bg-side + .bg-side { border-top: 1px solid #1a212b; }
+.bg-side .tlogo svg { width: 18px; height: 18px; }
+.bg-tm { font-weight: 700; color: #aeb9c6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bg-side.win .bg-tm { color: #6ee7a8; }
+.bg-side.win { background: rgba(110, 231, 168, .06); }
+.bg-sc { font-weight: 900; color: #6b7886; min-width: 14px; text-align: right; }
+.bg-side.win .bg-sc { color: #8fb8ff; }
+.bg-col:not(:last-child) .bg-node::after { content: ""; position: absolute; right: -24px; top: 50%;
+  width: 24px; height: 2px; background: #2c3a48; }
+.bg-col:not(:first-child) .bg-node::before { content: ""; position: absolute; left: -24px; top: 50%;
+  width: 24px; height: 2px; background: #2c3a48; }
+.bg-col:not(:first-child)::before { content: ""; position: absolute; left: 0; top: 38px; bottom: 14px;
+  border-left: 2px solid #1d2935; }
+
 .sched-lg { margin: 14px 0 8px; color: #cdd9e6; font-size: 14px; }
 .sched-note { font-size: 12px; margin: 6px 0 10px; }
 .sched-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }

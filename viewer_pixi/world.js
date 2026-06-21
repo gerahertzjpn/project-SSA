@@ -200,10 +200,25 @@ const LEAGUE_TABS = [
   { key: "upper", label: "Верхняя лига", sub: "10 команд" },
   { key: "lower_A", label: "Нижняя · группа A", sub: "6 команд" },
   { key: "lower_Z", label: "Нижняя · группа Z", sub: "6 команд" },
+  { key: "playoff", label: "🏆 Плей-офф", sub: "обе сетки" },
 ];
 function renderLeagues(leagues) {
   state._leagues = leagues;
   if (!LEAGUE_TABS.some((t) => t.key === state.leagueKey)) state.leagueKey = "upper";
+  const seg = `<div class="seg">${LEAGUE_TABS.map((t) =>
+    `<button class="seg-btn${t.key === state.leagueKey ? " is-active" : ""}" data-lg="${t.key}">` +
+    `${esc(t.label)}<small>${esc(t.sub)}</small></button>`).join("")}</div>`;
+  const wireSeg = () => el("panel-leagues").querySelectorAll(".seg-btn").forEach((b) =>
+    b.addEventListener("click", () => { state.leagueKey = b.dataset.lg; renderLeagues(state._leagues); }));
+  if (state.leagueKey === "playoff") {
+    el("panel-leagues").innerHTML = seg + `<div id="lgPlayoff"><div class="muted loading">Загрузка сетки плей-офф…</div></div>`;
+    wireSeg();
+    api("/schedule").then((d) => { const el2 = document.getElementById("lgPlayoff");
+      if (el2) el2.innerHTML = renderBracketGraph(d.bracket || {}); })
+      .catch((e) => { const el2 = document.getElementById("lgPlayoff");
+        if (el2) el2.innerHTML = `<div class="result-error">${esc(e.message)}</div>`; });
+    return;
+  }
   const dlt = (d) => `${d > 0 ? "+" : ""}${d}`;
   const rows = (leagues[state.leagueKey] || []).map((t) =>
     `<tr class="ltrow" data-team="${esc(t.team_id)}">` +
@@ -216,19 +231,39 @@ function renderLeagues(leagues) {
       `<td class="lt-pw">${t.power}</td>` +
       `<td class="lt-roster">${(t.roster || []).map(esc).join(" · ")}</td>` +
     `</tr>`).join("");
-  el("panel-leagues").innerHTML =
-    `<div class="seg">${LEAGUE_TABS.map((t) =>
-      `<button class="seg-btn${t.key === state.leagueKey ? " is-active" : ""}" data-lg="${t.key}">` +
-      `${esc(t.label)}<small>${esc(t.sub)}</small></button>`).join("")}</div>` +
+  el("panel-leagues").innerHTML = seg +
     `<table class="ltable"><thead><tr>` +
       `<th>#</th><th>Аб.</th><th>Команда</th><th title="Победы–поражения в сериях">В–П</th>` +
       `<th title="Дельта выигранных карт">Δ</th><th title="Очки за победы в сериях">Очки</th>` +
       `<th>Power</th><th>Состав</th>` +
     `</tr></thead><tbody>${rows}</tbody></table>`;
-  el("panel-leagues").querySelectorAll(".seg-btn").forEach((b) =>
-    b.addEventListener("click", () => { state.leagueKey = b.dataset.lg; renderLeagues(state._leagues); }));
+  wireSeg();
   el("panel-leagues").querySelectorAll(".ltrow").forEach((r) =>
     r.addEventListener("click", () => openTeam(r.dataset.team)));
+}
+
+// Playoff bracket GRAPH (a real tree with connectors, not a table) — used by the Лиги→Плей-офф
+// segment and the Расписание tab. `bracket` = {upper:[{stage,label,matches}], lower:[...]}.
+function bgNode(m) {
+  const winH = m.played && m.winner === m.home, winA = m.played && m.winner === m.away;
+  const side = (id, ab, sc, win) =>
+    `<div class="bg-side${win ? " win" : ""}">${id ? emblem(id) : ""}<span class="bg-tm">${esc(ab || "—")}</span>` +
+    `<span class="bg-sc">${m.played ? sc : "·"}</span></div>`;
+  return `<div class="bg-node${m.played ? " played" : ""}" title="Bo${m.best_of || 5}">` +
+    side(m.home, m.home_abbrev, m.maps_home, winH) +
+    side(m.away, m.away_abbrev, m.maps_away, winA) + `</div>`;
+}
+function bgCols(cols) {
+  if (!cols || !cols.length) return `<div class="muted">Ещё не начался.</div>`;
+  return `<div class="bgraph">${cols.map((col) =>
+    `<div class="bg-col"><div class="bg-stage">${esc(col.label || col.stage)}</div>` +
+    `<div class="bg-bouts">${(col.matches || []).map(bgNode).join("")}</div></div>`).join("")}</div>`;
+}
+function renderBracketGraph(bracket) {
+  const up = bracket.upper || [], lo = bracket.lower || [];
+  if (!up.length && !lo.length) return `<div class="muted" style="margin-top:14px">Плей-офф ещё не начался — он откроется, когда сыграется регулярка.</div>`;
+  return `<div class="bg-block"><h4 class="bg-h">🏆 Верхняя лига</h4>${bgCols(up)}</div>` +
+    `<div class="bg-block"><h4 class="bg-h">Нижняя лига <span class="muted">(повышение)</span></h4>${bgCols(lo)}</div>`;
 }
 
 // --------------------------------------------------------------------------- //
@@ -411,15 +446,9 @@ function renderSchedule(data) {
     `<h4 class="sched-lg">${title}</h4><div class="sched-grid">${ms.map(matchCard).join("")}</div>`;
   const regHtml = note + (sect("Верхняя лига", byLg.upper) + sect("Нижняя лига", byLg.lower))
     || `<div class="muted">Регулярка ещё не сыграна.</div>`;
-  const brHtml = Object.keys(bracket).length
-    ? Object.entries(bracket).map(([lg, stages]) =>
-        `<div class="bracket-block"><h4>${lg === "upper" ? "🏆 Плей-офф · Верхняя" : "Плей-офф · Нижняя"}</h4>` +
-        `<div class="bracket">${stages.map((st) =>
-          `<div class="br-col"><div class="br-stage">${esc(st.label)}</div>` +
-          `<div class="br-matches">${st.matches.map(matchCard).join("")}</div></div>`).join("")}</div></div>`).join("")
-    : `<div class="muted">Плей-офф ещё не сыгран.</div>`;
   el("panel-schedule").innerHTML =
-    `<h3>Регулярный сезон</h3>${regHtml}<h3>Плей-офф <span class="muted">(сетка)</span></h3>${brHtml}`;
+    `<h3>Регулярный сезон</h3>${regHtml}` +
+    `<h3>Плей-офф <span class="muted">(сетка)</span></h3>${renderBracketGraph(bracket)}`;
 }
 
 // --------------------------------------------------------------------------- //
