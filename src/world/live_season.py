@@ -135,12 +135,17 @@ def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dic
         local_elo[s["home"]] += d
         local_elo[s["away"]] -= d
 
-    days = []
+    days = []        # ONE series per day (owner: «1 день — 1 игра»)
     power_by_day = [{tid: round(e) for tid, e in local_elo.items()}]   # day 0 = pre-season
 
-    # ---- regular season: one round-robin round per day ------------------ #
+    def _add_day(phase: str, s: dict) -> None:
+        s["day"] = len(days) + 1
+        _bump_elo(s)
+        days.append({"phase": phase, "day": s["day"], "series": s})
+        power_by_day.append({tid: round(e) for tid, e in local_elo.items()})
+
+    # ---- regular season: ONE game per day (round-major, then group, then pairing) ---- #
     for r in range(n_regular):
-        series_today = []
         for gkey in ("upper", "lower_A", "lower_Z"):
             grounds = rounds[gkey]
             if r >= len(grounds):
@@ -149,10 +154,8 @@ def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dic
                 s = dict(play(home, away, brackets.LEAGUE_BEST_OF), stage="league",
                          group=gkey, league=_league_of(gkey))
                 results[gkey].append(s)
-                _bump_elo(s)
-                series_today.append(s)
-        days.append({"phase": "regular", "series": series_today})
-        power_by_day.append({tid: round(e) for tid, e in local_elo.items()})
+                _add_day("regular", s)
+    n_regular_days = len(days)
 
     # ---- seed playoffs from the (now complete) group standings ---------- #
     up_rows = brackets.standings(up_ids, results["upper"])
@@ -161,23 +164,20 @@ def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dic
     up_br = _upper_bracket([r["team_id"] for r in up_rows])
     lo_br = _lower_bracket([r["team_id"] for r in a_rows], [r["team_id"] for r in z_rows])
 
-    # ---- playoffs: each day plays every currently-decidable series ------- #
-    day_idx = n_regular
+    # ---- playoffs: ONE decidable series per day (a wave of ready nodes spreads over days) ---- #
     while not (_bracket_done(up_br) and _bracket_done(lo_br)):
-        day_idx += 1
-        series_today = []
-        for league_key, br in (("upper", up_br), ("lower", lo_br)):
-            for key in _ready_nodes(br):
-                node = br["nodes"][key]
-                home = _resolve(node["home"], br["nodes"])
-                away = _resolve(node["away"], br["nodes"])
-                s = dict(play(home, away, node["best_of"]), stage=node["stage"], league=league_key)
-                node["result"] = s
-                node["day"] = day_idx
-                _bump_elo(s)
-                series_today.append(s)
-        days.append({"phase": "playoff", "series": series_today})
-        power_by_day.append({tid: round(e) for tid, e in local_elo.items()})
+        ready = [(lg, key, br) for lg, br in (("upper", up_br), ("lower", lo_br))
+                 for key in _ready_nodes(br)]
+        if not ready:
+            break
+        for lg, key, br in ready:
+            node = br["nodes"][key]
+            home = _resolve(node["home"], br["nodes"])
+            away = _resolve(node["away"], br["nodes"])
+            s = dict(play(home, away, node["best_of"]), stage=node["stage"], league=lg)
+            node["result"] = s
+            _add_day("playoff", s)
+            node["day"] = s["day"]
 
     n_days = len(days)
     # capture the post-season position_stats, then restore the pre-season ones (re-applied at finalize)
@@ -188,9 +188,9 @@ def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dic
         "season": season_num,
         "cursor": 0,
         "n_days": n_days,
-        "n_regular_days": n_regular,
+        "n_regular_days": n_regular_days,          # number of regular GAMES (1 game = 1 day)
         "groups": {"upper": up_ids, "lower_A": a_ids, "lower_Z": z_ids},
-        "days": days,                              # full series incl cores (server-side only)
+        "days": days,                              # one series per day; full series incl cores (server-side)
         "playoff": {"upper": up_br, "lower": lo_br},
         "power_by_day": power_by_day,
         "pos_after": pos_after,                    # real position_stats, applied when reveal finishes
@@ -256,15 +256,17 @@ def revealed(world: dict) -> Optional[dict]:
     reg = {"upper": [], "lower_A": [], "lower_Z": []}
     playoff_series = []
     for day in ls["days"][:c]:
+        s = day["series"]
         if day["phase"] == "regular":
-            for s in day["series"]:
-                reg[s["group"]].append(s)
+            reg[s["group"]].append(s)
         else:
-            playoff_series.extend(day["series"])
+            playoff_series.append(s)
+    # the FULL regular fixture list is known up front (the schedule shows who-plays-when from day 0)
+    all_regular = [d["series"] for d in ls["days"] if d["phase"] == "regular"]
     standings = {g: brackets.standings(ls["groups"][g], reg[g]) for g in reg}
     power = ls["power_by_day"][min(c, len(ls["power_by_day"]) - 1)]
     return {"cursor": c, "season": ls["season"], "groups": ls["groups"],
-            "n_regular_days": ls["n_regular_days"], "regular": reg,
+            "n_regular_days": ls["n_regular_days"], "regular": reg, "all_regular": all_regular,
             "playoff_series": playoff_series, "standings": standings, "power": power,
             "playoff": ls["playoff"]}
 
@@ -297,10 +299,8 @@ def _standings_so_far(world: dict, ls: dict, cursor: int) -> dict:
     exposed). Each row carries the provisional Power at this point in the reveal."""
     revealed = {"upper": [], "lower_A": [], "lower_Z": []}
     for day in ls["days"][:cursor]:
-        if day["phase"] != "regular":
-            continue
-        for s in day["series"]:
-            revealed[s["group"]].append(s)
+        if day["phase"] == "regular":
+            revealed[day["series"]["group"]].append(day["series"])
     power = ls["power_by_day"][min(cursor, len(ls["power_by_day"]) - 1)]
     out = {}
     for gkey, ids in ls["groups"].items():
@@ -344,8 +344,8 @@ def view(world: dict) -> dict:
     c = ls["cursor"]
     n = ls["n_days"]
     playoff_started = c >= ls["n_regular_days"]
-    next_fixtures = [_fixture(world, s) for s in ls["days"][c]["series"]] if c < n else []
-    just_played = [_result(world, s) for s in ls["days"][c - 1]["series"]] if c > 0 else []
+    next_fixtures = [_fixture(world, ls["days"][c]["series"])] if c < n else []
+    just_played = [_result(world, ls["days"][c - 1]["series"])] if c > 0 else []
     return {
         "active": c < n,
         "season": ls["season"],
@@ -407,7 +407,7 @@ def reveal_watch(world: dict, home: str, away: str) -> dict:
     ls = world.get("live_replay")
     if not ls or ls["cursor"] >= ls["n_days"]:
         raise ValueError("nothing to watch")
-    for s in ls["days"][ls["cursor"]]["series"]:
-        if s["home"] == home and s["away"] == away:
-            return _result(world, s, seq=True)
+    s = ls["days"][ls["cursor"]]["series"]
+    if s["home"] == home and s["away"] == away:
+        return _result(world, s, seq=True)
     raise ValueError("that match is not on the next day to be revealed")

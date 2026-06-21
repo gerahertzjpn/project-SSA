@@ -392,19 +392,24 @@ function matchCard(m) {
   const side = (id, ab, sc, win) =>
     `<div class="mc-row${win ? " win" : ""}">${emblem(id)}<span class="mc-tm">${esc(ab)}</span>` +
     `<span class="mc-sc">${m.played ? sc : "·"}</span></div>`;
-  return `<div class="mcard${m.played ? " played" : " upcoming"}" title="Bo${m.best_of}">` +
+  const tag = m.day ? `<div class="mc-day">День ${m.day}${m.stage && m.stage !== "league" ? " · " + esc(m.stage_label || m.stage) : ""}</div>` : "";
+  return `<div class="mcard${m.played ? " played" : " upcoming"}" title="Bo${m.best_of}">` + tag +
     side(m.home, m.home_abbrev, m.maps_home, winH) +
     side(m.away, m.away_abbrev, m.maps_away, winA) +
   `</div>`;
 }
 function renderSchedule(data) {
-  const reg = data.regular || [];
+  const reg = (data.regular || []).slice().sort((a, b) => (a.day || 0) - (b.day || 0));
   const bracket = data.bracket || {};
   const byLg = {};
   reg.forEach((m) => (byLg[m.league] = byLg[m.league] || []).push(m));
+  const played = reg.filter((m) => m.played).length;
+  const note = reg.length
+    ? `<div class="sched-note muted">Расписание регулярки — кто когда играет (1 день = 1 игра). ` +
+      `Сыграно: <b>${played}</b> / ${reg.length}. Остальные — без результата, пока не сыграны.</div>` : "";
   const sect = (title, ms) => !ms || !ms.length ? "" :
     `<h4 class="sched-lg">${title}</h4><div class="sched-grid">${ms.map(matchCard).join("")}</div>`;
-  const regHtml = (sect("Верхняя лига", byLg.upper) + sect("Нижняя лига", byLg.lower))
+  const regHtml = note + (sect("Верхняя лига", byLg.upper) + sect("Нижняя лига", byLg.lower))
     || `<div class="muted">Регулярка ещё не сыграна.</div>`;
   const brHtml = Object.keys(bracket).length
     ? Object.entries(bracket).map(([lg, stages]) =>
@@ -949,14 +954,16 @@ function osSettings() {
 }
 function updateEta() {
   const s = osSettings();
-  const jobs = s.auction.slots;                                 // ALL won trainings launch (no cap)
+  const jobs = s.auction.slots;                                 // upper bound — see note below
   const totalSteps = jobs * s.auction.steps_per_slot;           // run serially after the off-season
   const min = totalSteps / STEPS_PER_SEC / 60;
   el("osEta").innerHTML =
     `⏱ Тренировки нейронок: до <b>${jobs}</b> запусков × ${s.auction.steps_per_slot.toLocaleString("ru")} шагов ` +
     `<b>${fmtMin(min)}</b> <span class="muted">(серийно, в фоне после межсезонья — можно следить в трекере)</span>` +
     (s.rookies.n ? `<br>👶 ${s.rookies.n} новичков (форк) — карточки создаются сразу` : "") +
-    `<br><span class="muted">Лимитов на число тренировок нет — единственный предел 800k шагов на тренировку. Все разыгранные слоты запустятся (по очереди).</span>`;
+    `<br><span class="muted">Тренера сами решают: тратить выигранный сертификат сейчас или <b>копить</b> его. ` +
+    `Запустятся только заказанные тренировки (может быть и 0, и сильно больше — если копили). ` +
+    `Лимитов на число нет, единственный предел — 800k шагов на тренировку.</span>`;
 }
 function openOsModal() {
   if (!state.worldId || state.busy) return;

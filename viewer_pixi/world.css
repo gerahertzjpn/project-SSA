@@ -361,10 +361,13 @@ button.ghost:disabled { opacity: .5; cursor: not-allowed; }
 
 /* Schedule — 2-row match cards with logos */
 .sched-lg { margin: 14px 0 8px; color: #cdd9e6; font-size: 14px; }
+.sched-note { font-size: 12px; margin: 6px 0 10px; }
 .sched-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; }
 .mcard { background: #161b22; border: 1px solid #222a34; border-radius: 9px; padding: 5px; display: flex;
   flex-direction: column; gap: 2px; }
-.mcard.upcoming { border-style: dashed; opacity: .85; }
+.mcard.upcoming { border-style: dashed; opacity: .72; }
+.mc-day { font-size: 10px; color: #6b7886; font-weight: 700; padding: 0 4px; text-transform: uppercase; letter-spacing: .3px; }
+.mcard.played .mc-day { color: #8493a4; }
 .mc-row { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 7px;
   padding: 4px 6px; border-radius: 6px; font-size: 12px; }
 .mc-row.win { background: #16261c; }

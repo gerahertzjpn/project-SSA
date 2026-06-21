@@ -284,7 +284,9 @@ def _shape_el(shape: str, attrs: str) -> str:
     if shape == "diamond":
         return f'<polygon points="60,6 114,60 60,114 6,60" {attrs}/>'
     if shape == "triangle":
-        return f'<polygon points="60,8 110,104 10,104" {attrs}/>'
+        # Inset + slightly rounded-feel isosceles triangle, balanced in the 120 box (its motif sits
+        # in the upper-centre, so keep the apex from getting too narrow).
+        return f'<polygon points="60,18 100,96 20,96" {attrs}/>'
     if shape == "hexagon":
         return f'<polygon points="60,6 106,33 106,87 60,114 14,87 14,33" {attrs}/>'
     if shape == "star":
@@ -384,7 +386,8 @@ def emblem_svg(franchise: dict) -> str:
         f'fill="{accent}">{abbrev}</text>'
     )
     return (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">'
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" '
+        'preserveAspectRatio="xMidYMid meet">'
         + "".join(parts)
         + "</svg>"
     )

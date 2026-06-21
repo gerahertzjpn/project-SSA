@@ -346,24 +346,31 @@ def draft_view(world: dict) -> dict:
 
 
 def _live_schedule(world: dict, rev: dict) -> dict:
-    """Schedule view during a day-by-day reveal — only the matches revealed so far (from the live
-    store, since the calendar isn't written until the season is finalised)."""
+    """Schedule during a day-by-day reveal. The full regular fixture list is shown FROM DAY 0
+    (who plays whom on which day) — results appear only once a fixture's day is revealed. The
+    playoff bracket fills in as it's decided."""
+    cursor = rev["cursor"]
+
     def ev(s):
+        played = s.get("day", 0) <= cursor
         pb = s.get("playbook") or {}
-        return {**s, "played": True, "home_strategy": (pb.get("home") or {}).get("strategy"),
-                "away_strategy": (pb.get("away") or {}).get("strategy")}
-    flat_reg = rev["regular"]["upper"] + rev["regular"]["lower_A"] + rev["regular"]["lower_Z"]
-    regular = [_match_row(world, ev(s), i) for i, s in enumerate(flat_reg, 1)]
+        return {**s, "played": played,
+                "maps_home": s.get("maps_home") if played else None,
+                "maps_away": s.get("maps_away") if played else None,
+                "winner": s.get("winner") if played else None,
+                "home_strategy": (pb.get("home") or {}).get("strategy") if played else None,
+                "away_strategy": (pb.get("away") or {}).get("strategy") if played else None}
+    regular = [_match_row(world, ev(s), s.get("day", 0)) for s in rev["all_regular"]]
     playoff: dict = {}
-    for s in rev["playoff_series"]:
+    for s in rev["playoff_series"]:                  # revealed playoff series only (matchups are TBD)
         playoff.setdefault(s.get("league"), {}).setdefault(s.get("stage"), []).append(
-            _match_row(world, ev(s), 0))
+            _match_row(world, ev(s), s.get("day", 0)))
     bracket = {}
     for lg, by_stage in playoff.items():
         bracket[lg] = [{"stage": st, "label": STAGE_LABEL.get(st, st), "matches": by_stage[st]}
                        for st in PLAYOFF_STAGE_ORDER if st in by_stage]
     return {"season": rev["season"], "regular": regular, "bracket": bracket,
-            "n_matches": len(flat_reg) + len(rev["playoff_series"])}
+            "n_matches": len(rev["all_regular"]) + len(rev["playoff_series"])}
 
 
 def schedule_view(world: dict, season: Optional[int] = None) -> dict:
