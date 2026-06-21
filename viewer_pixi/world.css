@@ -578,14 +578,46 @@ button.ghost.required { border-color: #2f6df0; color: #fff; background: #18222f;
 /* SoloQ history in the player detail */
 .pd-soloq { display: flex; flex-direction: column; gap: 3px; }
 .pd-soloq b { font-size: 12px; color: #cdd9e6; margin-bottom: 2px; }
-.sq-game { display: grid; grid-template-columns: 22px 48px 1fr 1fr; gap: 8px; align-items: center;
-  font-size: 11px; padding: 3px 6px; border-radius: 6px; background: #161b22; }
+.sq-game { display: grid; grid-template-columns: 22px 48px 1fr 1fr auto; gap: 8px; align-items: center;
+  font-size: 11px; padding: 4px 7px; border-radius: 6px; background: #161b22; cursor: pointer; }
+.sq-game:hover { background: #1b2530; }
 .sq-game.w { border-left: 2px solid #2e7d52; }
 .sq-game.l { border-left: 2px solid #b3402e; }
 .sq-res { font-weight: 800; color: #cdd9e6; }
 .sq-d.up { color: #6ee7a8; font-weight: 700; }
 .sq-d.down { color: #ff8a8a; font-weight: 700; }
 .sq-with, .sq-vs { color: #8493a4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sq-go { color: #6b7886; font-weight: 800; }
+
+/* Match detail modal (SoloQ 3v3 + league series) */
+.mt-head { font-size: 16px; font-weight: 800; color: #e6edf4; margin: 0 30px 14px 0; }
+.mt-vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: start; }
+.mt-side { background: #11161d; border: 1px solid #1d242e; border-radius: 10px; padding: 10px; }
+.mt-side.win { border-color: #2c5a3a; }
+.mt-side-h { font-weight: 800; color: #cdd9e6; font-size: 12px; margin-bottom: 8px; text-align: center; }
+.mt-side.win .mt-side-h { color: #6ee7a8; }
+.mt-pl { display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 8px; align-items: center;
+  padding: 6px 8px; border-radius: 7px; cursor: pointer; font-size: 12px; }
+.mt-pl:hover { background: #1b2530; }
+.mt-pl-nm { font-weight: 700; color: #e6edf4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mt-pl-tm { color: #8fb8ff; font-weight: 700; font-size: 11px; }
+.mt-pl-tm:hover { text-decoration: underline; }
+.mt-pl-rt { font-weight: 800; color: #8fb8ff; }
+.mt-pl-d.up { color: #6ee7a8; font-weight: 800; }
+.mt-pl-d.down { color: #ff8a8a; font-weight: 800; }
+.mt-mid { align-self: center; font-size: 20px; font-weight: 900; color: #6b7886; }
+.mt-foot { margin-top: 10px; font-size: 11px; }
+.mt-lvs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 16px; align-items: center; margin: 6px 0; }
+.mt-lteam { display: flex; flex-direction: column; align-items: center; gap: 6px; cursor: pointer; border-radius: 10px; padding: 10px; }
+.mt-lteam:hover { background: #161f2b; }
+.mt-lteam .tlogo svg { width: 64px; height: 64px; }
+.mt-lnm { font-weight: 800; color: #e6edf4; text-align: center; }
+.mt-lsc { font-size: 26px; font-weight: 900; color: #8fb8ff; }
+.mt-lteam.win .mt-lsc { color: #6ee7a8; }
+.mt-maps { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; margin: 8px 0; }
+.mt-map { font-size: 11px; font-weight: 700; border-radius: 6px; padding: 3px 9px; }
+.mt-map.w { background: rgba(110, 231, 168, .12); color: #6ee7a8; }
+.mt-map.l { background: rgba(255, 138, 138, .1); color: #ff8a8a; }
 
 /* Team logo (emblem SVG) */
 .tlogo { display: inline-flex; flex: 0 0 auto; }

@@ -528,6 +528,12 @@ def world_teams_ranking_payload(world_id: str) -> dict:
     return {"season": w["season"], "ranking": views.team_power_ranking(w)}
 
 
+def world_soloq_match_payload(world_id: str, player_id: str, season: int, rnd: int) -> dict:
+    from src.world import views
+    w = load_world(world_id)
+    return {"match": views.soloq_match(w, player_id, int(season), int(rnd))}
+
+
 def world_team_payload(world_id: str, team_id: str) -> dict:
     from src.world import views
     w = load_world(world_id)
@@ -1297,6 +1303,16 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
         if world_player:
             try:
                 self._send_json(world_player_payload(world_player.group("wid"), world_player.group("pid")))
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error)}, status=404)
+            return
+        world_soloq = re.match(
+            r"^/api/world/(?P<wid>world-[0-9a-f]+)/soloq/(?P<pid>[\w-]+)/(?P<s>\d+)/(?P<r>\d+)$", path)
+        if world_soloq:
+            try:
+                self._send_json(world_soloq_match_payload(
+                    world_soloq.group("wid"), world_soloq.group("pid"),
+                    world_soloq.group("s"), world_soloq.group("r")))
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error)}, status=404)
             return

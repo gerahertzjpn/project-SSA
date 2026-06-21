@@ -244,12 +244,14 @@
     if (s === 0) shuf(teams).slice(0, 9).forEach((t) => { const fa = freeAgents.find((p) => !p.teamId);
       if (fa && t.roster.length < 5) { fa.teamId = t.team_id; t.roster.push(fa.player_id); } });
   }
-  // SoloQ per-game history (player detail)
+  // SoloQ per-game history (player detail) — store ids too, for the match-detail cross-nav
   players.forEach((p) => {
+    let rnd = 0;
     for (let g = 0; g < ri(6, 12); g++) {
       const grp = shuf(players.filter((q) => q !== p)).slice(0, 5); const won = R() < 0.5;
-      p.soloq.push({ season: ri(0, 2), round: ri(0, 9), won, delta: +(won ? ri(8, 24) : -ri(8, 22)),
-        teammates: grp.slice(0, 2).map((q) => q.nickname), opponents: grp.slice(2, 5).map((q) => q.nickname) });
+      p.soloq.push({ season: ri(0, 2), round: rnd++, won, delta: +(won ? ri(8, 24) : -ri(8, 22)),
+        teammates: grp.slice(0, 2).map((q) => q.nickname), opponents: grp.slice(2, 5).map((q) => q.nickname),
+        teammate_ids: grp.slice(0, 2).map((q) => q.player_id), opponent_ids: grp.slice(2, 5).map((q) => q.player_id) });
     }
   });
 
@@ -310,6 +312,21 @@
       grid(lv.lower_Z, "Низшая · группа Z"),
     ] };
   }
+  function soloqMatch(pid, season, rnd) {
+    const p = pById[pid]; if (!p) throw new Error("игрок не найден");
+    const g = (p.soloq || []).find((x) => String(x.season) === String(season) && String(x.round) === String(rnd));
+    if (!g) throw new Error("матч не найден");
+    const ddelta = (id, won) => { let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+      const mag = 6 + (h % 18); return won ? mag : -mag; };
+    const info = (id, won) => { const q = pById[id] || {};
+      return { player_id: id, nickname: q.nickname, faction: q.faction, archetype: q.archetype, role: q.role,
+        rating: Math.round(q.ratingHist ? q.ratingHist[q.ratingHist.length - 1] : (q.base || 1000)),
+        delta: id === pid ? g.delta : ddelta(id, won), team_id: q.teamId,
+        team: q.teamId ? tname(q.teamId) : null, team_abbrev: q.teamId ? tabbr(q.teamId) : null }; };
+    const a = [pid].concat(g.teammate_ids || []);
+    return { season: +season, round: +rnd, won_a: g.won,
+      team_a: a.map((id) => info(id, g.won)), team_b: (g.opponent_ids || []).map((id) => info(id, !g.won)) };
+  }
   function playerView(p) {
     const hist = p.ratingHist.slice(0, CUR + 2).map(Math.round);
     const delta = hist.length >= 2 ? +(hist[hist.length - 1] - hist[hist.length - 2]).toFixed(1) : 0;
@@ -319,7 +336,8 @@
       pos[k] = { games: v.games, wins: v.wins, winrate: v.games ? +(v.wins / v.games).toFixed(3) : null });
     return { player_id: p.player_id, nickname: p.nickname, faction: p.faction, archetype: p.archetype,
       role: p.role, status: p.reserve ? "reserve" : (p.teamId ? "rostered" : "free_agent"),
-      rating: hist[hist.length - 1], delta, rating_history: hist, net_id: p.net_id, team_id: p.teamId,
+      rating: hist[hist.length - 1], delta, rating_history: hist, soloq_history: hist,
+      soloq_total: p.soloq.length, net_id: p.net_id, team_id: p.teamId,
       team, team_abbrev: p.teamId ? tabbr(p.teamId) : null, games: p.games, generation: p.gen,
       position_stats: pos, soloq_games: p.soloq.slice(0, 20), trophies: p.trophies };
   }
@@ -352,10 +370,12 @@
   function teamMatches(id) {
     const out = [];
     const add = (s, played) => { const isHome = s.home === id, opp = isHome ? s.away : s.home;
+      const mf = played ? (isHome ? s.maps_home : s.maps_away) : null;
+      const ma = played ? (isHome ? s.maps_away : s.maps_home) : null;
       out.push({ season: LIVE ? LIVE.season : CUR, day: s.day, stage: s.stage,
-        stage_label: STAGE_LABEL[s.stage] || s.stage, opponent: opp, opponent_abbrev: tabbr(opp), home: isHome, played,
-        maps_for: played ? (isHome ? s.maps_home : s.maps_away) : null,
-        maps_against: played ? (isHome ? s.maps_away : s.maps_home) : null,
+        stage_label: STAGE_LABEL[s.stage] || s.stage, opponent: opp, opponent_abbrev: tabbr(opp),
+        opponent_name: tname(opp), best_of: s.best_of, home: isHome, played, maps_for: mf, maps_against: ma,
+        maps_seq: played ? Array(mf).fill("W").concat(Array(ma).fill("L")) : null,
         won: played ? (s.winner === id) : null }); };
     if (LIVE) {
       LIVE.days.filter((d) => d.phase === "regular").forEach((d) => { const s = d.series;
@@ -707,6 +727,8 @@
     if (path === "/training") return { jobs: showTraining ? snaps[Math.max(0, CUR - 1)].training : [] };
     if (path.startsWith("/team/")) return { season: CUR, team: teamView(path.slice("/team/".length)) };
     if (path.startsWith("/player/")) return { player: playerPage(path.slice("/player/".length)) };
+    if (path.startsWith("/soloq/")) { const parts = path.slice("/soloq/".length).split("/");
+      return { match: soloqMatch(parts[0], parts[1], parts[2]) }; }
     return {};
   };
 })();

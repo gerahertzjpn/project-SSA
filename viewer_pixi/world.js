@@ -425,10 +425,11 @@ function renderPlayerPage(p) {
   const pos = Object.entries(p.position_stats || {}).map(([k, v]) =>
     `<span class="pp-pos">${k}: <b>${v.winrate != null ? Math.round(v.winrate * 100) + "%" : "—"}</b> <span class="muted">(${v.games}и)</span></span>`).join("");
   const games = (p.soloq_games || []).map((g) =>
-    `<div class="sq-game ${g.won ? "w" : "l"}"><span class="sq-res">${g.won ? "W" : "L"}</span>` +
+    `<div class="sq-game ${g.won ? "w" : "l"}" data-s="${g.season}" data-r="${g.round}" title="Открыть матч">` +
+    `<span class="sq-res">${g.won ? "W" : "L"}</span>` +
     `<span class="sq-d ${g.delta >= 0 ? "up" : "down"}">${g.delta >= 0 ? "+" : ""}${g.delta}</span>` +
     `<span class="sq-with">с: ${esc((g.teammates || []).join(", "))}</span>` +
-    `<span class="sq-vs">против: ${esc((g.opponents || []).join(", "))}</span></div>`).join("");
+    `<span class="sq-vs">против: ${esc((g.opponents || []).join(", "))}</span><span class="sq-go">→</span></div>`).join("");
   const teamHist = (p.team_history || []).length
     ? `<div class="pp-timeline">${p.team_history.slice().reverse().map((h) =>
         `<div class="pp-tl"><span class="pp-tl-s">С${h.season}</span>${emblem(h.team_id)}` +
@@ -448,13 +449,63 @@ function renderPlayerPage(p) {
       `<div class="pp-st"><b>${p.generation || 0}</b><span>поколение</span></div>` +
       `<div class="pp-st"><b>${p.salary || 0}</b><span>зарплата</span></div>` +
     `</div>` +
-    `<div class="pp-row">Рейтинг по сезонам ${sparkline(p.rating_history, 260, 44)}</div>` +
+    `<div class="pp-row">Рейтинг SoloQ по сезонам ${sparkline(p.soloq_history || p.rating_history, 320, 50)} ` +
+      `<span class="muted">всего игр SoloQ: ${p.soloq_total || 0}</span></div>` +
     `<div class="pp-row"><b>Позиции:</b> ${pos || "—"}</div>` +
     `<div class="pp-row"><b>Нейронка:</b> <code>${esc(p.net_id || "—")}</code>` +
       (p.lineage && p.lineage.parent ? ` · форк от ${esc(p.lineage.parent)} (G${p.lineage.generation})` : "") + `</div>` +
     `<div class="pp-row"><b>Трофеи:</b> ${troph}</div>` +
     `<h4>Клубная история</h4>${teamHist}` +
-    (games ? `<h4>Последние игры SoloQ</h4><div class="pd-soloq">${games}</div>` : "");
+    (games ? `<h4>Последние игры SoloQ <span class="muted">(клик — детали матча)</span></h4><div class="pd-soloq">${games}</div>` : "");
+  el("plBody").querySelectorAll(".sq-game[data-s]").forEach((r) =>
+    r.addEventListener("click", () => openSoloqMatch(p.player_id, r.dataset.s, r.dataset.r)));
+}
+// --------------------------------------------------------------------------- //
+// Match detail modal — SoloQ 3v3 game OR a league series
+// --------------------------------------------------------------------------- //
+async function openSoloqMatch(pid, season, round) {
+  show("matchModal", true);
+  el("mtBody").innerHTML = `<div class="muted loading">Загрузка матча…</div>`;
+  try { renderSoloqMatch((await api(`/soloq/${pid}/${season}/${round}`)).match); }
+  catch (e) { el("mtBody").innerHTML = `<div class="result-error">Ошибка: ${esc(e.message)}</div>`; }
+}
+function renderSoloqMatch(m) {
+  const plRow = (p) =>
+    `<div class="mt-pl" data-pid="${esc(p.player_id)}">${factionChip(p.faction)}` +
+    `<span class="mt-pl-nm">${esc(p.nickname)}</span>` +
+    `<span class="mt-pl-tm" data-team="${esc(p.team_id || "")}">${esc(p.team_abbrev || (p.role === "streamer" ? "стример" : "—"))}</span>` +
+    `<span class="mt-pl-rt">${p.rating}</span>` +
+    `<span class="mt-pl-d ${(p.delta || 0) >= 0 ? "up" : "down"}">${p.delta == null ? "—" : (p.delta >= 0 ? "+" : "") + p.delta}</span></div>`;
+  const side = (players, won, label) =>
+    `<div class="mt-side ${won ? "win" : "lose"}"><div class="mt-side-h">${label} ${won ? "🏆 победа" : ""}</div>` +
+    players.map(plRow).join("") + `</div>`;
+  el("mtBody").innerHTML =
+    `<div class="mt-head">⚔️ SoloQ матч <span class="muted">· Сезон ${m.season} · раунд ${m.round}</span></div>` +
+    `<div class="mt-vs">${side(m.team_a, m.won_a, "Команда A")}<div class="mt-mid">VS</div>${side(m.team_b, !m.won_a, "Команда B")}</div>` +
+    `<p class="muted mt-foot">Клик по игроку — его страница; по аббревиатуре клуба — страница команды.</p>`;
+  el("mtBody").querySelectorAll(".mt-pl").forEach((r) =>
+    r.addEventListener("click", (e) => {
+      const tm = e.target.closest(".mt-pl-tm");
+      if (tm && tm.dataset.team) { show("matchModal", false); openTeam(tm.dataset.team); return; }
+      show("matchModal", false); openPlayer(r.dataset.pid);
+    }));
+}
+function openLeagueMatch(m, team) {
+  show("matchModal", true);
+  const meWon = m.won;
+  const seq = (m.maps_seq || []).map((r, i) =>
+    `<span class="mt-map ${r === "W" ? "w" : "l"}">Карта ${i + 1}: ${esc(r === "W" ? team.abbrev : m.opponent_abbrev)}</span>`).join("");
+  const lteam = (tid, name, score, win) =>
+    `<div class="mt-lteam${win ? " win" : ""}" data-team="${esc(tid)}">${emblem(tid, "xl")}` +
+    `<div class="mt-lnm">${esc(name)}</div><div class="mt-lsc">${score == null ? "·" : score}</div></div>`;
+  el("mtBody").innerHTML =
+    `<div class="mt-head">${esc(m.stage_label || "Матч")} <span class="muted">· Сезон ${m.season}${m.day ? " · день " + m.day : ""} · Bo${m.best_of || 3}</span></div>` +
+    `<div class="mt-lvs">${lteam(team.team_id, team.name, m.maps_for, meWon)}<div class="mt-mid">:</div>` +
+    `${lteam(m.opponent, m.opponent_name || m.opponent_abbrev, m.maps_against, m.played && !meWon)}</div>` +
+    (seq ? `<div class="mt-maps">${seq}</div>` : (m.played ? "" : `<p class="muted mt-foot">Матч ещё не сыгран — расписание.</p>`)) +
+    `<p class="muted mt-foot">Клик по клубу — его страница.</p>`;
+  el("mtBody").querySelectorAll(".mt-lteam").forEach((d) =>
+    d.addEventListener("click", () => { show("matchModal", false); openTeam(d.dataset.team); }));
 }
 
 // --------------------------------------------------------------------------- //
@@ -526,16 +577,17 @@ async function loadTeamPage(teamId) {
   try { renderTeamPage((await api(`/team/${teamId}`)).team); }
   catch (e) { page.innerHTML = `<div class="result-error">Ошибка: ${esc(e.message)}</div>`; }
 }
-function matchLine(m) {
+function matchLine(m, kind, idx) {
   const stage = m.stage && m.stage !== "league" ? esc(m.stage_label || m.stage) : "Регулярка";
   const venue = m.home ? "дома" : "в гостях";
+  const tag = `data-mk="${kind}" data-mi="${idx}"`;
   if (!m.played) {
-    return `<div class="tpm upcoming"><span class="tpm-day">Д${m.day || "?"}</span>` +
+    return `<div class="tpm upcoming" ${tag}><span class="tpm-day">Д${m.day || "?"}</span>` +
       `<span class="tpm-st">${stage}</span><span class="tpm-vs">${m.home ? "vs" : "@"} ${emblem(m.opponent)}${esc(m.opponent_abbrev)}</span>` +
       `<span class="tpm-res muted">— · ${venue}</span></div>`;
   }
   const won = m.won;
-  return `<div class="tpm ${won ? "w" : "l"}"><span class="tpm-day">Д${m.day || "?"}</span>` +
+  return `<div class="tpm ${won ? "w" : "l"}" ${tag}><span class="tpm-day">Д${m.day || "?"}</span>` +
     `<span class="tpm-st">${stage}</span><span class="tpm-vs">${m.home ? "vs" : "@"} ${emblem(m.opponent)}${esc(m.opponent_abbrev)}</span>` +
     `<span class="tpm-res"><b>${won ? "W" : "L"}</b> ${m.maps_for}:${m.maps_against}</span></div>`;
 }
@@ -589,11 +641,11 @@ function renderTeamPage(t) {
       `<div class="tp-col">` +
         sect("Состав", `<div class="tp-roster">${roster || "<em>пусто</em>"}</div>`) +
         (upcoming.length ? sect(`Предстоящие матчи <span class="muted">(${upcoming.length})</span>`,
-          `<div class="tpm-list">${upcoming.map(matchLine).join("")}</div>`) : "") +
+          `<div class="tpm-list">${upcoming.map((m, i) => matchLine(m, "u", i)).join("")}</div>`) : "") +
       `</div>` +
       `<div class="tp-col">` +
-        sect(`Сыгранные матчи <span class="muted">(${played.length})</span>`,
-          played.length ? `<div class="tpm-list">${played.map(matchLine).join("")}</div>` : `<div class="muted">Пока не сыграно.</div>`) +
+        sect(`Сыгранные матчи <span class="muted">(${played.length}, клик — детали)</span>`,
+          played.length ? `<div class="tpm-list">${played.map((m, i) => matchLine(m, "p", i)).join("")}</div>` : `<div class="muted">Пока не сыграно.</div>`) +
         sect("Трансферы", transfers.length ? `<div class="tp-tx">${transfers.map((x) => `<div class="tp-tx-row">${txLine(x)}</div>`).join("")}</div>` : `<div class="muted">Без движений в последнее межсезонье.</div>`) +
         sect("История по сезонам", histRows ? `<div class="tph">${histRows}</div>` : `<div class="muted">Ещё не сыграно сезонов.</div>`) +
       `</div>` +
@@ -601,6 +653,9 @@ function renderTeamPage(t) {
   page.querySelector(".tp-close").addEventListener("click", () => page.classList.add("is-hidden"));
   page.querySelectorAll(".tp-player").forEach((r) =>
     r.addEventListener("click", () => openPlayer(r.dataset.pid)));
+  const teamCtx = { team_id: t.team_id, name: t.name, abbrev: t.abbrev };
+  page.querySelectorAll(".tpm[data-mk]").forEach((r) =>
+    r.addEventListener("click", () => openLeagueMatch((r.dataset.mk === "u" ? upcoming : played)[+r.dataset.mi], teamCtx)));
 }
 
 // --------------------------------------------------------------------------- //
@@ -1183,6 +1238,7 @@ function wireEvents() {
   el("osCancel").addEventListener("click", () => show("osModal", false));
   el("chronClose").addEventListener("click", () => show("chronModal", false));
   el("plClose").addEventListener("click", () => show("playerModal", false));
+  el("mtClose").addEventListener("click", () => show("matchModal", false));
   ["osRounds", "osSlots", "osSlotS", "osRookN", "osRookS", "osFaN", "osFaS"].forEach((id) =>
     el(id).addEventListener("input", updateEta));
   el("openBtn").addEventListener("click", () => {

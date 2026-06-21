@@ -101,7 +101,9 @@ def player_view(world: dict, pid: str) -> dict:
     soloq_games = [{"season": m.get("season"), "round": m.get("round"), "won": m.get("won"),
                     "delta": m.get("delta"),
                     "teammates": [_nick(x) for x in (m.get("teammates") or [])],
-                    "opponents": [_nick(x) for x in (m.get("opponents") or [])]}
+                    "opponents": [_nick(x) for x in (m.get("opponents") or [])],
+                    "teammate_ids": list(m.get("teammates") or []),
+                    "opponent_ids": list(m.get("opponents") or [])}
                    for m in reversed((p.get("soloq_matches") or [])[-20:])]
     return {
         "player_id": pid,
@@ -151,7 +153,42 @@ def player_page(world: dict, pid: str) -> dict:
     base["soloq_games"] = (base.get("soloq_games") or [])     # already last-20 from player_view
     base["seasons_played"] = p.get("seasons_played", 0)
     base["official_games"] = p.get("official_games", 0)
+    base["soloq_history"] = base.get("rating_history") or []   # SoloQ rating progression (per season)
+    base["soloq_total"] = len(p.get("soloq_matches") or [])
     return base
+
+
+def soloq_match(world: dict, player_id: str, season: int, rnd: int) -> dict:
+    """Reconstruct a 3v3 SoloQ game from the round: both ad-hoc teams of 3, each player's rating
+    delta in that game, and which side won. Players + their clubs are linkable from the detail."""
+    players = world["players"]
+    if player_id not in players:
+        raise KeyError(f"player {player_id!r} not in world")
+
+    def entry(pid):
+        for m in (players.get(pid, {}).get("soloq_matches") or []):
+            if m.get("season") == season and m.get("round") == rnd:
+                return m
+        return None
+
+    pm = entry(player_id)
+    if pm is None:
+        raise KeyError(f"no SoloQ game for {player_id} at season {season} round {rnd}")
+    side_a = [player_id] + list(pm.get("teammates") or [])
+    side_b = list(pm.get("opponents") or [])
+
+    def pinfo(pid):
+        p = players.get(pid, {})
+        e = entry(pid)
+        tname, tabbr = _team_label(world, p)
+        return {"player_id": pid, "nickname": p.get("nickname", pid), "faction": p.get("faction"),
+                "archetype": p.get("archetype"), "role": p.get("role"),
+                "rating": round(float(p.get("soloq_rating", 0))),
+                "delta": e.get("delta") if e else None,
+                "team_id": p.get("team_id"), "team": tname, "team_abbrev": tabbr}
+
+    return {"season": season, "round": rnd, "won_a": bool(pm.get("won")),
+            "team_a": [pinfo(x) for x in side_a], "team_b": [pinfo(x) for x in side_b]}
 
 
 def ranked_players(world: dict, *, role: Optional[str] = None,
@@ -292,10 +329,15 @@ def _match_summary(world: dict, team_id: str, s: dict, played: bool, season_num:
     opp = s.get("away") if is_home else s.get("home")
     mf = (s.get("maps_home") if is_home else s.get("maps_away")) if played else None
     ma = (s.get("maps_away") if is_home else s.get("maps_home")) if played else None
+    # map-by-map winners from THIS team's view (W/L per map), when the engine recorded a sequence
+    seq = s.get("sequence") if played else None
+    maps_seq = [("W" if w == team_id else "L") for w in seq] if seq else None
     return {"season": season_num, "day": s.get("day"), "stage": s.get("stage"),
             "stage_label": STAGE_LABEL.get(s.get("stage"), s.get("stage")),
-            "opponent": opp, "opponent_abbrev": _abbr(world, opp), "home": is_home,
-            "played": played, "maps_for": mf, "maps_against": ma,
+            "opponent": opp, "opponent_abbrev": _abbr(world, opp),
+            "opponent_name": (world["teams"][opp]["name"] if opp in world.get("teams", {}) else opp),
+            "home": is_home, "best_of": s.get("best_of"),
+            "played": played, "maps_for": mf, "maps_against": ma, "maps_seq": maps_seq,
             "won": (s.get("winner") == team_id) if played else None}
 
 
