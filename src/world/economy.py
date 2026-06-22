@@ -15,21 +15,24 @@ ATTR_KEYS = ("attack", "defense", "economy", "tempo", "consistency", "potential"
 
 
 def _default_upper_prizes() -> list[int]:
-    return [1000, 800, 650, 520, 420, 340, 280, 230, 190, 160]
+    # Upper league: placement prize by FINAL rank 1..10 (the whole league is one pool).
+    return [1000, 760, 580, 450, 360, 290, 235, 190, 150, 120]
 
 
-def _default_lower_prizes() -> list[int]:
-    return [450, 380, 320, 270, 230, 195, 165, 140, 120, 100, 85, 70]
+def _default_lower_group_prizes() -> list[int]:
+    # Lower league: placement prize by place WITHIN THE GROUP 1..6. Groups A and Z are SEPARATE,
+    # EQUAL pools — 1st in A earns exactly what 1st in Z earns (owner's call). 6 entries (one group).
+    return [300, 230, 175, 135, 105, 80]
 
 
 @dataclass
 class EconomyConfig:
     # Placement prizes by finishing position (index 0 = 1st).
     upper_prizes: list[int] = field(default_factory=_default_upper_prizes)
-    lower_prizes: list[int] = field(default_factory=_default_lower_prizes)
-    # Playoff bonus — only the GRAND FINAL winner gets it.
-    upper_playoff_bonus: int = 800
-    lower_playoff_bonus: int = 500
+    lower_group_prizes: list[int] = field(default_factory=_default_lower_group_prizes)
+    # Playoff bonus — only the GRAND FINAL winner gets it (separately per league).
+    upper_playoff_bonus: int = 500
+    lower_playoff_bonus: int = 200
     # Starting treasury seed at the first regular season (Season 0 gives none).
     upper_seed_treasury: int = 300
     lower_seed_treasury: int = 200
@@ -48,8 +51,10 @@ CONFIG = EconomyConfig()
 # Prizes
 # --------------------------------------------------------------------------- #
 def placement_prize(league: str, place: int, config: EconomyConfig = CONFIG) -> int:
-    """Prize for finishing ``place`` (1-based) in a league."""
-    table = config.upper_prizes if league == "upper" else config.lower_prizes
+    """Prize for finishing ``place`` (1-based) in a league. For ``upper`` ``place`` is the league
+    rank (1..10); for ``lower`` it is the place WITHIN THE GROUP (1..6) — A and Z use the same table,
+    so 1st in A and 1st in Z earn identically."""
+    table = config.upper_prizes if league == "upper" else config.lower_group_prizes
     if place < 1 or place > len(table):
         return 0
     return table[place - 1]
@@ -57,6 +62,16 @@ def placement_prize(league: str, place: int, config: EconomyConfig = CONFIG) -> 
 
 def playoff_bonus(league: str, config: EconomyConfig = CONFIG) -> int:
     return config.upper_playoff_bonus if league == "upper" else config.lower_playoff_bonus
+
+
+def prize_schedule(config: EconomyConfig = CONFIG) -> dict:
+    """The full prize STRUCTURE for display in the UI (so a club can see exactly what each place +
+    the title pays). Upper = one pool by league rank; lower = per-group pool (A and Z identical)."""
+    return {
+        "upper": {"places": list(config.upper_prizes), "champion_bonus": config.upper_playoff_bonus},
+        "lower": {"places": list(config.lower_group_prizes), "champion_bonus": config.lower_playoff_bonus,
+                  "per_group": True},
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -108,15 +123,30 @@ def update_player_salary(player: dict, config: EconomyConfig = CONFIG) -> float:
 # --------------------------------------------------------------------------- #
 # Apply to a world (one regular-season settlement)
 # --------------------------------------------------------------------------- #
-def award_prizes(world: dict, placements: list[dict], config: EconomyConfig = CONFIG) -> None:
-    """Credit placement + grand-final prizes. ``placements`` items:
-    ``{team_id, league, place, grand_final_winner: bool}``."""
+def award_prizes(world: dict, placements: list[dict], config: EconomyConfig = CONFIG) -> dict:
+    """Credit placement + grand-final prizes (regionals-style). ``placements`` items:
+    ``{team_id, league, place, group?, grand_final_winner: bool}`` — for ``lower`` teams ``place`` is
+    the place WITHIN THE GROUP and ``group`` is "A"/"Z". The total is added to the team treasury AND
+    split equally among the roster as player EARNINGS (career prize money). Returns a breakdown
+    ``{team_id: {place, league, group, prize, bonus, total}}`` so the season can show who won what."""
+    awarded: dict = {}
     for row in placements:
-        team = world["teams"][row["team_id"]]
+        tid = row["team_id"]
+        team = world["teams"][tid]
         prize = placement_prize(row["league"], row["place"], config)
-        if row.get("grand_final_winner"):
-            prize += playoff_bonus(row["league"], config)
-        team["treasury"] += prize
+        bonus = playoff_bonus(row["league"], config) if row.get("grand_final_winner") else 0
+        total = prize + bonus
+        team["treasury"] += total
+        awarded[tid] = {"place": row["place"], "league": row["league"], "group": row.get("group"),
+                        "prize": prize, "bonus": bonus, "total": total}
+        roster = team.get("roster", [])
+        if roster and total:                                # split the purse among the players who earned it
+            share = total // len(roster)
+            for pid in roster:
+                p = world["players"].get(pid)
+                if p is not None:
+                    p["earnings"] = int(p.get("earnings", 0)) + share
+    return awarded
 
 
 def pay_salaries(world: dict, config: EconomyConfig = CONFIG) -> dict:

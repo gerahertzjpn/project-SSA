@@ -115,6 +115,9 @@ def player_view(world: dict, pid: str) -> dict:
         "rating": round(float(p.get("soloq_rating", 0))),
         "delta": _season_delta(p.get("soloq_history") or []),
         "rating_history": hist,
+        "attributes": {k: int(v) for k, v in (p.get("attributes") or {}).items()},
+        "earnings": int(p.get("earnings", 0)),
+        "salary": round(float(p.get("salary", 0))),
         "net_id": p.get("net_id"),
         "team_id": p.get("team_id"),
         "team": team_name,
@@ -176,27 +179,42 @@ def soloq_match(world: dict, player_id: str, season: int, rnd: int) -> dict:
         raise KeyError(f"no SoloQ game for {player_id} at season {season} round {rnd}")
     side_a = [player_id] + list(pm.get("teammates") or [])
     side_b = list(pm.get("opponents") or [])
+    # ratings + deltas AS OF the match (all 6 share a 100-step band), snapshotted on the clicked
+    # player's entry — so every player resolves even though their stored round ids differ.
+    at_time = pm.get("ratings") or {}
+    at_deltas = pm.get("deltas") or {}
+    # the matchmaking band (floor of the TRUE rating) is the same for all 6 — use it everywhere so a
+    # rating that rounded up across a 100-boundary never makes the detail look "cross-band".
+    band = pm.get("band")
+    if band is None:
+        band = (int(at_time.get(player_id, 1000)) // 100) * 100
 
     def pinfo(pid):
         p = players.get(pid, {})
         e = entry(pid)
         tname, tabbr = _team_label(world, p)
+        rating = at_time.get(pid, round(float(p.get("soloq_rating", 0))))
+        delta = at_deltas.get(pid, e.get("delta") if e else None)
         return {"player_id": pid, "nickname": p.get("nickname", pid), "faction": p.get("faction"),
                 "archetype": p.get("archetype"), "role": p.get("role"),
-                "rating": round(float(p.get("soloq_rating", 0))),
-                "delta": e.get("delta") if e else None,
+                "rating": rating, "band": band, "delta": delta,
                 "team_id": p.get("team_id"), "team": tname, "team_abbrev": tabbr}
 
-    return {"season": season, "round": rnd, "won_a": bool(pm.get("won")),
+    return {"season": season, "round": rnd, "won_a": bool(pm.get("won")), "band": band,
             "team_a": [pinfo(x) for x in side_a], "team_b": [pinfo(x) for x in side_b]}
 
 
 def ranked_players(world: dict, *, role: Optional[str] = None,
-                   faction: Optional[str] = None) -> list[dict]:
-    """Every player ranked by SoloQ rating (1 = best), with rank + per-season delta.
-    Optional filters by role ('pro'/'streamer') and faction."""
+                   faction: Optional[str] = None, include_reserves: bool = False) -> list[dict]:
+    """Every ENTERED player ranked by SoloQ rating (1 = best), with rank + per-season delta.
+    Reserves are held out of the game (never played → flat rating 1000), so they are EXCLUDED
+    from the ladder by default — they only pollute the bottom with non-players. Set
+    ``include_reserves=True`` for a dedicated reserve view. Optional role/faction filters."""
+    reserves = set(world.get("reserves", []))
     views = []
     for pid, p in world["players"].items():
+        if not include_reserves and (pid in reserves or p.get("status") == "reserve"):
+            continue
         if role is not None and p.get("role") != role:
             continue
         if faction is not None and p.get("faction") != faction:
@@ -349,15 +367,20 @@ def team_matches(world: dict, team_id: str) -> list[dict]:
     rev = live_season.revealed(world)
     out = []
     if rev is not None:
+        _revset = set(rev["revealed_gids"])
         for s in list(rev["all_regular"]) + list(rev["playoff_series"]):
             if team_id in (s.get("home"), s.get("away")):
-                out.append(_match_summary(world, team_id, s, s.get("day", 0) <= rev["cursor"], rev["season"]))
+                out.append(_match_summary(world, team_id, s, s["gid"] in _revset, rev["season"]))
     else:
         hist = world.get("history") or []
         season_num = hist[-1]["season"] if hist else world.get("season", 0)
-        for e in world.get("calendar", []):
-            if e.get("season") == season_num and team_id in (e.get("home"), e.get("away")):
-                out.append(_match_summary(world, team_id, e, e.get("played", False), season_num))
+        season_evs = [e for e in world.get("calendar", []) if e.get("season") == season_num]
+        day_of = _day_assigner(season_evs)                       # 2 regular series/day, playoffs 1/day
+        for e in season_evs:
+            if team_id in (e.get("home"), e.get("away")):
+                m = _match_summary(world, team_id, e, e.get("played", False), season_num)
+                m["day"] = day_of(e)
+                out.append(m)
     out.sort(key=lambda m: m.get("day") or 0)
     return out
 
@@ -429,11 +452,65 @@ def _live_record(world: dict, team_id: str) -> dict:
     return {"series_wins": sw, "series_losses": sl, "maps_won": mw, "maps_lost": ml}
 
 
+_STRAT_RU = {"standard": "Стандарт", "core_rush": "Раш ядра", "all_in": "Олл-ин",
+             "turtle": "Черепаха", "macro": "Макро-эконом", "baron": "Контроль Лорда"}
+_FAC_RU = {"humans": "Humans", "infected": "Infected", "robots": "Robots"}
+
+
+def _readable_when(when: dict) -> str:
+    """Translate a playbook condition dict into a human IF-clause (Russian)."""
+    parts = []
+    if "opp_faction_majority" in when:
+        parts.append(f"соперник в основном {_FAC_RU.get(when['opp_faction_majority'], when['opp_faction_majority'])}")
+    if when.get("stage") == "playoff":
+        parts.append("в плей-офф")
+    if "opp_last_strategy" in when:
+        parts.append(f"соперник прошлый раз играл «{_STRAT_RU.get(when['opp_last_strategy'], when['opp_last_strategy'])}»")
+    if "series_lost" in when:
+        parts.append(f"уступаем {when['series_lost']}+ карт в серии")
+    if "series_won" in when:
+        parts.append(f"ведём {when['series_won']}+ карт в серии")
+    if "playoff_losing_streak" in when:
+        parts.append(f"серия из {when['playoff_losing_streak']}+ поражений")
+    if when.get("series_ahead"):
+        parts.append("ведём в серии")
+    if when.get("series_behind"):
+        parts.append("уступаем в серии")
+    if "vs_team" in when:
+        parts.append("против конкретного клуба")
+    return ", ".join(parts) or "—"
+
+
+def team_playbook(world: dict, team_id: str) -> dict:
+    """The team's tournament PLAYBOOK in readable form: a base strategy + IF-THEN overrides (checked
+    in order, first match wins). The manager authored this before the season."""
+    try:
+        from src.world import playbook as _pb
+        plan = _pb.get_plan(world, team_id)
+    except Exception:
+        plan = (world["teams"].get(team_id, {}) or {}).get("tournament_plan") or {}
+    base = plan.get("base") or {}
+    overrides = [{"when": _readable_when(ov.get("when") or {}),
+                  "strategy": _STRAT_RU.get(ov.get("strategy"), ov.get("strategy")),
+                  "strategy_id": ov.get("strategy"), "note": ov.get("note")}
+                 for ov in (plan.get("overrides") or [])]
+    return {"team_id": team_id, "name": world["teams"].get(team_id, {}).get("name", team_id),
+            "base_strategy": _STRAT_RU.get(base.get("strategy"), base.get("strategy") or "—"),
+            "base_strategy_id": base.get("strategy"), "overrides": overrides}
+
+
 def team_view(world: dict, team_id: str) -> dict:
     """Full per-team page (liquipedia-style): identity + global power rank, power curve, trophies,
     roster, THIS season's record (live-aware), played + upcoming matches, transfers, season history."""
+    from src.world import live_season
     t = world["teams"][team_id]
     matches = team_matches(world, team_id)
+    # Power curve: past seasons' canonical Elo; during a day-by-day reveal extend it with the
+    # PROVISIONAL Power so the curve tracks the revealed games (never the unrevealed final).
+    elo_hist = [round(float(e)) for e in t.get("elo_history", [])]
+    rp = live_season.revealed_power(world)
+    if rp is not None:
+        elo_hist = elo_hist + [rp.get(team_id, elo_hist[-1] if elo_hist else round(float(t.get("elo", 1000.0))))]
     return {
         "team_id": team_id, "name": t["name"], "abbrev": t["abbrev"],
         "manager": t.get("manager"), "league": t.get("league"), "group": t.get("group"),
@@ -441,7 +518,7 @@ def team_view(world: dict, team_id: str) -> dict:
         "power_rank": _power_rank_of(world, team_id), "n_teams": len(world["teams"]),
         "titles": t.get("titles", 0),
         "treasury": round(float(t.get("treasury", 0))),
-        "elo_history": [round(float(e)) for e in t.get("elo_history", [])],
+        "elo_history": elo_hist,
         "trophies": t.get("trophies", []),
         "certificates": len(t.get("training_certificates", [])),
         "roster": [player_view(world, pid) for pid in t.get("roster", [])
@@ -451,12 +528,31 @@ def team_view(world: dict, team_id: str) -> dict:
         "matches_upcoming": [m for m in matches if not m["played"]],
         "transfers": _team_transfers(world, team_id),
         "season_history": _team_season_history(world, team_id),
+        "playbook": team_playbook(world, team_id),
     }
 
 
 # --------------------------------------------------------------------------- #
 # Schedule + playoff bracket
 # --------------------------------------------------------------------------- #
+def _day_assigner(evs: list[dict]):
+    """Map each season event to its schedule DAY. Trust the stored day when the engine tracked it
+    (a live reveal preserves the real grouping: 2 regular series/day, playoffs 1/day); otherwise
+    assign 2 regular series per day, then playoffs 1/day — so the schedule ALWAYS reads '2 per day'
+    like the LIVE tab, never one match per day."""
+    regular = [e for e in evs if e.get("stage") == "league"]
+    playoff = [e for e in evs if e.get("stage") != "league"]
+    if regular and all(e.get("day") for e in evs):
+        return lambda e: e.get("day") or 0
+    day = {}
+    for i, e in enumerate(regular):
+        day[id(e)] = i // 2 + 1
+    base = (len(regular) + 1) // 2
+    for j, e in enumerate(playoff):
+        day[id(e)] = base + j + 1
+    return lambda e: day.get(id(e)) or (e.get("day") or 0)
+
+
 def _match_row(world: dict, e: dict, day: int) -> dict:
     def nm(tid):
         return world["teams"][tid]["abbrev"] if tid in world["teams"] else tid
@@ -464,8 +560,11 @@ def _match_row(world: dict, e: dict, day: int) -> dict:
     def full(tid):
         return world["teams"][tid]["name"] if tid in world["teams"] else tid
 
+    # live series carry group='lower_A'/'lower_Z'; the finished-season calendar event doesn't store it,
+    # so fall back to the home club's group ('A'/'Z') — leagueBadge tolerates both forms (endsWith 'Z').
+    group = e.get("group") or world["teams"].get(e.get("home"), {}).get("group")
     return {
-        "day": day, "league": e.get("league"), "stage": e.get("stage"),
+        "day": day, "league": e.get("league"), "group": group, "stage": e.get("stage"),
         "stage_label": STAGE_LABEL.get(e.get("stage"), e.get("stage")),
         "home": e.get("home"), "away": e.get("away"),
         "home_abbrev": nm(e.get("home")), "away_abbrev": nm(e.get("away")),
@@ -501,27 +600,40 @@ def draft_view(world: dict) -> dict:
 def _live_bracket(world: dict, rev: dict) -> dict:
     """The playoff bracket in schedule shape — shown FROM DAY 0 with TBD slots and filled
     progressively: round-1 SEEDS appear only once the regular season is fully revealed (never a
-    spoiler), later matchups + results appear as their feeder games are revealed."""
+    spoiler), later matchups + results appear as their feeder games are revealed. Columns are by
+    bracket DEPTH (round), so the graph reads left-to-right as a proper tree."""
     from src.world import live_season
-    cursor, nreg = rev["cursor"], rev["n_regular_days"]
+    revset = set(rev["revealed_gids"])
+    done_by_lg = rev.get("regular_done_by_league") or {"upper": rev["regular_done"], "lower": rev["regular_done"]}
 
-    def slot(ref, nodes):
-        if isinstance(ref, str):                     # a concrete seed — hide until the regular is done
-            return ref if cursor >= nreg else None
-        return live_season._resolve(ref, nodes, max_day=cursor)
-
-    def cols(bracket):
+    def cols(bracket, regular_done):
+        def slot(ref, nodes):
+            if isinstance(ref, str):                 # a concrete seed — hide until THIS league's regular is done
+                return ref if regular_done else None
+            return live_season.resolve_for_reveal(ref, nodes, revset)
         nodes = bracket["nodes"]
-        by_stage: dict = {}
+        depth: dict = {}
+
+        def dof(key):                                # longest path from a seed = the round number
+            if key not in depth:
+                depth[key] = 0                       # cycle guard (parity with the JS bgLeague side)
+                n = nodes[key]
+                fed = [(r.get("w") or r.get("l")) for r in (n["home"], n["away"]) if isinstance(r, dict)]
+                depth[key] = 0 if not fed else 1 + max(dof(f) for f in fed)
+            return depth[key]
+        for key in bracket["order"]:
+            dof(key)
+        by_depth: dict = {}
         for key in bracket["order"]:
             n = nodes[key]
             home, away = slot(n["home"], nodes), slot(n["away"], nodes)
+            shown = n.get("gid") in revset
             res = n.get("result")
-            shown = bool(res) and n.get("day", 0) <= cursor
-            feeders = [(r.get("w") or r.get("l")) for r in (n["home"], n["away"]) if isinstance(r, dict)]
-            by_stage.setdefault(n["stage"], []).append({
+            # connector lines show only where the WINNER advances (loser-drops are NOT drawn)
+            feeders = [r["w"] for r in (n["home"], n["away"]) if isinstance(r, dict) and "w" in r]
+            by_depth.setdefault(depth[key], []).append({
                 "stage": n["stage"], "stage_label": STAGE_LABEL.get(n["stage"], n["stage"]),
-                "key": key, "from": feeders,            # for the bracket graph's connector lines
+                "key": key, "from": feeders,            # winner-advance feeders for the connector lines
                 "home": home, "away": away,
                 "home_abbrev": _abbr(world, home) if home else "TBD",
                 "away_abbrev": _abbr(world, away) if away else "TBD",
@@ -529,20 +641,28 @@ def _live_bracket(world: dict, rev: dict) -> dict:
                 "maps_home": res["maps_home"] if shown else None,
                 "maps_away": res["maps_away"] if shown else None,
                 "winner": res["winner"] if shown else None})
-        return [{"stage": st, "label": STAGE_LABEL.get(st, st), "matches": by_stage[st]}
-                for st in PLAYOFF_STAGE_ORDER if st in by_stage]
+        out = []
+        maxd = max(by_depth) if by_depth else 0
+        for d in sorted(by_depth):
+            ms = by_depth[d]
+            stages = {m["stage"] for m in ms}
+            label = (STAGE_LABEL.get(next(iter(stages)), next(iter(stages))) if len(stages) == 1
+                     else ("Гранд-финал" if d == maxd else f"Раунд {d + 1}"))
+            out.append({"stage": f"d{d}", "label": label, "matches": ms})
+        return out
 
-    return {"upper": cols(rev["playoff"]["upper"]), "lower": cols(rev["playoff"]["lower"])}
+    return {"upper": cols(rev["playoff"]["upper"], done_by_lg["upper"]),
+            "lower": cols(rev["playoff"]["lower"], done_by_lg["lower"])}
 
 
 def _live_schedule(world: dict, rev: dict) -> dict:
     """Schedule during a day-by-day reveal. The full regular fixture list is shown FROM DAY 0
-    (who plays whom on which day) — results appear only once a fixture's day is revealed. The
-    playoff bracket fills in as it's decided."""
-    cursor = rev["cursor"]
+    (who plays whom on which day) — a fixture's result appears only once that game is revealed.
+    The playoff bracket fills in as it's decided."""
+    revset = set(rev["revealed_gids"])
 
     def ev(s):
-        played = s.get("day", 0) <= cursor
+        played = s.get("gid") in revset
         pb = s.get("playbook") or {}
         return {**s, "played": played,
                 "maps_home": s.get("maps_home") if played else None,
@@ -551,32 +671,133 @@ def _live_schedule(world: dict, rev: dict) -> dict:
                 "home_strategy": (pb.get("home") or {}).get("strategy") if played else None,
                 "away_strategy": (pb.get("away") or {}).get("strategy") if played else None}
     regular = [_match_row(world, ev(s), s.get("day", 0)) for s in rev["all_regular"]]
-    # the bracket is shown from day 0 with TBD slots, filling in as the playoff is revealed
     return {"season": rev["season"], "regular": regular, "bracket": _live_bracket(world, rev),
             "n_matches": len(rev["all_regular"]) + len(rev["playoff_series"])}
 
 
+def history_view(world: dict) -> list:
+    """Past seasons, enriched with team NAMES + prize money + top finishers + playoff result — for a
+    rich «История» tab. Reads the recorded summaries (finalize_season); team ids resolve to current
+    names (clubs persist across promotion/relegation)."""
+    def nm(tid):
+        t = world["teams"].get(tid)
+        return {"team_id": tid, "name": t["name"] if t else tid, "abbrev": t["abbrev"] if t else tid}
+
+    out = []
+    for h in world.get("history", []):
+        money = h.get("money") or {}
+        play = h.get("playoff") or {}
+        up_rank = h.get("upper_ranking", [])
+        lo_rank = h.get("lower_ranking", [])
+        std = h.get("standings") or {}
+        breakdown = money.get("prize_breakdown") or {}
+        pbt = money.get("prizes_by_team", {})
+
+        def row_for(tid, place):
+            b = breakdown.get(tid, {})
+            return {**nm(tid), "place": b.get("place") or place, "prize": b.get("prize", 0),
+                    "bonus": b.get("bonus", 0), "total": b.get("total", pbt.get(tid, 0))}
+
+        # Prize pool by POOL: upper (one league), lower-A and lower-Z (SEPARATE, equal pools — never
+        # mixed into one 1..12 column). Each group is ordered by its own place.
+        upper_rows = [row_for(tid, i + 1) for i, tid in enumerate(up_rank)]
+
+        def group_rows(gkey):
+            members = std.get(gkey) or {}              # {tid: {place, ...}}
+            ordered = sorted(members.items(), key=lambda kv: kv[1].get("place", 99))
+            return [row_for(tid, s.get("place")) for tid, s in ordered]
+
+        prize_pool = {"upper": upper_rows, "lower_A": group_rows("lower_A"),
+                      "lower_Z": group_rows("lower_Z")}
+        lower_rows = [row_for(tid, i + 1) for i, tid in enumerate(lo_rank)]   # combined, for the top-3 list
+
+        up_play, lo_play = play.get("upper", {}), play.get("lower", {})
+        out.append({
+            "season": h.get("season"),
+            # the GRAND-FINAL WINNER of each league (this is the season champion)
+            "upper_champion": nm(h.get("upper_champion")),
+            "lower_champion": nm(h.get("lower_champion")),
+            # BOTH grand-final teams per league (winner first), so the UI can show "winner — beat finalist"
+            "upper_finalists": [nm(t) for t in (up_play.get("grand_finalists") or [])],
+            "lower_finalists": [nm(t) for t in (lo_play.get("grand_finalists") or [])],
+            "promoted": [nm(t) for t in h.get("promoted", [])],     # BOTH lower grand-finalists go up
+            "relegated": [nm(t) for t in h.get("relegated", [])],
+            "upper_top": [dict(r) for r in upper_rows[:3]],
+            "lower_top": [dict(r) for r in lower_rows[:3]],
+            "prizes_by_team": pbt,
+            "prize_pool": prize_pool,
+            "bracket": _season_bracket(world, h.get("season")),   # playoff bracket for the History tab
+            "n_matches": len(up_rank) and 85,        # 75 league + 10 playoff series (fixed format)
+        })
+    return out
+
+
+def _season_bracket(world: dict, season: int) -> dict:
+    """The playoff bracket for a PAST season (from the recorded calendar) in the same shape the
+    bracket graph renders — so the History tab can show the sketch with connectors."""
+    if season is None:
+        return {}
+    playoff: dict = {}
+    for e in world.get("calendar", []):
+        if e.get("season") != season or e.get("stage") == "league":
+            continue
+        lg = e.get("league")
+        playoff.setdefault(lg, {}).setdefault(e.get("stage"), []).append(_match_row(world, e, 0))
+    bracket = {}
+    for lg, by_stage in playoff.items():
+        _assign_bracket_feeders(by_stage)
+        bracket[lg] = [{"stage": s, "label": STAGE_LABEL.get(s, s), "matches": by_stage[s]}
+                       for s in PLAYOFF_STAGE_ORDER if s in by_stage]
+    return bracket
+
+
+def _assign_bracket_feeders(by_stage: dict) -> None:
+    """Tag canonical (calendar-derived) playoff matches with ``key`` + feeder ``from`` keys so the
+    bracket graph draws connectors for a FINISHED season too (the live path already carries them).
+    Keys mirror live_season's bracket DAGs (upper league: ub/lb/lbf/gf; lower: ub/lb1a/lb1b/lb2/lbf/gf)."""
+    def tag(stage, key, frm):
+        for m in by_stage.get(stage, []):
+            m["key"], m["from"] = key, list(frm)
+    # NB: `from` lists only WINNER-advance feeders (loser-drops aren't drawn as lines).
+    if "lb_r1" in by_stage:                         # lower league (2 first-round losers matches)
+        for i, m in enumerate(by_stage.get("lb_r1", [])):
+            m["key"], m["from"] = f"lb1{chr(ord('a') + i)}", []
+        r1_keys = [m["key"] for m in by_stage.get("lb_r1", [])]
+        tag("ub", "ub", [])
+        tag("lb_r2", "lb2", r1_keys)
+        tag("lb_final", "lbf", ["lb2"])             # lb2 WINNER advances (ub loser drops here — no line)
+        tag("grand_final", "gf", ["ub", "lbf"])
+    else:                                           # upper league (single loser-bracket round)
+        tag("ub", "ub", [])
+        tag("lb", "lb", [])
+        tag("lb_final", "lbf", ["lb"])              # lb WINNER advances (ub loser drops here — no line)
+        tag("grand_final", "gf", ["ub", "lbf"])
+
+
 def schedule_view(world: dict, season: Optional[int] = None) -> dict:
-    """A season's fixtures as a day-by-day list (1 series = 1 day, in calendar order)
-    plus the playoff bracket grouped per league + stage for a bracket render. During a day-by-day
-    reveal it shows only what's been revealed."""
+    """A season's fixtures as a day-by-day list (regular: 2 series/day, playoffs 1/day — the SAME
+    grouping the LIVE tab uses) plus the playoff bracket grouped per league + stage. During a
+    day-by-day reveal it shows only what's been revealed."""
     from src.world import live_season
     rev = live_season.revealed(world)
     if rev is not None:
         return _live_schedule(world, rev)
     season = world["season"] if season is None else season
     evs = [e for e in world.get("calendar", []) if e.get("season") == season]
+    day_of = _day_assigner(evs)                              # 2 regular series/day, playoffs 1/day
     regular, playoff = [], {}
-    for i, e in enumerate(evs, 1):
-        row = _match_row(world, e, i)
+    for e in evs:
+        row = _match_row(world, e, day_of(e))
         if e.get("stage") == "league":
             regular.append(row)
         else:
             lg = e.get("league")
             playoff.setdefault(lg, {}).setdefault(e.get("stage"), []).append(row)
-    # order each league's stages for a left-to-right bracket
+    regular.sort(key=lambda m: m.get("day") or 0)
+    # order each league's stages for a left-to-right bracket (+ feeder keys for the connector graph)
     bracket = {}
     for lg, by_stage in playoff.items():
+        _assign_bracket_feeders(by_stage)
         bracket[lg] = [{"stage": s, "label": STAGE_LABEL.get(s, s), "matches": by_stage[s]}
                        for s in PLAYOFF_STAGE_ORDER if s in by_stage]
     return {"season": season, "regular": regular, "bracket": bracket,

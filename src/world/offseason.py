@@ -110,7 +110,13 @@ def run_training_market(world: dict, cfg: training_auction.TrainingConfig, *,
         if award:
             awarded += 1
             tname = world["teams"][award["team_id"]]["name"]
-            awards.append({"team_id": award["team_id"], "team": tname, "price": award["price"]})
+            # capture the FULL ranked bid table for this slot (who offered what) — for the
+            # interactive auction UI; bids reflect this slot (prior winners' interest already halved).
+            slot_bids = [{"team_id": tid, "team": world["teams"][tid]["name"], "amount": amt}
+                         for tid, amt in sorted(award.get("bids", {}).items(), key=lambda kv: (-kv[1], kv[0]))
+                         if amt and amt > 0]
+            awards.append({"team_id": award["team_id"], "team": tname, "price": award["price"],
+                           "steps": award.get("steps"), "bids": slot_bids})
             events.emit(feed, "train", f"Аукцион тренировок: {tname} выиграл слот за {award['price']}")
             bids[award["team_id"]] = bids.get(award["team_id"], 0) // 2
     jobs = [job for team in world["teams"].values()
@@ -251,6 +257,110 @@ def _build_transactions(world: dict, *, auction, team_jobs, fa_bids, signings,
                        "releases": len(release_rows), "requests": len(requests)}}
 
 
+def _reeval_trained_cards(world: dict, queue: list[dict], feed: Optional[list] = None) -> int:
+    """Re-derive the card of EVERY net that trained (skill/team/style ops) or was forked (rookies)
+    this off-season, and write the fresh attributes back onto the world player. The derivation uses
+    the SAME order-conditioned gauntlet + ABSOLUTE reference scales as every other card, so all cards
+    stay on equal footing. Only runs when a real backend executed (cards are written to disk)."""
+    from src.world.world import _load_player_cards, ATTR_KEYS
+    net_ids = set()
+    for job in (queue or []):
+        tgt = job.get("target") or {}
+        for nid in (tgt.get("net_ids") or []):
+            net_ids.add(nid)
+        if tgt.get("net_id"):
+            net_ids.add(tgt["net_id"])
+    if not net_ids:
+        return 0
+    cards = _load_player_cards(force=True)              # re-read from disk (subprocess just rewrote it)
+    updated = 0
+    for p in world["players"].values():
+        nid = p.get("net_id")
+        if nid in net_ids and nid in cards:
+            p["attributes"] = {k: int(cards[nid][k]) for k in ATTR_KEYS if k in cards[nid]}
+            updated += 1
+    if updated:
+        events.emit(feed, "train", f"Карточки переоценены (равные условия): {updated}")
+    return updated
+
+
+def _skill_changes(world: dict, before: dict) -> list[dict]:
+    """Players whose card characteristics changed this off-season (trained / re-evaluated), with the
+    per-attribute before→after deltas — so the UI can show WHO improved and HOW."""
+    out = []
+    for pid, p in world["players"].items():
+        after = p.get("attributes") or {}
+        old = before.get(pid) or {}
+        if not after or not old:
+            continue
+        changes = {k: int(after[k]) - int(old.get(k, after[k])) for k in after
+                   if int(after[k]) != int(old.get(k, after[k]))}
+        if changes:
+            out.append({"player_id": pid, "player": p.get("nickname", pid), "faction": p.get("faction"),
+                        "before": {k: int(v) for k, v in old.items()},
+                        "after": {k: int(v) for k, v in after.items()}, "changes": changes})
+    return out
+
+
+def _money_ledger(world: dict, tx: dict, treasury_before: dict,
+                  season_money: Optional[dict] = None) -> dict:
+    """Per-team money flow for the period that just closed — so it's CLEAR who earned/spent what.
+    Folds in the SEASON's prize income + salary outflow (credited at finalisation) AND the off-season
+    market (auction / signings / club transfers). The period opens at the PRE-prize balance so Δ
+    (net) reflects EVERYTHING — prizes included (the owner couldn't track prize money before)."""
+    sm = season_money if season_money is not None else ((world.get("history") or [{}])[-1].get("money") or {})
+    prize_by = sm.get("prizes_by_team") or {}
+    salary_by = sm.get("salaries_by_team") or {}
+    pre = sm.get("treasury_before") or {}            # balance BEFORE the season's prize+salary settled
+    rows = {tid: {"team_id": tid, "team": t["name"], "auction_spend": 0, "transfer_in": 0,
+                  "transfer_out": 0, "signing_spend": 0,
+                  "prize": int(prize_by.get(tid, 0) or 0),
+                  "salary": int(round(float(salary_by.get(tid, 0) or 0))),
+                  "treasury_before": int(pre.get(tid, treasury_before.get(tid, round(float(t.get("treasury", 0)))))),
+                  "treasury_after": round(float(t.get("treasury", 0)))}
+            for tid, t in world["teams"].items()}
+    for a in tx.get("auctions", []):
+        if a.get("team_id") in rows:
+            rows[a["team_id"]]["auction_spend"] += int(a.get("price", 0) or 0)
+    for s in tx.get("signings", []):                 # free-agent + rookie signings (bonus burns)
+        if s.get("team_id") in rows:
+            rows[s["team_id"]]["signing_spend"] += int(s.get("bonus", 0) or 0)
+    for b in tx.get("buys", []):                     # club-to-club: buyer spends, seller earns
+        price = int(b.get("price", 0) or 0)
+        if b.get("to_team_id") in rows:
+            rows[b["to_team_id"]]["transfer_out"] += price
+        if b.get("from_team_id") in rows:
+            rows[b["from_team_id"]]["transfer_in"] += price
+    for v in rows.values():
+        v["net"] = v["treasury_after"] - v["treasury_before"]      # exact treasury delta (source of truth)
+        # Make the DISPLAYED columns sum to Δ exactly. Salary is the only non-integer flow (a smoothed
+        # EWMA), so display it as the residual that closes the books — this absorbs the sub-unit rounding
+        # that otherwise leaves prize − salary − spends ±1 off from Δ in the odd row.
+        v["salary"] = (v["prize"] + v["transfer_in"] - v["transfer_out"]
+                       - v["auction_spend"] - v["signing_spend"] - v["net"])
+    totals = {"auction_spend": sum(v["auction_spend"] for v in rows.values()),
+              "transfer": sum(v["transfer_out"] for v in rows.values()),
+              "signing_spend": sum(v["signing_spend"] for v in rows.values()),
+              "prize": sum(v["prize"] for v in rows.values()),
+              "salary": sum(v["salary"] for v in rows.values())}
+    return {"rows": sorted(rows.values(), key=lambda r: -r["treasury_after"]), "totals": totals}
+
+
+def _soloq_movers(world: dict, before: dict, *, top: int = 10) -> dict:
+    """Biggest SoloQ rating swings this off-season (gainers + losers), for the межсезонье UI."""
+    rows = []
+    for pid, p in world["players"].items():
+        if pid not in before:
+            continue
+        delta = round(p.get("soloq_rating", 0) - before[pid], 1)
+        if abs(delta) < 0.05:
+            continue
+        rows.append({"player_id": pid, "player": p.get("nickname", pid), "faction": p.get("faction"),
+                     "rating": round(p.get("soloq_rating", 0), 1), "delta": delta})
+    rows.sort(key=lambda r: r["delta"])
+    return {"gainers": list(reversed(rows[-top:])), "losers": rows[:top], "n_moved": len(rows)}
+
+
 # --------------------------------------------------------------------------- #
 # Off-season run
 # --------------------------------------------------------------------------- #
@@ -259,7 +369,8 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
                   fa_budget: freeagents.FreeAgentBudget | None = None,
                   training_config: training_auction.TrainingConfig | None = None,
                   backend=None, llm=None, seed: Optional[int] = None,
-                  soloq_match_fn=None, auction_slots: int | None = None,
+                  soloq_match_fn=None, soloq_match_player=None, workers: int = 1,
+                  auction_slots: int | None = None,
                   soloq_rounds: int = soloq.DEFAULT_ROUNDS) -> dict:
     """Run the off-season stages and return a structured report (incl. a step-by-step
     event feed). The training stage previews the COMBINED launch (team + rookies +
@@ -271,9 +382,14 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     feed: list = events.chronicle()
     report = {"season_just_ended": world["season"], "seed": sp.root_seed,  # recorded for history
               "stages": {}, "events": feed}
+    soloq_before = {pid: p.get("soloq_rating", 0) for pid, p in world["players"].items()}
+    treasury_before = {tid: round(float(t.get("treasury", 0))) for tid, t in world["teams"].items()}
+    attrs_before = {pid: dict(p.get("attributes") or {}) for pid, p in world["players"].items()}
 
-    # 1. SoloQ (net-backed when soloq_match_fn supplied; default None -> rating model)
-    log = soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed(), match_fn=soloq_match_fn)
+    # 1. SoloQ (net-backed when soloq_match_fn supplied; default None -> rating model). Parallel when
+    #    a seeded match_player + workers>1 are supplied (independent matches/round).
+    log = soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed(), match_fn=soloq_match_fn,
+                            match_player=soloq_match_player, workers=workers)
     report["stages"]["soloq"] = {"rounds": soloq_rounds,
                                  "last_round_matches": log[-1]["matches"] if log else 0}
     events.emit(feed, "stage", f"SoloQ: сыграно {soloq_rounds} раундов, рейтинги обновлены")
@@ -312,6 +428,8 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
                  "results": []}
     if backend is not None and queue:
         execution = _execute_training(world, queue, cfg, backend, feed=feed)
+        if execution.get("executed"):                 # re-derive EVERY trained/forked net's card under
+            _reeval_trained_cards(world, queue, feed)  # the SAME gauntlet → equal-conditions update
     report["stages"]["training"] = {"auction": auction, "preview": preview,
                                     "execution": execution, "jobs": team_jobs}
     events.emit(feed, "train", f"Тренировка: аукцион {(auction or {}).get('awarded', 0)} слотов, "
@@ -382,13 +500,26 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     report["transactions"] = _build_transactions(
         world, auction=auction, team_jobs=team_jobs, fa_bids=fa_bids, signings=signings,
         picks=picks, club_transfers=club_transfers, releases=releases)
-    world["last_offseason"] = {"season_ended": report["season_just_ended"],
-                               "transactions": report["transactions"]}
+    # Rich off-season digest the inline межсезонье view renders per topic (auctions w/ bids, SoloQ
+    # movers, training queue, playbooks) — additive to the transactions window.
+    planning_rows = [{"team_id": p["team_id"], "team": world["teams"][p["team_id"]]["name"],
+                      "base": p["base"]} for p in plans]
+    world["last_offseason"] = {
+        "season_ended": report["season_just_ended"],
+        "transactions": report["transactions"],
+        "soloq": _soloq_movers(world, soloq_before),
+        "planning": planning_rows,
+        "training": {"auction": auction,
+                     "preview": report["stages"]["training"]["preview"]},
+        "money": _money_ledger(world, report["transactions"], treasury_before),
+        "skills": _skill_changes(world, attrs_before),
+    }
 
     # 8. Advance: close the off-season -> next season
     cal.skip_month(world, 1)
     world["season"] += 1
     world["phase"] = "regular"
+    world["last_offseason"]["next_season"] = world["season"]
     world.pop("live_replay", None)        # the finished day-by-day season belongs to the past one
     for t in world["teams"].values():
         t["transfer_requests_used"] = 0

@@ -8,7 +8,13 @@ from math import hypot
 import pytest
 
 from src.core.combat import build_core_unit, build_player_units
-from src.core.combat2d import COMBAT_RANGE_TO_MAP_UNITS, place_player_units_2d, tick_battle_units_2d
+from src.core.combat2d import (
+    COMBAT_RANGE_TO_MAP_UNITS,
+    EDGE_FRONTLINE_GAP_MAP,
+    FORMATION_DEPTH_MAP,
+    place_player_units_2d,
+    tick_battle_units_2d,
+)
 from src.core.constants import (
     ActionType,
     BARON_ATTACK_RATE,
@@ -16,10 +22,11 @@ from src.core.constants import (
     BARON_SECONDARY_ATTACK_RATE,
     BARON_SECONDARY_ATK,
     CORE_ATTACK_RATE,
+    EDGE_COLLISION_THRESHOLD,
     UnitType,
 )
 from src.core.engine import Action, GameEngine
-from src.core.map2d import NODE_LAYOUT, point_on_approach_edge
+from src.core.map2d import NODE_LAYOUT, approach_edge_length, point_on_approach_edge
 from src.core.state import Battle, MovingGroup, make_initial_state
 from src.core.units import UNIT_STATS
 
@@ -574,3 +581,38 @@ def test_node_enter_collides_with_hostile_group_transiting_same_node():
     assert battle.location_kind == "node"
     assert {unit.team for unit in battle.units if unit.is_alive()} == {"A1", "B1"}
     assert state.moving_groups == []
+
+
+def test_edge_battle_forms_at_engagement_range_not_at_overlap():
+    # Regression for replay bug 2: two head-on groups must engage when their fronts
+    # reach combat range (+ the formation depth the battle introduces), BEFORE they
+    # glide through each other. The legacy trigger only fired at progress-sum >= 0.95
+    # (a ~4 map-unit gap on this edge), so the fronts overlapped and then snapped back
+    # into formation — the visible "pass through, then run back".
+    state = make_initial_state(seed=611)
+    engine = GameEngine(state, {}, record_trace=False, record_replay=True)
+
+    def grp(player, team, src, dst, progress):
+        return MovingGroup(
+            player_id=player, team=team, units={UnitType.VANGUARD.value: 2},
+            src=src, dst=dst, arrival_tick=state.tick + 1, intent="CAPTURE",
+            path=[src, dst], segment_index=1, phase="edge", progress=progress,
+            speed=1.0, final_dst=dst,
+        )
+
+    engage_sum = engine._edge_engage_sum("CP2", "CP4")
+    # Fires earlier than the legacy near-overlap threshold and well before overlap (1.0).
+    assert engage_sum < 1.0 - EDGE_COLLISION_THRESHOLD
+    # The gap at the trigger equals the engagement band, in map units.
+    band = COMBAT_RANGE_TO_MAP_UNITS + FORMATION_DEPTH_MAP + EDGE_FRONTLINE_GAP_MAP
+    gap = (1.0 - engage_sum) * approach_edge_length("CP2", "CP4")
+    assert gap == pytest.approx(band, abs=1.0)
+
+    a = grp("A1", "TEAM_A", "CP2", "CP4", 0.30)
+    # Sum 0.50 < engage threshold: fronts still apart, no battle.
+    assert engine._groups_collide_on_edge(a, grp("B2", "TEAM_B", "CP4", "CP2", 0.20)) is False
+    # Sum ~0.57 >= engage threshold: fronts now within range, battle forms...
+    b = grp("B2", "TEAM_B", "CP4", "CP2", 0.27)
+    assert engine._groups_collide_on_edge(a, b) is True
+    # ...and that is far short of overlap (sum 1.0): the groups never pass through.
+    assert a.progress + b.progress < 1.0 - EDGE_COLLISION_THRESHOLD

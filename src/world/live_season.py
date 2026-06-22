@@ -22,6 +22,7 @@ revealed, the season is settled through the SAME :func:`season.finalize_season` 
 from __future__ import annotations
 
 import copy
+import math
 from typing import Optional
 
 from src.world import brackets, season
@@ -108,53 +109,164 @@ def _bracket_done(bracket: dict) -> bool:
 # --------------------------------------------------------------------------- #
 # Play the whole season up front, capture it day-by-day (no canonical mutation)
 # --------------------------------------------------------------------------- #
-def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dict:
-    """Play the ENTIRE season (real engine via ``play``) and store it day-by-day on
-    ``world['live_replay']`` for progressive reveal. Canonical state (Elo / calendar / history /
-    promotion) is left untouched until the reveal finishes."""
+REGULAR_GAMES_PER_DAY = 2     # owner: 2 regular matches per day; playoffs stay 1 per day
+
+
+# --------------------------------------------------------------------------- #
+# Win probability — MULTI-FACTOR, computed ONCE before a match is played (frozen)
+# --------------------------------------------------------------------------- #
+def _roster_soloq(world: dict, tid: str) -> float:
+    """Avg SoloQ of a club's best-3 (its likely starters) — the on-paper roster strength."""
+    t = world["teams"].get(tid, {})
+    rs = sorted((world["players"][pid]["soloq_rating"] for pid in t.get("roster", [])
+                 if pid in world["players"]), reverse=True)[:3]
+    return sum(rs) / len(rs) if rs else 1000.0
+
+
+def _form_score(played: list, tid: str, n: int = 4) -> float:
+    """Recent form of a club in [-0.5, +0.5] from its last ``n`` results so far."""
+    res = [1 if s.get("winner") == tid else 0 for s in played if tid in (s.get("home"), s.get("away"))][-n:]
+    return (sum(res) / len(res) - 0.5) if res else 0.0
+
+
+def _series_prob(pmap: float, best_of: int) -> float:
+    """P(home wins a Bo-N series) given a per-map win prob (race to ceil(N/2) maps)."""
+    need = best_of // 2 + 1
+    ph = sum(math.comb(need - 1 + j, j) * pmap ** need * (1 - pmap) ** j for j in range(need))
+    pa = sum(math.comb(need - 1 + j, j) * (1 - pmap) ** need * pmap ** j for j in range(need))
+    return ph / (ph + pa) if (ph + pa) > 0 else 0.5
+
+
+def win_probability(world: dict, base_elo: dict, played: list, home: str, away: str, best_of: int):
+    """HOME-win % for a series, from the state BEFORE it is played — blends five signals into an
+    effective Elo gap, then to a Bo-N series probability:
+      • Power (chess-Elo, provisional from base + games played so far)
+      • roster SoloQ (best-3 strength on paper)
+      • head-to-head (prior meetings this season, capped)
+      • recent form (last 4 results)
+      • standing momentum (total wins so far)
+    Returns ``(pct, factors)``; the pct is stored on the series and never recomputed (frozen)."""
+    elo = dict(base_elo)
+    for s in played:                                     # provisional Power from games already played
+        if s.get("maps_home") == s.get("maps_away"):
+            continue
+        d = series_elo_delta(elo.get(s["home"], 1000.0), elo.get(s["away"], 1000.0),
+                             s["maps_home"], s["maps_away"], s.get("best_of", 3))
+        elo[s["home"]] = elo.get(s["home"], 1000.0) + d
+        elo[s["away"]] = elo.get(s["away"], 1000.0) - d
+    power = elo.get(home, 1000.0) - elo.get(away, 1000.0)
+    roster = 0.35 * (_roster_soloq(world, home) - _roster_soloq(world, away))
+    h2h_raw = sum(1 if s.get("winner") == home else -1
+                  for s in played if {s.get("home"), s.get("away")} == {home, away})
+    h2h = 25.0 * max(-3, min(3, h2h_raw))
+    form = 80.0 * (_form_score(played, home) - _form_score(played, away))
+    wins_h = sum(1 for s in played if s.get("winner") == home)
+    wins_a = sum(1 for s in played if s.get("winner") == away)
+    standing = 10.0 * (wins_h - wins_a)
+    diff = power + roster + h2h + form + standing
+    pmap = 1.0 / (1.0 + 10 ** (-diff / 400.0))
+    pct = max(1, min(99, round(100 * _series_prob(pmap, best_of))))
+    factors = {"power": round(power), "roster": round(roster), "h2h": round(h2h),
+               "form": round(form), "standing": round(standing), "total": round(diff)}
+    return pct, factors
+
+
+def play_and_store(world: dict, *, play=None, seed: Optional[int] = None,
+                   series_player=None, workers: int = 1) -> dict:
+    """Play the ENTIRE season (real engine via ``play``) and store it for progressive reveal on
+    ``world['live_replay']``. Each game gets a unique ``gid``; reveal is PER GAME (revealed_gids),
+    so a single match can be watched and committed on its own. Regular days hold 2 games, playoff
+    days 1 (upper bracket fully, then lower). Canonical state is untouched until the reveal ends.
+
+    Speed (safe): the REGULAR season is a set of INDEPENDENT round-robin series. When a picklable
+    ``series_player`` (NetSeriesPlayer) is supplied it is played with PRE-ASSIGNED per-series seeds —
+    over a process pool when ``workers > 1`` — then folded back in canonical order (win prob + position
+    credit + gid). Because each match re-seeds torch from its own seed, the result is BIT-IDENTICAL to
+    sequential regardless of worker count. PLAYOFFS are a dependency DAG and stay strictly sequential.
+    Without a ``series_player`` (rating/abstract worlds, tests) everything runs sequentially via
+    ``play`` exactly as before."""
+    from src.core.rng import Spawner, resolve_seed
+    from src.world import net_match, parallel
+
     season_num = world["season"]
-    play = play or season.make_play_fn(world, seed=seed)
+    if series_player is None:
+        play = play or season.make_play_fn(world, seed=seed)
+    # independent seed streams so regular & playoff series never share entropy
+    _master = Spawner(resolve_seed(seed))
+    reg_spawner = Spawner(_master.seed())
+    po_spawner = Spawner(_master.seed())
     up_ids = [t["team_id"] for t in upper_teams(world)]
     a_ids = season._group_members(world, "A")
     z_ids = season._group_members(world, "Z")
     rounds = {"upper": schedule_rounds(up_ids), "lower_A": schedule_rounds(a_ids),
               "lower_Z": schedule_rounds(z_ids)}
-    n_regular = max(len(rounds["upper"]), len(rounds["lower_A"]), len(rounds["lower_Z"]))
+    n_rounds = max(len(rounds["upper"]), len(rounds["lower_A"]), len(rounds["lower_Z"]))
 
     results = {"upper": [], "lower_A": [], "lower_Z": []}
-    local_elo = {tid: float(t["elo"]) for tid, t in world["teams"].items()}
-    # The up-front play records per-game position_stats (winrate per position). Snapshot them now,
-    # restore after playing, and stash the post-season state — so during the reveal the Ratings tab
-    # shows ONLY pre-season position data (no leak), and the real stats land at finalize.
     pos_before = {pid: copy.deepcopy(p.get("position_stats"))
                   for pid, p in world["players"].items() if "position_stats" in p}
+    _gid = [0]
+    base_elo_snap = {tid: round(float(t.get("elo", 1000.0))) for tid, t in world["teams"].items()}
+    played: list = []           # running, in play order — the pre-match snapshot for the win prob
 
-    def _bump_elo(s: dict) -> None:                 # provisional Power, on a LOCAL copy only
-        d = series_elo_delta(local_elo[s["home"]], local_elo[s["away"]],
-                             s["maps_home"], s["maps_away"], s.get("best_of", 3))
-        local_elo[s["home"]] += d
-        local_elo[s["away"]] -= d
+    def _tag(s):
+        s["gid"] = _gid[0]
+        _gid[0] += 1
+        s["revealed"] = False
+        return s
 
-    days = []        # ONE series per day (owner: «1 день — 1 игра»)
-    power_by_day = [{tid: round(e) for tid, e in local_elo.items()}]   # day 0 = pre-season
+    def _finish(s, home, away, best_of, **extra):
+        # FREEZE the multi-factor win prob from PRIOR results (play order). win_probability ignores
+        # THIS series' own outcome, so computing it after the play is identical to before. Then credit
+        # per-position winrate (deferred by the net player so workers stay world-read-only), tag, append.
+        pct, factors = win_probability(world, base_elo_snap, played, home, away, best_of)
+        lineups = s.pop("map_lineups", None)
+        if lineups:
+            net_match.apply_position_credit(world, lineups)
+        s.update(extra)
+        s["win_prob"], s["win_prob_factors"] = pct, factors
+        _tag(s)
+        played.append(s)
+        return s
 
-    def _add_day(phase: str, s: dict) -> None:
-        s["day"] = len(days) + 1
-        _bump_elo(s)
-        days.append({"phase": phase, "day": s["day"], "series": s})
-        power_by_day.append({tid: round(e) for tid, e in local_elo.items()})
+    def _play(home, away, best_of, spawner):
+        # one series with an explicit pre-assigned seed: the picklable net player (same code the pool
+        # runs), else the sequential `play` (which carries its own seeding).
+        if series_player is not None:
+            return series_player(home, away, best_of, spawner.seed())
+        return play(home, away, best_of)
 
-    # ---- regular season: ONE game per day (round-major, then group, then pairing) ---- #
-    for r in range(n_regular):
+    # ---- regular season: every round-robin pairing, round-major then group ---- #
+    reg_specs = []                       # canonical play order: (group_key, home, away)
+    for r in range(n_rounds):
         for gkey in ("upper", "lower_A", "lower_Z"):
             grounds = rounds[gkey]
             if r >= len(grounds):
                 continue
             for home, away in grounds[r]:
-                s = dict(play(home, away, brackets.LEAGUE_BEST_OF), stage="league",
-                         group=gkey, league=_league_of(gkey))
-                results[gkey].append(s)
-                _add_day("regular", s)
+                reg_specs.append((gkey, home, away))
+    bo = brackets.LEAGUE_BEST_OF
+    regular_games = []
+    if series_player is not None:
+        # pre-assign every series' seed up front (single-thread, order-independent), play them in
+        # parallel, then fold the results back in canonical order so win_prob/standings are identical.
+        seeds = [reg_spawner.seed() for _ in reg_specs]
+        tasks = [(home, away, bo, sd) for (gkey, home, away), sd in zip(reg_specs, seeds)]
+        raw = parallel.run_batch(series_player, tasks, workers)
+        for (gkey, home, away), s in zip(reg_specs, raw):
+            _finish(s, home, away, bo, stage="league", group=gkey, league=_league_of(gkey))
+            results[gkey].append(s)
+            regular_games.append(s)
+    else:
+        for gkey, home, away in reg_specs:
+            s = _finish(_play(home, away, bo, reg_spawner), home, away, bo,
+                        stage="league", group=gkey, league=_league_of(gkey))
+            results[gkey].append(s)
+            regular_games.append(s)
+
+    days = []        # each day: {phase, series:[1-2 games]}
+    for i in range(0, len(regular_games), REGULAR_GAMES_PER_DAY):
+        days.append({"phase": "regular", "series": regular_games[i:i + REGULAR_GAMES_PER_DAY]})
     n_regular_days = len(days)
 
     # ---- seed playoffs from the (now complete) group standings ---------- #
@@ -164,36 +276,45 @@ def play_and_store(world: dict, *, play=None, seed: Optional[int] = None) -> dic
     up_br = _upper_bracket([r["team_id"] for r in up_rows])
     lo_br = _lower_bracket([r["team_id"] for r in a_rows], [r["team_id"] for r in z_rows])
 
-    # ---- playoffs: ONE decidable series per day (a wave of ready nodes spreads over days) ---- #
-    while not (_bracket_done(up_br) and _bracket_done(lo_br)):
-        ready = [(lg, key, br) for lg, br in (("upper", up_br), ("lower", lo_br))
-                 for key in _ready_nodes(br)]
-        if not ready:
-            break
-        for lg, key, br in ready:
-            node = br["nodes"][key]
-            home = _resolve(node["home"], br["nodes"])
-            away = _resolve(node["away"], br["nodes"])
-            s = dict(play(home, away, node["best_of"]), stage=node["stage"], league=lg)
-            node["result"] = s
-            _add_day("playoff", s)
-            node["day"] = s["day"]
+    # ---- playoffs: ONE series per day; UPPER bracket fully, THEN lower (not interleaved). A
+    # dependency DAG (each series feeds the next) -> STRICTLY sequential, never parallelised. ---- #
+    def _play_bracket(br, lg):
+        while not _bracket_done(br):
+            ready = _ready_nodes(br)
+            if not ready:
+                break
+            for key in ready:
+                node = br["nodes"][key]
+                home = _resolve(node["home"], br["nodes"])
+                away = _resolve(node["away"], br["nodes"])
+                s = _finish(_play(home, away, node["best_of"], po_spawner), home, away,
+                            node["best_of"], stage=node["stage"], league=lg)
+                node["result"] = s
+                node["gid"] = s["gid"]
+                days.append({"phase": "playoff", "series": [s]})
+    _play_bracket(up_br, "upper")
+    _play_bracket(lo_br, "lower")
 
+    for di, d in enumerate(days, 1):                 # stamp each game with its (display) day number
+        for s in d["series"]:
+            s["day"] = di
     n_days = len(days)
-    # capture the post-season position_stats, then restore the pre-season ones (re-applied at finalize)
+
     pos_after = {pid: copy.deepcopy(world["players"][pid].get("position_stats")) for pid in pos_before}
     for pid, snap in pos_before.items():
         world["players"][pid]["position_stats"] = snap
     world["live_replay"] = {
         "season": season_num,
-        "cursor": 0,
         "n_days": n_days,
-        "n_regular_days": n_regular_days,          # number of regular GAMES (1 game = 1 day)
+        "n_regular_days": n_regular_days,
         "groups": {"upper": up_ids, "lower_A": a_ids, "lower_Z": z_ids},
-        "days": days,                              # one series per day; full series incl cores (server-side)
+        "days": days,                              # full series incl cores (server-side only)
+        "revealed_gids": [],                       # which GAMES have been revealed (per-game)
+        "shown_day": 0,                            # the day the LIVE tab displays — advances ONLY on
+                                                   #   «Следующий день» (watching a game never advances)
         "playoff": {"upper": up_br, "lower": lo_br},
-        "power_by_day": power_by_day,
-        "pos_after": pos_after,                    # real position_stats, applied when reveal finishes
+        "base_elo": {tid: round(float(t.get("elo", 1000))) for tid, t in world["teams"].items()},
+        "pos_after": pos_after,
         "finalize": {
             "up_results": results["upper"], "a_results": results["lower_A"],
             "z_results": results["lower_Z"],
@@ -220,58 +341,83 @@ def _playoff_outcome(bracket: dict, *, promote: bool = False) -> dict:
 
 
 # --------------------------------------------------------------------------- #
-# Reveal — spoiler-free snapshot at the current cursor
+# Reveal — PER GAME (revealed_gids), spoiler-free
 # --------------------------------------------------------------------------- #
+STAGE_LABEL_LIVE = {"league": "Регулярный сезон", "ub": "Плей-офф · Верхняя сетка",
+                    "lb": "Плей-офф · Нижняя сетка", "lb_r1": "Плей-офф · Нижняя сетка, раунд 1",
+                    "lb_r2": "Плей-офф · Нижняя сетка, раунд 2", "lb_final": "Финал нижней сетки",
+                    "grand_final": "ГРАНД-ФИНАЛ"}
+
+
+def _revealed_set(ls: dict) -> set:
+    return set(ls.get("revealed_gids", []))
+
+
+def _league_label(s: dict) -> str:
+    if s.get("league") == "upper":
+        return "Высшая лига"
+    g = s.get("group")
+    return "Низшая лига" + (" · группа A" if g == "lower_A" else " · группа Z" if g == "lower_Z" else "")
+
+
+def _provisional_power(world: dict, ls: dict, revset: set) -> dict:
+    """Provisional per-team Power = base (pre-season) Elo + the Elo deltas of every REVEALED game so
+    far (in play order). Cheap replay over the stored games — no canonical mutation."""
+    elo = {tid: float(e) for tid, e in ls["base_elo"].items()}
+    for d in ls["days"]:
+        for s in d["series"]:
+            if s["gid"] in revset:
+                dd = series_elo_delta(elo[s["home"]], elo[s["away"]],
+                                      s["maps_home"], s["maps_away"], s.get("best_of", 3))
+                elo[s["home"]] += dd
+                elo[s["away"]] -= dd
+    return {tid: round(e) for tid, e in elo.items()}
+
+
 def is_live(world: dict) -> bool:
+    """The reveal is in progress until the owner advances PAST the last day (which finalises). Note:
+    watching every game does NOT end it — the season completes only on «Следующий день» off the last
+    day. So this is keyed on ``shown_day``, not on all games being revealed."""
     ls = world.get("live_replay")
-    return bool(ls) and ls.get("cursor", 0) < ls.get("n_days", 0)
-
-
-def is_revealing(world: dict) -> bool:
-    """A day-by-day season exists (being revealed, or fully revealed but not yet off-season'd).
-    While true, the read-models must show the season SO FAR, not last season's finished data."""
-    return bool(world.get("live_replay"))
+    return bool(ls) and ls.get("shown_day", 0) < ls["n_days"]
 
 
 def revealed_power(world: dict) -> Optional[dict]:
-    """Provisional per-team Power at the revealed day (cheap — no standings recompute), or None.
-    Only while the reveal is in progress — once the last day is revealed the season is finalised, so
-    the read-models switch back to canonical Elo/standings (history), not the provisional snapshot."""
     ls = world.get("live_replay")
-    if not ls or ls.get("cursor", 0) >= ls.get("n_days", 0):
+    if not ls or not is_live(world):
         return None
-    pbd = ls["power_by_day"]
-    return pbd[min(ls["cursor"], len(pbd) - 1)]
+    return _provisional_power(world, ls, _revealed_set(ls))
 
 
 def revealed(world: dict) -> Optional[dict]:
-    """Raw revealed-so-far data the read-models render the CURRENT season from (everything up to the
-    reveal cursor — nothing past it): group standings rows, the revealed regular + playoff series,
-    the bracket, and provisional per-team Power. None when no day-by-day season is active.
-
-    This is what makes EVERY tab day-accurate during a reveal: at cursor 0 nobody has points; each
-    revealed day adds its results. cores_destroyed stays internal (callers must not surface it).
-    Returns None once the reveal is complete (the season is finalised — tabs use canonical data)."""
+    """Raw revealed-so-far data the read-models render the CURRENT season from. None once the
+    reveal is complete (season finalised — tabs use canonical data) or if no live season."""
     ls = world.get("live_replay")
-    if not ls or ls.get("cursor", 0) >= ls.get("n_days", 0):
+    if not ls or not is_live(world):
         return None
-    c = ls["cursor"]
+    revset = _revealed_set(ls)
     reg = {"upper": [], "lower_A": [], "lower_Z": []}
     playoff_series = []
-    for day in ls["days"][:c]:
-        s = day["series"]
-        if day["phase"] == "regular":
-            reg[s["group"]].append(s)
-        else:
-            playoff_series.append(s)
-    # the FULL regular fixture list is known up front (the schedule shows who-plays-when from day 0)
-    all_regular = [d["series"] for d in ls["days"] if d["phase"] == "regular"]
+    for d in ls["days"]:
+        for s in d["series"]:
+            if s["gid"] not in revset:
+                continue
+            if d["phase"] == "regular":
+                reg[s["group"]].append(s)
+            else:
+                playoff_series.append(s)
+    all_regular = [s for d in ls["days"] if d["phase"] == "regular" for s in d["series"]]
+    regular_done = all(s["gid"] in revset for s in all_regular)
+    # per-league completion: the LOWER bracket can seed as soon as the LOWER regular is done, even if the
+    # UPPER regular is still playing (and vice-versa) — don't make one league wait on the other (#1).
+    def _done(lg):
+        return all(s["gid"] in revset for s in all_regular if s.get("league") == lg)
     standings = {g: brackets.standings(ls["groups"][g], reg[g]) for g in reg}
-    power = ls["power_by_day"][min(c, len(ls["power_by_day"]) - 1)]
-    return {"cursor": c, "season": ls["season"], "groups": ls["groups"],
-            "n_regular_days": ls["n_regular_days"], "regular": reg, "all_regular": all_regular,
-            "playoff_series": playoff_series, "standings": standings, "power": power,
-            "playoff": ls["playoff"]}
+    return {"season": ls["season"], "groups": ls["groups"], "n_regular_days": ls["n_regular_days"],
+            "regular": reg, "all_regular": all_regular, "playoff_series": playoff_series,
+            "standings": standings, "power": _provisional_power(world, ls, revset),
+            "playoff": ls["playoff"], "revealed_gids": list(revset), "regular_done": regular_done,
+            "regular_done_by_league": {"upper": _done("upper"), "lower": _done("lower")}}
 
 
 def _team(world: dict, tid: Optional[str]) -> dict:
@@ -279,35 +425,29 @@ def _team(world: dict, tid: Optional[str]) -> dict:
     return {"team_id": tid, "abbrev": t["abbrev"] if t else tid, "name": t["name"] if t else tid}
 
 
-def _fixture(world: dict, s: dict) -> dict:
-    """An upcoming match — matchup only, NO result (so it's safe to show before it's revealed)."""
-    return {"home": s["home"], "away": s["away"],
-            "home_abbrev": _team(world, s["home"])["abbrev"],
-            "away_abbrev": _team(world, s["away"])["abbrev"],
-            "stage": s.get("stage"), "group": s.get("group"), "league": s.get("league"),
-            "best_of": s.get("best_of")}
-
-
 def _result(world: dict, s: dict, *, seq: bool = False) -> dict:
-    """A revealed match — score + winner, cores STRIPPED (hidden tiebreaker); sequence on request."""
-    out = _fixture(world, s)
-    out.update({"maps_home": s["maps_home"], "maps_away": s["maps_away"], "winner": s["winner"]})
+    """A revealed match — score + winner, cores STRIPPED (hidden tiebreaker); sequence on request.
+    Carries ``gid`` so the server can attach this match's real replay files (``map_replays``)."""
+    out = {"gid": s["gid"], "home": s["home"], "away": s["away"],
+           "home_abbrev": _team(world, s["home"])["abbrev"], "away_abbrev": _team(world, s["away"])["abbrev"],
+           "stage": s.get("stage"), "league": s.get("league"), "best_of": s.get("best_of"),
+           "maps_home": s["maps_home"], "maps_away": s["maps_away"], "winner": s["winner"]}
     if seq:
         out["sequence"] = s.get("sequence", [])
     return out
 
 
-def _standings_so_far(world: dict, ls: dict, cursor: int) -> dict:
-    """Group standings from the REVEALED regular-season days only (cores used for the order, never
-    exposed). Each row carries the provisional Power at this point in the reveal."""
-    revealed = {"upper": [], "lower_A": [], "lower_Z": []}
-    for day in ls["days"][:cursor]:
-        if day["phase"] == "regular":
-            revealed[day["series"]["group"]].append(day["series"])
-    power = ls["power_by_day"][min(cursor, len(ls["power_by_day"]) - 1)]
+def _standings_rows(world: dict, ls: dict, revset: set, power: dict) -> dict:
+    reg = {"upper": [], "lower_A": [], "lower_Z": []}
+    for d in ls["days"]:
+        if d["phase"] != "regular":
+            continue
+        for s in d["series"]:
+            if s["gid"] in revset:
+                reg[s["group"]].append(s)
     out = {}
     for gkey, ids in ls["groups"].items():
-        rows = brackets.standings(ids, revealed[gkey])
+        rows = brackets.standings(ids, reg[gkey])
         out[gkey] = [{"team_id": r["team_id"], "abbrev": _team(world, r["team_id"])["abbrev"],
                       "name": _team(world, r["team_id"])["name"], "place": r["place"],
                       "points": r["points"], "series_wins": r["series_wins"],
@@ -317,17 +457,17 @@ def _standings_so_far(world: dict, ls: dict, cursor: int) -> dict:
     return out
 
 
-def _bracket_so_far(world: dict, bracket: Optional[dict], cursor: int) -> list[dict]:
+def _bracket_so_far(world: dict, bracket: Optional[dict], revset: set) -> list[dict]:
     if not bracket:
         return []
     nodes = bracket["nodes"]
     out = []
     for key in bracket["order"]:
         node = nodes[key]
-        home = _resolve(node["home"], nodes, max_day=cursor)
-        away = _resolve(node["away"], nodes, max_day=cursor)
+        home = resolve_for_reveal(node["home"], nodes, revset)
+        away = resolve_for_reveal(node["away"], nodes, revset)
+        shown = node.get("gid") in revset
         res = node.get("result")
-        shown = bool(res) and node.get("day", 0) <= cursor
         out.append({"key": key, "stage": node["stage"],
                     "home": _team(world, home) if home else None,
                     "away": _team(world, away) if away else None,
@@ -338,64 +478,103 @@ def _bracket_so_far(world: dict, bracket: Optional[dict], cursor: int) -> list[d
     return out
 
 
-def _match_card(world: dict, ls: dict, cursor: int) -> dict:
-    """Rich card for the NEXT match (the LIVE tab's centerpiece): both teams with their provisional
-    Power, current place/points/record, and recent form — all from what's been revealed so far."""
-    s = ls["days"][cursor]["series"]
-    power = ls["power_by_day"][min(cursor, len(ls["power_by_day"]) - 1)]
-    standings = _standings_so_far(world, ls, cursor)
-    rows = {r["team_id"]: r for g in standings.values() for r in g}
+def resolve_for_reveal(ref, nodes: dict, revset: set) -> Optional[str]:
+    """Concrete team id for a playoff endpoint, but only if its source game is REVEALED (so the
+    bracket never leaks an unrevealed result). Concrete seeds are returned as-is — the caller gates
+    those on the regular season being fully revealed."""
+    if isinstance(ref, str):
+        return ref
+    node = nodes.get(ref.get("w") or ref.get("l"))
+    res = node and node.get("result")
+    if not res or node.get("gid") not in revset:
+        return None
+    return res["winner"] if "w" in ref else (res["home"] if res["winner"] == res["away"] else res["away"])
 
+
+def _card(world: dict, ls: dict, s: dict, revset: set, power: dict, rows: dict) -> dict:
+    """A single LIVE match card: both teams (Power/place/points/record/form), context, and the
+    result + map sequence once this game is revealed."""
     def info(tid):
         row = rows.get(tid, {})
         form = []
-        for d in ls["days"][:cursor]:
-            ser = d["series"]
-            if tid in (ser["home"], ser["away"]):
-                form.append("W" if ser["winner"] == tid else "L")
+        for d in ls["days"]:
+            for ss in d["series"]:
+                if ss["gid"] in revset and tid in (ss["home"], ss["away"]):
+                    form.append("W" if ss["winner"] == tid else "L")
         t = world["teams"].get(tid, {})
+        starters = sorted((world["players"][pid] for pid in t.get("roster", []) if pid in world["players"]),
+                          key=lambda p: -float(p.get("soloq_rating", 0)))[:3]
+        players = [{"nickname": p.get("nickname", p["player_id"]), "faction": p.get("faction"),
+                    "rating": round(float(p.get("soloq_rating", 1000))), "archetype": p.get("archetype")}
+                   for p in starters]
         return {"team_id": tid, "abbrev": t.get("abbrev", tid), "name": t.get("name", tid),
                 "power": power.get(tid, round(float(t.get("elo", 1000)))),
                 "place": row.get("place"), "points": row.get("points", 0),
                 "series_wins": row.get("series_wins", 0), "series_losses": row.get("series_losses", 0),
-                "map_diff": row.get("map_diff", 0), "form": form[-6:]}
+                "map_diff": row.get("map_diff", 0), "form": form[-6:], "players": players}
 
-    return {"stage": s["stage"], "stage_label": STAGE_LABEL_LIVE.get(s["stage"], s["stage"]),
-            "best_of": s.get("best_of"), "league": s.get("league"), "group": s.get("group"),
-            "day": cursor + 1, "home": info(s["home"]), "away": info(s["away"])}
+    revealed_ = s["gid"] in revset
+    out = {"gid": s["gid"], "stage": s.get("stage"), "stage_label": STAGE_LABEL_LIVE.get(s.get("stage"), s.get("stage")),
+           "league": s.get("league"), "league_label": _league_label(s), "group": s.get("group"),
+           "best_of": s.get("best_of"), "day": s.get("day"),
+           # FROZEN pre-match win probability (computed once before the match; multi-factor)
+           "win_prob": s.get("win_prob"), "win_prob_factors": s.get("win_prob_factors"),
+           "home": info(s["home"]), "away": info(s["away"]), "revealed": revealed_}
+    if revealed_:
+        out.update({"maps_home": s["maps_home"], "maps_away": s["maps_away"],
+                    "winner": s["winner"], "sequence": s.get("sequence", [])})
+    return out
 
 
-STAGE_LABEL_LIVE = {"league": "Регулярный сезон", "ub": "Плей-офф · Верхняя сетка",
-                    "lb": "Плей-офф · Нижняя сетка", "lb_r1": "Плей-офф · Нижняя сетка, раунд 1",
-                    "lb_r2": "Плей-офф · Нижняя сетка, раунд 2", "lb_final": "Финал нижней сетки",
-                    "grand_final": "ГРАНД-ФИНАЛ"}
+def _revset_upto(ls: dict, day_num: int, full: set) -> set:
+    """Revealed gids whose (1-based) display day is <= ``day_num`` — the state as of the END of that
+    day, with nothing from later days leaking in (used to render a PAST day spoiler-free)."""
+    return {s["gid"] for d in ls["days"] for s in d["series"]
+            if s["gid"] in full and s.get("day", 0) <= day_num}
 
 
-def view(world: dict) -> dict:
-    """Spoiler-free snapshot at the current cursor: what's been revealed, the next day's fixtures
-    (the only matches you may watch), standings + bracket SO FAR, provisional Power."""
+def view(world: dict, day: Optional[int] = None) -> dict:
+    """Spoiler-free snapshot of ONE day. ``day`` (0-based) lets the UI rewind to any ALREADY-PLAYED
+    day: the live cursor (``shown_day``) is the current broadcast day; earlier days are shown as
+    finished RESULTS (no broadcast) as of the end of that day, never leaking later games. With
+    ``day=None`` it shows the live cursor (or the legacy "done" screen once the season is settled)."""
     ls = world.get("live_replay")
     if not ls:
         return {"active": False}
-    c = ls["cursor"]
+    full = _revealed_set(ls)
     n = ls["n_days"]
-    playoff_started = c >= ls["n_regular_days"]
-    next_fixtures = [_fixture(world, ls["days"][c]["series"])] if c < n else []
-    just_played = [_result(world, ls["days"][c - 1]["series"])] if c > 0 else []
+    cur = ls.get("shown_day", 0)
+    live_active = cur < n
+    max_view = cur if live_active else n - 1            # the furthest day you may look at
+    viewing = max_view if day is None else max(0, min(int(day), max_view))
+    is_current_day = live_active and viewing == cur
+    showing_done = not live_active and day is None      # legacy "season finished" entry screen
+
+    # the live cursor renders from everything revealed so far; a PAST day is frozen at its own end
+    revset = full if (is_current_day or showing_done) else _revset_upto(ls, viewing + 1, full)
+    power = _provisional_power(world, ls, revset)
+    standings = _standings_rows(world, ls, revset, power)
+    rows = {r["team_id"]: r for g in standings.values() for r in g}
+
+    day_matches = [] if showing_done else [_card(world, ls, s, revset, power, rows)
+                                           for s in ls["days"][viewing]["series"]]
+    playoff_started = (n - 1 if showing_done else viewing) >= ls["n_regular_days"]
     return {
-        "active": c < n,
+        "active": live_active,
         "season": ls["season"],
-        "phase": ls["days"][c]["phase"] if c < n else "done",
-        "day": min(c + 1, n), "cursor": c, "total_days": n, "n_regular_days": ls["n_regular_days"],
-        "next_fixtures": next_fixtures,
-        "just_played": just_played,
-        "match": _match_card(world, ls, c) if c < n else None,
-        "standings": _standings_so_far(world, ls, c),
+        "phase": "done" if showing_done else ls["days"][viewing]["phase"],
+        "day": viewing + 1, "cursor": cur, "viewing_day": viewing,
+        "total_days": n, "n_regular_days": ls["n_regular_days"],
+        "is_current_day": is_current_day,
+        "can_prev": viewing > 0,
+        "can_next": viewing < max_view,
+        "day_matches": day_matches,
+        "standings": standings,
         "bracket": {
-            "upper": _bracket_so_far(world, ls["playoff"]["upper"], c) if playoff_started else [],
-            "lower": _bracket_so_far(world, ls["playoff"]["lower"], c) if playoff_started else [],
+            "upper": _bracket_so_far(world, ls["playoff"]["upper"], revset) if playoff_started else [],
+            "lower": _bracket_so_far(world, ls["playoff"]["lower"], revset) if playoff_started else [],
         },
-        "done": _done_summary(world, ls) if c >= n else None,
+        "done": _done_summary(world, ls) if showing_done else None,
     }
 
 
@@ -407,19 +586,25 @@ def _done_summary(world: dict, ls: dict) -> dict:
 
 
 def reveal_next_day(world: dict) -> dict:
-    """Reveal the next day (instant — already played). Revealing the LAST day settles the season
-    through the shared finaliser (real Elo + calendar + economy + promotion + history)."""
+    """«Следующий день»: reveal any of the SHOWN day's still-unwatched games (instant), then advance
+    the shown day. Advancing PAST the last day settles the season through the shared finaliser — that
+    is the ONLY thing that finalises (watching never does), so the day moves only when the owner says."""
     ls = world.get("live_replay")
     if not ls:
         raise ValueError("no live season to reveal")
-    if ls["cursor"] >= ls["n_days"]:
+    n = ls["n_days"]
+    sd = ls.get("shown_day", 0)
+    if sd >= n:
         return {"already_done": True, "view": view(world)}
-    ls["cursor"] += 1
-    revealed_day = ls["cursor"]
-    finished = ls["cursor"] >= ls["n_days"]
-    if finished:
+    revset = _revealed_set(ls)
+    for s in ls["days"][sd]["series"]:
+        if s["gid"] not in revset:
+            ls["revealed_gids"].append(s["gid"])
+    ls["shown_day"] = sd + 1
+    finished = ls["shown_day"] >= n
+    if finished:                            # advanced past the last day -> settle (all games revealed)
         _finalize(world, ls)
-    return {"day": revealed_day, "finished": finished, "view": view(world)}
+    return {"day": sd + 1, "finished": finished, "view": view(world)}
 
 
 def _finalize(world: dict, ls: dict) -> dict:
@@ -439,12 +624,18 @@ def _finalize(world: dict, ls: dict) -> dict:
 
 
 def reveal_watch(world: dict, home: str, away: str) -> dict:
-    """Replay one of the NEXT day's matches map-by-map (no scrub). The result is already decided;
-    this only returns its stored map sequence for the broadcast. Does not advance the day."""
+    """Watch (and COMMIT) ONE match of the SHOWN day — replay its stored map sequence and reveal it so
+    every read-model updates immediately. Watching NEVER advances the day nor finalises the season
+    (that is «Следующий день»'s job) — even watching the last game just commits it."""
     ls = world.get("live_replay")
-    if not ls or ls["cursor"] >= ls["n_days"]:
+    if not ls:
         raise ValueError("nothing to watch")
-    s = ls["days"][ls["cursor"]]["series"]
-    if s["home"] == home and s["away"] == away:
-        return _result(world, s, seq=True)
-    raise ValueError("that match is not on the next day to be revealed")
+    sd = ls.get("shown_day", 0)
+    if sd >= ls["n_days"]:
+        raise ValueError("nothing to watch")
+    revset = _revealed_set(ls)
+    for s in ls["days"][sd]["series"]:
+        if s["gid"] not in revset and s["home"] == home and s["away"] == away:
+            ls["revealed_gids"].append(s["gid"])
+            return {"result": _result(world, s, seq=True), "finished": False, "view": view(world)}
+    raise ValueError("that match is not available to watch in the current day")

@@ -149,3 +149,27 @@ def test_viewer_server_exposes_team_policy_states_as_assignable_models(tmp_path:
     assert policy_models["A2"]["label"] == "TeaPol latest A2 (legacy)"
     assert policy_models["A2"]["show_by_default"] is False
     assert all(len(model["label"].split()) <= 4 for model in policy_models.values())
+
+
+def test_training_status_computes_live_eta_from_observed_rate(monkeypatch):
+    """The training ETA reflects the RUNNING job's own observed rate (done/elapsed), not a fixed
+    guess — so the displayed time is accurate on whatever machine runs it."""
+    import time
+    monkeypatch.setattr(server, "_DEFAULT_SPS", 833.0)
+    now = time.time()
+    with server.TRAINING_JOBS_LOCK:
+        server.TRAINING_JOBS.clear()
+        server.TRAINING_JOBS["a"] = {"job_id": "a", "world_id": "w-eta", "op": "skill_up",
+                                     "player": "P1", "done": 400_000, "total": 1_000_000,
+                                     "status": "running", "error": None, "started_at": now - 40}
+        server.TRAINING_JOBS["b"] = {"job_id": "b", "world_id": "w-eta", "op": "skill_up",
+                                     "player": "P2", "done": 0, "total": 800_000,
+                                     "status": "queued", "error": None, "started_at": None}
+    st = server.training_jobs_status("w-eta")
+    run = next(j for j in st["jobs"] if j["job_id"] == "a")
+    assert abs(run["sps"] - 10_000) < 1                  # 400k in 40s = 10k steps/sec
+    assert abs(run["eta_sec"] - 60) <= 1                 # 600k remaining / 10k = 60s
+    # aggregate: 600k (running remainder) + 800k (queued) = 1.4M / 10k = 140s, using the LIVE rate
+    assert abs(st["total_eta_sec"] - 140) <= 1 and st["active"] == 2
+    with server.TRAINING_JOBS_LOCK:
+        server.TRAINING_JOBS.clear()

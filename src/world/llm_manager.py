@@ -8,7 +8,7 @@ Every decision goes through a GATE:
     never silent (owner requirement).
 
 So the world runs IDENTICALLY with or without the LLM; the LLM only adds character.
-Model is env-switchable (``WORLD_LLM_MODEL`` → ``REGIONALS_LLM_MODEL`` → haiku-4-5 default) so
+Model is env-switchable (``WORLD_LLM_MODEL`` → ``REGIONALS_LLM_MODEL`` → opus-4-8 default) so
 the same world can be replayed on Haiku/Sonnet/Opus and compared by eye.
 
 Decision surfaces (WORLD_MODE_SPEC §0-bis):
@@ -21,6 +21,7 @@ Decision surfaces (WORLD_MODE_SPEC §0-bis):
 from __future__ import annotations
 
 import os
+import sys
 from typing import Callable, Optional
 
 from src.world import (events, feature_flags, manager, playbook, scouting, training_auction,
@@ -29,7 +30,7 @@ from src.world.world import get_player
 
 DEFAULT_MODEL = (os.environ.get("WORLD_LLM_MODEL")
                  or os.environ.get("REGIONALS_LLM_MODEL")
-                 or "claude-haiku-4-5")     # cheap default (~5x cheaper than Opus); env can override
+                 or "claude-opus-4-8")      # newest Opus by default; WORLD_LLM_MODEL env can override
 
 
 # --------------------------------------------------------------------------- #
@@ -83,7 +84,7 @@ def draft_pick_fn(world: dict, *, llm=None, feed: Optional[list] = None
                 "required": ["player_id", "reason"], "additionalProperties": False,
             }
             ans = llm.structured(manager.MANAGER_SYSTEM_RULES,
-                                 _draft_prompt(world, team, available), schema, max_tokens=200)
+                                 _draft_prompt(world, team, available), schema)   # 900 floor (was 200 -> truncated)
             pid = ans.get("player_id")
             if pid in ids:
                 events.emit(feed, "draft", f"{team['name']}: ЛЛМ выбрал "
@@ -91,6 +92,7 @@ def draft_pick_fn(world: dict, *, llm=None, feed: Optional[list] = None
                 return pid
             raise ValueError(f"LLM returned unknown id {pid!r}")
         except Exception as exc:
+            print(f"[draft] LLM pick FAILED for {team['team_id']}: {exc}", file=sys.stderr)  # was silent
             events.fallback(feed, f"draft:{team['team_id']}", str(exc))
             return None     # -> balanced_draft picks best by value
 
@@ -120,9 +122,12 @@ def author_playbook(world: dict, team: dict, *, llm=None, feed: Optional[list] =
             plan = playbook.set_plan(world, team["team_id"], _llm_playbook(world, team, llm))
             src = "ЛЛМ"
         except Exception as exc:
+            # LOUD: a silent fallback here is how every playbook quietly became heuristic before.
+            print(f"[playbook] LLM authoring FAILED for {team['team_id']}: {exc}", file=sys.stderr)
             events.fallback(feed, f"playbook:{team['team_id']}", str(exc))
     if plan is None:
         plan = manager.set_tournament_playbook(world, team, profile)
+    plan["source"] = "llm" if src == "ЛЛМ" else "heuristic"   # persisted so the UI/replan can tell them apart
     events.emit(feed, "playbook", f"{team['name']}: плейбук ({src}), база "
                 f"«{plan['base']['strategy']}»", team_id=team["team_id"], source=src)
     return plan
@@ -156,19 +161,27 @@ _CONDITION_MAP = {
 def _llm_playbook(world: dict, team: dict, llm) -> dict:
     strat_enum = list(playbook.STRATEGY_IDS)
     roster = list(team["roster"])
-    # an optional lineup/substitution: which player at A1/A2/A3 (partial allowed)
+    # conditional substitution lineup (overrides): which player at A1/A2/A3 — PARTIAL allowed
     lineup_obj = {"type": "object", "additionalProperties": False,
                   "properties": {p: {"type": "string", "enum": roster}
                                  for p in playbook.POSITIONS}}
+    # base lineup: the LLM MUST assign all 3 starter positions itself (no heuristic) — every
+    # position is required, each filled by a CURRENT-roster player (so newly drafted/bought players
+    # get an LLM-decided slot every season).
+    base_lineup_obj = {"type": "object", "additionalProperties": False,
+                       "properties": {p: {"type": "string", "enum": roster}
+                                      for p in playbook.POSITIONS},
+                       "required": list(playbook.POSITIONS)}
     schema = {
         "type": "object",
         "properties": {
             "base": {"type": "object", "additionalProperties": False,
                      "properties": {"strategy": {"type": "string", "enum": strat_enum},
-                                    "lineup": lineup_obj},
-                     "required": ["strategy"]},
+                                    "lineup": base_lineup_obj},
+                     "required": ["strategy", "lineup"]},
             "overrides": {
-                "type": "array", "maxItems": 6,
+                # NB: structured-output API rejects array constraints (maxItems) — cap in code instead.
+                "type": "array",
                 "items": {
                     "type": "object", "additionalProperties": False,
                     "properties": {
@@ -183,8 +196,13 @@ def _llm_playbook(world: dict, team: dict, llm) -> dict:
         },
         "required": ["base", "overrides"], "additionalProperties": False,
     }
+    # 6 overrides × {condition, strategy, lineup, RU note} can exceed 700 tokens (Cyrillic is
+    # token-heavy) — too small a budget truncates the JSON mid-string -> parse error -> heuristic fallback.
+    # Measured worst case ~950 (Haiku) / ~700 (Opus, terser); 3000 = ~3x margin. A high cap is free
+    # (billed on ACTUAL output), so over-provision rather than risk truncation. Opus needs NO more here:
+    # `structured` sends no `thinking` param, so there are no thinking tokens competing for the budget.
     ans = llm.structured(manager.MANAGER_SYSTEM_RULES, _playbook_prompt(world, team),
-                         schema, max_tokens=700)
+                         schema, max_tokens=3000)
     return _playbook_from_llm(ans, roster)
 
 
@@ -206,7 +224,7 @@ def _playbook_from_llm(ans: dict, roster: list) -> dict:
     if bstrat not in playbook.STRATEGY_IDS:
         raise ValueError(f"unknown base strategy {bstrat!r}")
     overrides = []
-    for ov in ans.get("overrides", []):
+    for ov in ans.get("overrides", [])[:6]:           # cap at 6 here (schema can't constrain array length)
         when = _CONDITION_MAP.get(ov.get("condition"))
         strat = ov.get("strategy")
         if when is None or strat not in playbook.STRATEGY_IDS:
@@ -231,9 +249,10 @@ def _playbook_prompt(world: dict, team: dict) -> str:
             f"--- ЗАДАЧА ---\n"
             f"Составь ПЛЕЙБУК на турнир: базовую стратегию из {list(playbook.STRATEGY_IDS)} "
             f"(опираясь на РАЗВЕДКУ — что реально работает у нас и в мете) + правила "
-            f"IF-THEN (по сопернику/стадии/счёту серии). Можешь задать состав по "
-            f"позициям A1/A2/A3 и условные ЗАМЕНЫ (поставить другого игрока на позицию "
-            f"при условии). Цель — титул верхней лиги.")
+            f"IF-THEN (по сопернику/стадии/счёту серии). ОБЯЗАТЕЛЬНО назначь стартовый состав: "
+            f"поставь 3 РАЗНЫХ игроков ростера на позиции A1/A2/A3 (base.lineup) — это твоё "
+            f"решение, кто на какой позиции играет в этом сезоне. Дополнительно можешь задать "
+            f"условные ЗАМЕНЫ (другой игрок на позицию при условии). Цель — титул верхней лиги.")
 
 
 # --------------------------------------------------------------------------- #
@@ -403,7 +422,7 @@ def _llm_spend(world: dict, team: dict, netted: list, wallet: list, llm):
             "spend": {"type": "boolean"},
             "op": {"type": "string", "enum": ops},
             "player_id": {"type": "string", "enum": ids},
-            "player_ids": {"type": "array", "items": {"type": "string", "enum": ids}, "maxItems": 3},
+            "player_ids": {"type": "array", "items": {"type": "string", "enum": ids}},  # capped to 3 in code below
             "reason": {"type": "string"},
         }, "required": ["spend"],
     }

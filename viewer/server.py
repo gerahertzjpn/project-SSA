@@ -173,6 +173,87 @@ def _world_net_fns(world: dict):
     return net_match.world_match_fns(world, str(FROZEN_POP), replay_dir=replay_dir)
 
 
+def _world_workers() -> int:
+    """How many worker processes to play independent matches with (regular season + SoloQ rounds).
+    Override with WORLD_WORKERS env; default = CPU-bound safe count. 1 -> sequential."""
+    env = os.environ.get("WORLD_WORKERS")
+    if env:
+        try:
+            return max(1, int(env))
+        except ValueError:
+            pass
+    from src.world import parallel
+    return parallel.default_workers()
+
+
+def _world_net_players(world: dict):
+    """Picklable, seeded match players for the PARALLEL paths: (series_player, soloq_player), or
+    (None, None) for an abstract world. Same replay dir as _world_net_fns."""
+    if not FROZEN_POP.exists():
+        return None, None
+    from src.world import net_match
+    replay_dir = ROOT / "data" / "world" / world["world_id"] / "replays"
+    return (net_match.NetSeriesPlayer(world, str(FROZEN_POP), replay_dir=replay_dir),
+            net_match.SoloQSeriesPlayer(world, str(FROZEN_POP), replay_dir=replay_dir))
+
+
+def _world_replays_dir(world_id: str):
+    return ROOT / "data" / "world" / world_id / "replays"
+
+
+def _replay_url(world_id: str, name) -> str | None:
+    """Browser path to a recorded World match (served statically under ROOT). None -> no replay."""
+    return f"/data/world/{world_id}/replays/{name}" if name else None
+
+
+def _attach_live_replays(world_id: str, world: dict, live: dict) -> dict:
+    """Give every REVEALED live card its real per-map replay file URLs (``map_replays``), so the
+    broadcast can play the actual match instead of animating the score. Best-effort: prefers the
+    link recorded at play time, else recovers it from the on-disk replays (lineup + winner). Never
+    raises into the response — a world without nets/replays simply gets no ``map_replays``."""
+    ls = world.get("live_replay")
+    if not ls or not isinstance(live, dict) or not live.get("day_matches"):
+        return live
+    rdir = _world_replays_dir(world_id)
+    if not rdir.is_dir():
+        return live
+    try:
+        from src.world import replay_link
+        by_gid = {s["gid"]: s for d in ls.get("days", []) for s in d.get("series", [])}
+        used: set = set()
+        for card in live["day_matches"]:
+            if not card.get("revealed"):
+                continue
+            s = by_gid.get(card.get("gid"))
+            if s is None:
+                continue
+            names = replay_link.link_series(world, s, rdir, manifest_path=str(FROZEN_POP), used=used)
+            card["map_replays"] = [_replay_url(world_id, n) for n in names]
+    except Exception:  # noqa: BLE001 — replays are a bonus; never break the live view
+        traceback.print_exc()
+    return live
+
+
+def _attach_result_replays(world_id: str, world: dict, result: dict) -> dict:
+    """Attach ``map_replays`` to a single watched-match result (the «Смотреть эфир» response)."""
+    ls = world.get("live_replay")
+    if not ls or not isinstance(result, dict) or result.get("gid") is None:
+        return result
+    rdir = _world_replays_dir(world_id)
+    if not rdir.is_dir():
+        return result
+    try:
+        from src.world import replay_link
+        s = next((ss for d in ls.get("days", []) for ss in d.get("series", [])
+                  if ss.get("gid") == result["gid"]), None)
+        if s is not None:
+            names = replay_link.link_series(world, s, rdir, manifest_path=str(FROZEN_POP))
+            result["map_replays"] = [_replay_url(world_id, n) for n in names]
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+    return result
+
+
 def _set_world_job(job_id: str, **fields) -> None:
     with WORLD_JOBS_LOCK:
         job = WORLD_JOBS.get(job_id)
@@ -210,6 +291,14 @@ def start_world_create_job(payload: dict) -> dict:
     entered_net_ids = list(payload.get("entered_net_ids") or []) or None
     n_enter = payload.get("n_enter")
     n_enter = int(n_enter) if n_enter else None
+    # Explicit floor: every club drafts 3 starters, so we need >= teams*3 (=66) debutants.
+    # _resolve_entered still clamps as a safety net, but we REJECT a too-small request so the
+    # user gets clear feedback instead of a silent bump.
+    min_enter = WORLD_TEAM_COUNT * 3
+    requested = max(int(n_enter or 0), len(entered_net_ids or []))
+    if requested and requested < min_enter:
+        raise ValueError(
+            f"нужно минимум {min_enter} игроков ({WORLD_TEAM_COUNT} клубов × 3 стартера), запрошено {requested}")
 
     job_id = uuid.uuid4().hex
     with WORLD_JOBS_LOCK:
@@ -226,15 +315,27 @@ def start_world_create_job(payload: dict) -> dict:
                               population=str(FROZEN_POP) if use_pop else None,
                               entered_net_ids=entered_net_ids, n_enter=n_enter)
             soloq_mf, play_fn = _world_net_fns(world) if use_pop else (None, None)
+            _, soloq_player = _world_net_players(world) if use_pop else (None, None)
+            workers = _world_workers()
             llm = _world_llm()
             draft_fn = None
             if llm is not None:
                 from src.world import llm_manager
                 draft_fn = llm_manager.draft_pick_fn(world, llm=llm)  # L2: one LLM call per pick
-            _set_world_job(job_id, phase="SoloQ + драфт (LLM) + лиги (реальные матчи)…"
-                           if llm else "SoloQ + драфт + лиги (реальные матчи)…")
+            _set_world_job(job_id, phase=f"Драфт → SoloQ → лиги (реальные матчи, {workers} воркеров)…")
+
+            def _boot_progress(msg: str, data: dict) -> None:   # live stage -> UI spinner + server log
+                _set_world_job(job_id, phase=msg)
+                try:
+                    print(f"[bootstrap {world_id}] {msg}", flush=True)
+                except Exception:                                # console encoding (emoji) must not break it
+                    pass
+
+            # SoloQ pre-seasons play in parallel (independent matches/round); the lower-league
+            # qualification stays sequential via play_fn (small + a promotion-dependent loop).
             world_season.bootstrap_world(world, seed=seed, play=play_fn, soloq_match_fn=soloq_mf,
-                                         draft_pick_fn=draft_fn)
+                                         soloq_match_player=soloq_player, workers=workers,
+                                         draft_pick_fn=draft_fn, progress_cb=_boot_progress)
             # Season 0 is done (still in bootstrap) -> managers author their SEASON-1 playbooks now,
             # so the plans are ready before the owner plays season 1.
             from src.world import llm_manager
@@ -253,9 +354,10 @@ def start_world_create_job(payload: dict) -> dict:
     return {"job_id": job_id, "status": "running"}
 
 
-def start_world_advance_job(world_id: str) -> dict:
+def start_world_advance_job(world_id: str, lang: str = "ru") -> dict:
     """Play ONE regular season for an existing world on a worker thread (net-real groups +
-    playoffs -> Elo/economy/promotion), roll to the next season, save. Returns a job_id."""
+    playoffs -> Elo/economy/promotion), roll to the next season, save. Returns a job_id.
+    ``lang`` (RU/EN/JA) localizes the commentator broadcast lines."""
     world_flags.assert_enabled("ui_world_tab")
     job_id = uuid.uuid4().hex
     with WORLD_JOBS_LOCK:
@@ -282,7 +384,7 @@ def start_world_advance_job(world_id: str) -> dict:
                 for t in missing:
                     llm_manager.author_playbook(world, t, llm=llm)
             from src.world import commentary
-            open_line = commentary.season_open(world, llm=llm)      # 📻 broadcast: season open
+            open_line = commentary.season_open(world, llm=llm, lang=lang)   # 📻 broadcast: season open
             _set_world_job(job_id, phase="Группы + плей-офф (реальные матчи)…")
             summary = world_season.run_regular_season(world, play=play_fn)
             for t in world["teams"].values():       # record each player's club this season (history)
@@ -293,7 +395,7 @@ def start_world_advance_job(world_id: str) -> dict:
                     h = p.setdefault("history", [])
                     if not any(e.get("season") == summary["season"] and e.get("team_id") == t["team_id"] for e in h):
                         h.append({"season": summary["season"], "team_id": t["team_id"], "role": p.get("role", "pro")})
-            close_line = commentary.season_close(world, summary, llm=llm)   # 📻 champions + promo/releg
+            close_line = commentary.season_close(world, summary, llm=llm, lang=lang)   # 📻 champions + promo/releg
             # Season just PLAYED. The off-season (which the owner must run next) rolls to the next
             # season — so don't increment here (that was a double-roll). Gate via the phase.
             world["phase"] = "offseason_due"
@@ -333,7 +435,7 @@ def _offseason_budgets(settings: dict):
     return rookie_budget, fa_budget, cfg, slots, rounds
 
 
-def start_world_offseason_job(world_id: str, settings: dict | None = None) -> dict:
+def start_world_offseason_job(world_id: str, settings: dict | None = None, lang: str = "ru") -> dict:
     """Run the OFF-SEASON on a worker thread with the OWNER's settings (rookie/free-agent budgets,
     auction slot count + size, SoloQ rounds): SoloQ -> rookies -> auction (LLM bids) -> spend ->
     transfers -> draft -> playbooks, then roll to the next season + save. Launches the won training
@@ -344,6 +446,8 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None) -> di
         WORLD_JOBS[job_id] = {"status": "running", "kind": "offseason", "world_id": world_id,
                               "phase": "Межсезонье…", "summary": None, "error": None}
 
+    clear_finished_training_jobs(world_id)        # fresh tracker for the new off-season's trainings
+
     def worker() -> None:
         try:
             from src.world import live_season, offseason
@@ -352,6 +456,8 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None) -> di
                 if live_season.is_live(world):
                     raise ValueError("идёт раскрытие сезона по дням — сначала доиграй его")
                 soloq_mf, _ = _world_net_fns(world)
+                _, soloq_player = _world_net_players(world)
+                workers = _world_workers()
                 rookie_budget, fa_budget, cfg, slots, rounds = _offseason_budgets(settings)
                 intro_ids = (settings or {}).get("introduce_ids") or []
                 if intro_ids:                          # reserves can ONLY debut here, in the off-season
@@ -360,11 +466,12 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None) -> di
                 _set_world_job(job_id, phase="SoloQ + аукцион + трансферы (LLM-менеджер)…")
                 llm = _world_llm()
                 report = offseason.run_offseason(
-                    world, soloq_match_fn=soloq_mf, llm=llm, rookie_budget=rookie_budget,
+                    world, soloq_match_fn=soloq_mf, soloq_match_player=soloq_player, workers=workers,
+                    llm=llm, rookie_budget=rookie_budget,
                     fa_budget=fa_budget, training_config=cfg, auction_slots=slots, soloq_rounds=rounds)
                 from src.world import commentary
-                commentary.offseason_note(world, report, llm=llm)   # 📻 off-season recap
-                commentary.manager_comments(world, llm=llm)         # 💬 one comment per manager
+                commentary.offseason_note(world, report, llm=llm, lang=lang)   # 📻 off-season recap
+                commentary.manager_comments(world, llm=llm, lang=lang)         # 💬 one comment per manager
                 save_world(world)
             events = [e for e in (report.get("events") or []) if isinstance(e, dict) and e.get("msg")]
             chronicle = [{"seq": e.get("seq"), "kind": e.get("kind"), "msg": e.get("msg"),
@@ -407,6 +514,39 @@ TRAINING_JOBS_LOCK = threading.Lock()
 # how many trainings an off-season launches — all of them run, serially.
 TRAINING_SEM = threading.Semaphore(1)
 TRAINING_RUN_DIR = str(FROZEN_POP.parent.parent / "training_runs" / "league_population_v1")
+
+# Live-measured training throughput (steps/sec). The wall-clock of a PPO run depends on THIS machine
+# (CPU sim is the bottleneck), so instead of a fixed guess we (a) compute each running job's ETA from
+# its OWN observed rate (done/elapsed) and (b) EWMA-blend finished runs into a persisted estimate that
+# seeds the pre-run ETA. _DEFAULT_SPS is only used until the first real sample lands.
+_SPS_PATH = FROZEN_POP.parent.parent / "training_runs" / "_measured_sps.json"
+_SPS_LOCK = threading.Lock()
+_DEFAULT_SPS = 833.0       # ≈ 50k steps/min — the old TrainingConfig guess, used only pre-measurement
+
+
+def measured_sps() -> float:
+    try:
+        v = float(json.loads(_SPS_PATH.read_text(encoding="utf-8")).get("sps") or 0)
+        return v if v > 0 else _DEFAULT_SPS
+    except (OSError, ValueError):
+        return _DEFAULT_SPS
+
+
+def _record_measured_sps(sps: float) -> None:
+    """EWMA-blend a finished run's observed steps/sec into the persisted estimate (alpha 0.3)."""
+    if not sps or sps <= 0:
+        return
+    with _SPS_LOCK:
+        try:
+            cur = float(json.loads(_SPS_PATH.read_text(encoding="utf-8")).get("sps") or 0) or _DEFAULT_SPS
+        except (OSError, ValueError):
+            cur = _DEFAULT_SPS
+        blended = round(0.7 * cur + 0.3 * float(sps), 1)
+        try:
+            _SPS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _SPS_PATH.write_text(json.dumps({"sps": blended}), encoding="utf-8")
+        except OSError:
+            pass
 _OP_METHOD = {"skill_up": "continue_ppo", "meta_adapt": "continue_ppo", "style_spec": "continue_ppo",
               "obedience_tune": "continue_ppo", "teamplay": "cotrain", "create_player": "fork"}
 
@@ -423,7 +563,7 @@ def start_training_job(world_id: str, job: dict, player_name: str | None = None)
     with TRAINING_JOBS_LOCK:
         TRAINING_JOBS[job_id] = {"job_id": job_id, "world_id": world_id, "op": op,
                                  "player": player_name, "done": 0, "total": steps,
-                                 "status": "queued", "error": None}
+                                 "status": "queued", "error": None, "started_at": None}
 
     def progress(done: int, total: int) -> None:
         with TRAINING_JOBS_LOCK:
@@ -435,7 +575,8 @@ def start_training_job(world_id: str, job: dict, player_name: str | None = None)
         with TRAINING_SEM:                       # one heavy training at a time; others stay "queued"
             with TRAINING_JOBS_LOCK:
                 if job_id in TRAINING_JOBS:
-                    TRAINING_JOBS[job_id]["status"] = "running"
+                    # clock starts when the job actually RUNS (queue time must not skew the rate)
+                    TRAINING_JOBS[job_id].update(status="running", started_at=time.time())
             try:
                 from src.world import backends
                 be = backends.RealTrainingBackend(run_dir=TRAINING_RUN_DIR, require_flag=False)
@@ -444,7 +585,10 @@ def start_training_job(world_id: str, job: dict, player_name: str | None = None)
                 method = getattr(be, _OP_METHOD.get(op, "continue_ppo"))
                 res = method(ctx, progress)
                 with TRAINING_JOBS_LOCK:
+                    st = TRAINING_JOBS[job_id].get("started_at")
                     TRAINING_JOBS[job_id].update(status="done", done=steps, result=res)
+                if st:                           # learn this machine's real throughput for future ETAs
+                    _record_measured_sps(steps / max(0.001, time.time() - st))
             except Exception as error:  # noqa: BLE001
                 traceback.print_exc()
                 with TRAINING_JOBS_LOCK:
@@ -458,8 +602,46 @@ def training_jobs_status(world_id: str) -> dict:
     rank = {"running": 0, "queued": 1, "done": 2, "error": 3}
     with TRAINING_JOBS_LOCK:
         jobs = [dict(j) for j in TRAINING_JOBS.values() if j["world_id"] == world_id]
+    now = time.time()
+    sps_default = measured_sps()
+    # rate for the still-to-run (queued) work: prefer the rate the RUNNING job is actually achieving,
+    # else the persisted measurement — so the total ETA reflects this machine, not a guess.
+    live_rates = []
+    for j in jobs:
+        st, done, total = j.get("started_at"), j.get("done", 0), j.get("total", 0)
+        if j["status"] == "running" and st:
+            elapsed = max(0.001, now - st)
+            j["elapsed_sec"] = round(elapsed)
+            if done > 0:
+                sps = done / elapsed
+                j["sps"] = round(sps, 1)
+                j["eta_sec"] = max(0, round((total - done) / sps)) if sps > 0 else None
+                live_rates.append(sps)
+            else:
+                j["eta_sec"] = round(total / sps_default) if sps_default > 0 else None
+    rate = live_rates[0] if live_rates else sps_default
+    # aggregate: remaining steps of the running job + ALL queued jobs run serially at `rate`
+    remaining = 0
+    for j in jobs:
+        if j["status"] == "running":
+            remaining += max(0, j.get("total", 0) - j.get("done", 0))
+        elif j["status"] == "queued":
+            remaining += j.get("total", 0)
+    total_eta_sec = round(remaining / rate) if rate > 0 and remaining else 0
     jobs.sort(key=lambda j: (rank.get(j["status"], 9), j["player"]))
-    return {"jobs": jobs}
+    return {"jobs": jobs, "measured_sps": round(rate, 1), "total_eta_sec": total_eta_sec,
+            "active": sum(1 for j in jobs if j["status"] in ("running", "queued"))}
+
+
+def clear_finished_training_jobs(world_id: str) -> dict:
+    """Drop this world's FINISHED (done/error) training jobs from the tracker — so the «завершены»
+    panel can be dismissed and doesn't linger forever. Running/queued jobs are kept."""
+    with TRAINING_JOBS_LOCK:
+        gone = [jid for jid, j in TRAINING_JOBS.items()
+                if j.get("world_id") == world_id and j.get("status") in ("done", "error")]
+        for jid in gone:
+            TRAINING_JOBS.pop(jid, None)
+    return {"cleared": len(gone)}
 
 
 def world_view_payload(world_id: str) -> dict:
@@ -486,9 +668,8 @@ def world_view_payload(world_id: str) -> dict:
     upper = sorted([t for t in teams if t["league"] == "upper"], key=lambda t: -t["power"])
     lower = sorted([t for t in teams if t["league"] == "lower"], key=lambda t: -t["power"])
     ladder = sorted((pcard(pid) for pid in players), key=lambda c: -c["rating"])[:25]
-    history = [{"season": s["season"], "upper_champion": _team_name(w, s["upper_champion"]),
-                "lower_champion": _team_name(w, s["lower_champion"])}
-               for s in w.get("history", [])[-10:]]
+    from src.world import views as _views
+    history = _views.history_view(w)[-12:]        # rich per-season cards (champions, prizes, top-3, ...)
     reserves = [pcard(pid) for pid in w.get("reserves", []) if pid in players]
     live = None
     if w.get("live_replay"):
@@ -497,9 +678,12 @@ def world_view_payload(world_id: str) -> dict:
     fr_by_id = {f["franchise_id"]: f for f in franchise_specs()}
     emblems = {t["team_id"]: emblem_svg(fr_by_id[t["franchise_id"]])
                for t in w["teams"].values() if t.get("franchise_id") in fr_by_id}
+    colors = {t["team_id"]: {"color": fr_by_id[t["franchise_id"]].get("color", "#3a4757"),
+                             "accent": fr_by_id[t["franchise_id"]].get("accent", "#d8e4f0")}
+              for t in w["teams"].values() if t.get("franchise_id") in fr_by_id}
     return {"world_id": w["world_id"], "name": w.get("name"), "season": w["season"],
             "phase": w.get("phase"), "upper": upper, "lower": lower, "ladder": ladder,
-            "history": history, "reserves": reserves, "emblems": emblems,
+            "history": history, "reserves": reserves, "emblems": emblems, "colors": colors,
             "commentary": (w.get("commentary") or [])[-40:],
             "manager_comments": (w.get("manager_comments") or [])[-22:],
             "last_offseason": w.get("last_offseason"),
@@ -517,9 +701,10 @@ def world_players_payload(world_id: str) -> dict:
 
 
 def world_leagues_payload(world_id: str) -> dict:
-    from src.world import views
+    from src.world import views, economy
     w = load_world(world_id)
-    return {"season": w["season"], "leagues": views.league_tables(w)}
+    return {"season": w["season"], "leagues": views.league_tables(w),
+            "prizes": economy.prize_schedule()}
 
 
 def world_teams_ranking_payload(world_id: str) -> dict:
@@ -555,12 +740,14 @@ def world_matrix_payload(world_id: str, season=None) -> dict:
 
 
 # --- day-by-day season: PLAY the whole season net-real once (background), then REVEAL it ----- #
-def world_live_view_payload(world_id: str) -> dict:
+def world_live_view_payload(world_id: str, day=None) -> dict:
     from src.world import live_season
-    return {"live": live_season.view(load_world(world_id))}
+    world = load_world(world_id)
+    live = live_season.view(world, day=None if day is None else int(day))
+    return {"live": _attach_live_replays(world_id, world, live)}
 
 
-def start_world_live_job(world_id: str) -> dict:
+def start_world_live_job(world_id: str, lang: str = "ru") -> dict:
     """Play the ENTIRE season net-real on a worker thread (same matches as «Сыграть сезон»),
     then store it for day-by-day reveal. Canonical state isn't settled until the reveal finishes,
     so other tabs stay spoiler-free meanwhile. Refused while an off-season is still due."""
@@ -580,6 +767,8 @@ def start_world_live_job(world_id: str) -> dict:
             if live_season.is_live(world):
                 raise ValueError("сезон по дням уже идёт — доиграй его до конца")
             _, play_fn = _world_net_fns(world)
+            series_player, _ = _world_net_players(world)
+            workers = _world_workers()
             llm = _world_llm()
             # Playbooks come from bootstrap (season 1) / off-season (later); only fill missing ones.
             from src.world import llm_manager
@@ -589,9 +778,12 @@ def start_world_live_job(world_id: str) -> dict:
                 _set_world_job(job_id, phase="Менеджеры пишут плейбуки (LLM)…")
                 for t in missing:
                     llm_manager.author_playbook(world, t, llm=llm)
-            commentary.season_open(world, llm=llm)        # 📻 season opens (no result yet)
-            _set_world_job(job_id, phase="Играем весь сезон нейросетями…")
-            rep = live_season.play_and_store(world, play=play_fn)
+            commentary.season_open(world, llm=llm, lang=lang)   # 📻 season opens (no result yet)
+            _set_world_job(job_id, phase=f"Играем весь сезон нейросетями ({workers} воркеров)…")
+            # Regular season plays in parallel (independent series, pre-assigned seeds); playoffs stay
+            # sequential. seed=None -> fresh entropy per run (recorded in the replay), as before.
+            rep = live_season.play_and_store(world, play=play_fn, series_player=series_player,
+                                             workers=workers)
             save_world(world)
             _set_world_job(job_id, status="done", phase="Сезон сыгран — раскрывай по дням",
                            summary={"season": rep["season"], "total_days": rep["n_days"]})
@@ -603,7 +795,7 @@ def start_world_live_job(world_id: str) -> dict:
     return {"job_id": job_id, "status": "running"}
 
 
-def world_live_reveal_day(world_id: str) -> dict:
+def world_live_reveal_day(world_id: str, lang: str = "ru") -> dict:
     """Reveal one already-played day (instant). The final day settles the season + adds the
     champions to the broadcast (templated, no LLM — only now that the result is on screen).
     Under the per-world lock so two concurrent reveals can't double-finalise the same day."""
@@ -613,23 +805,40 @@ def world_live_reveal_day(world_id: str) -> dict:
         result = live_season.reveal_next_day(w)
         if result.get("finished"):
             from src.world import commentary
-            commentary.season_close(w, w["history"][-1], llm=None)
+            commentary.season_close(w, w["history"][-1], llm=None, lang=lang)
         save_world(w)
-        return {"result": result, "live": live_season.view(w)}
+        return {"result": result, "live": _attach_live_replays(world_id, w, live_season.view(w))}
 
 
 def world_live_watch(world_id: str, body: dict) -> dict:
-    """Replay one of the next day's matches map-by-map (no scrub). The result is already decided;
-    returns its stored map sequence. Read-only — does not advance the reveal."""
+    """Watch (and COMMIT) one of the shown day's matches map-by-map (no scrub). The result is already
+    decided; watching reveals that single game so every read-model updates immediately. Watching NEVER
+    finalises the season (that's «Следующий день»'s job). Under the per-world lock + persisted, so a
+    watch can't be lost. Returns {result: <the match>, live: <view>} — the match is UN-wrapped so the
+    client's broadcast gets sequence/score directly (reveal_watch nests it under 'result')."""
     from src.world import live_season
-    w = load_world(world_id)
-    result = live_season.reveal_watch(w, body.get("home"), body.get("away"))
-    return {"result": result, "live": live_season.view(w)}
+    with _world_lock(world_id):
+        w = load_world(world_id)
+        rv = live_season.reveal_watch(w, body.get("home"), body.get("away"))
+        save_world(w)
+        return {"result": _attach_result_replays(world_id, w, rv["result"]),
+                "live": _attach_live_replays(world_id, w, rv["view"])}
 
 
 def world_draft_payload(world_id: str) -> dict:
     from src.world import views
     return views.draft_view(load_world(world_id))
+
+
+def world_match_commentary(world_id: str, body: dict, lang: str = "ru") -> dict:
+    """ON-DEMAND commentary for one matchup (Гарри Вольский) — template always, LLM enriches when
+    enabled. Ephemeral (not stored). Read-only."""
+    from src.world import commentary
+    w = load_world(world_id)
+    season = body.get("season")
+    return commentary.match_commentary(w, body.get("home"), body.get("away"),
+                                       int(season) if season is not None else None,
+                                       llm=_world_llm(), lang=lang)
 
 
 def world_player_payload(world_id: str, player_id: str) -> dict:
@@ -1292,6 +1501,13 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
                 except Exception as error:  # noqa: BLE001
                     self._send_json({"error": str(error)}, status=404)
                 return
+        world_live_day = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/live/(?P<day>\d+)$", path)
+        if world_live_day:
+            try:
+                self._send_json(world_live_view_payload(world_live_day.group("wid"), world_live_day.group("day")))
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error)}, status=404)
+            return
         world_team = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/team/(?P<tid>[\w-]+)$", path)
         if world_team:
             try:
@@ -1384,6 +1600,7 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        lang = self._world_lang()        # RU/EN/JA for commentator/manager output (X-World-Lang header)
         if path == "/api/generate-replays":
             try:
                 payload = self._read_json()
@@ -1444,14 +1661,26 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             wid, action = world_live.group("wid"), world_live.group("action")
             try:
                 if action == "start":
-                    self._send_json(start_world_live_job(wid))
+                    self._send_json(start_world_live_job(wid, lang))
                 elif action == "day":
-                    self._send_json(world_live_reveal_day(wid))
+                    self._send_json(world_live_reveal_day(wid, lang))
                 else:
                     body = self._read_json() if int(self.headers.get("Content-Length") or 0) else {}
                     self._send_json(world_live_watch(wid, body))
             except world_flags.FeatureLocked as error:
                 self._send_json({"error": str(error), "locked": True, "server": server_info()}, status=403)
+            except Exception as error:  # noqa: BLE001
+                self._send_json({"error": str(error), "server": server_info()}, status=400)
+            return
+        world_train_clear = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/training/clear$", path)
+        if world_train_clear:
+            self._send_json(clear_finished_training_jobs(world_train_clear.group("wid")))
+            return
+        world_comm = re.match(r"^/api/world/(?P<wid>world-[0-9a-f]+)/match/commentary$", path)
+        if world_comm:
+            body = self._read_json() if int(self.headers.get("Content-Length") or 0) else {}
+            try:
+                self._send_json(world_match_commentary(world_comm.group("wid"), body, lang))
             except Exception as error:  # noqa: BLE001
                 self._send_json({"error": str(error), "server": server_info()}, status=400)
             return
@@ -1461,9 +1690,9 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
             try:
                 if action == "offseason":
                     settings = self._read_json() if int(self.headers.get("Content-Length") or 0) else None
-                    self._send_json(start_world_offseason_job(world_post.group("wid"), settings))
+                    self._send_json(start_world_offseason_job(world_post.group("wid"), settings, lang))
                 else:
-                    self._send_json(start_world_advance_job(world_post.group("wid")))
+                    self._send_json(start_world_advance_job(world_post.group("wid"), lang))
             except world_flags.FeatureLocked as error:
                 self._send_json({"error": str(error), "locked": True,
                                  "server": server_info()}, status=403)
@@ -1488,6 +1717,10 @@ class ViewerRequestHandler(SimpleHTTPRequestHandler):
                 self._send_json({"error": str(error)}, status=400)
             return
         self.send_error(404, "Unknown API endpoint")
+
+    def _world_lang(self) -> str:
+        lang = (self.headers.get("X-World-Lang") or "ru").lower()
+        return lang if lang in ("ru", "en", "ja") else "ru"
 
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", "0") or 0)

@@ -43,7 +43,7 @@ from .map2d import (
     threat_zone_entry_progress,
     threat_zone_ids_for_approach,
 )
-from .visual2d import moving_group_visual, moving_group_visual_smooth
+from .visual2d import moving_group_visual, moving_group_visual_smooth, group_path_arc_fraction
 from .combat import (
     build_player_units, build_neutral_units, build_core_unit, build_baron_unit,
     build_building_unit,
@@ -56,6 +56,9 @@ from .combat2d import (
     tick_battle_units_2d,
     has_hostile_units_2d,
     unit_range_map,
+    COMBAT_RANGE_TO_MAP_UNITS,
+    FORMATION_DEPTH_MAP,
+    EDGE_FRONTLINE_GAP_MAP,
 )
 from .production import apply_build, apply_production, collect_income, player_has_completed_building
 from .units import UNIT_STATS, UnitInstance
@@ -1009,7 +1012,27 @@ class GameEngine:
             return False
         if first.total_units() <= 0 or second.total_units() <= 0:
             return False
-        return first.progress + second.progress >= 1.0 - EDGE_COLLISION_THRESHOLD
+        return first.progress + second.progress >= self._edge_engage_sum(first_src, first_dst)
+
+    def _edge_engage_sum(self, edge_src: str, edge_dst: str) -> float:
+        """Progress-sum (p1 + p2) at which two head-on groups on this edge engage.
+
+        Two opposing groups occupy the SAME edge point when ``p1 + p2 == 1.0``; the
+        legacy trigger only fired at ``>= 0.95`` (gap <= 5% of the edge, ~3-8 map units),
+        far inside the ~24+ map-unit combat range, so fronts glided through each other
+        and then snapped back into formation — the visible "pass through, then run back".
+        Fire instead when the fronts reach engagement distance: ``engage`` = combat range
+        plus the formation depth + frontline gap the battle will introduce, expressed as a
+        fraction of the edge length. Clamped to never fire LATER than the legacy
+        near-overlap threshold, and never below 0 (edges shorter than the engage band put
+        the whole edge in range, so they collide as soon as both groups are on it).
+        """
+        engage = COMBAT_RANGE_TO_MAP_UNITS + FORMATION_DEPTH_MAP + EDGE_FRONTLINE_GAP_MAP
+        edge_len = approach_edge_length(edge_src, edge_dst)
+        if edge_len <= 0.0:
+            return 1.0 - EDGE_COLLISION_THRESHOLD
+        collide_sum = 1.0 - engage / edge_len
+        return max(0.0, min(collide_sum, 1.0 - EDGE_COLLISION_THRESHOLD))
 
     def _movement_phase_can_collide_on_edge(self, group: MovingGroup) -> bool:
         return group.phase in {"edge", "node_exit", "node_transit", "node_enter"}
@@ -1059,7 +1082,8 @@ class GameEngine:
         second_before = max(0.0, float(second.progress) - second_step)
         first_after = float(first.progress)
         second_after = float(second.progress)
-        threshold = 1.0 - EDGE_COLLISION_THRESHOLD
+        contact_src, contact_dst = self._moving_group_segment_nodes(first)
+        threshold = self._edge_engage_sum(contact_src or first.src, contact_dst or first.dst)
         before_total = first_before + second_before
         after_total = first_after + second_after
         delta_total = after_total - before_total
@@ -3695,6 +3719,11 @@ class GameEngine:
                 ),
             )
             self._set_group_segment(group, segment_index, progress=continue_progress)
+            # This survivor resumes MID-edge (progress=continue_progress, started_tick
+            # reset to now). Record the arc fraction it is actually at so the smooth
+            # visual projector glides it forward from the battle line instead of
+            # snapping it back onto the edge's source node for a tick.
+            group.visual_start_frac = group_path_arc_fraction(group)
             if (
                 group.intent == "LORD_PUSH"
                 and int((group.units or {}).get(UnitType.LORD.value, 0) or 0) > 0

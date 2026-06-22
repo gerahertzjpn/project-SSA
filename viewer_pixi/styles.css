@@ -1,3 +1,50 @@
+/* ============================================================================ *
+ *  THEME TOKENS — mirror of world.css so the replay PLAYER (this page) themes
+ *  with the same three looks (Aurora / Neon / Vibrant). styles.css loads first;
+ *  the World pages then redefine these identically in world.css (no conflict).
+ *  Theme is read from the shared "worldTheme" localStorage key (set in <head>).
+ * ============================================================================ */
+:root {
+  --bg: #0d1220;            --bg-2: #0a0e1a;
+  --panel: #141a2a;         --panel-2: #10151f;     --panel-3: #161d2a;
+  --panel-deep: #0c111c;    --well: #0b0f17;
+  --border: #20293c;        --border-2: #2b3650;
+  --text-strong: #eaf1fb;   --text: #d3deec;        --text-2: #a3b3c6;
+  --text-3: #8b99ab;        --muted: #6e7c8c;
+  --accent: #6366f1;        --accent-lite: #93b4ff; --accent-2: #2dd4bf;   --accent-3: #a855f7;
+  --success: #34d399;       --danger: #fb7185;      --gold: #f5c45e;       --gold-soft: #ffd98f;
+  --accent-soft: rgba(99,102,241,.14);  --glow: rgba(99,102,241,.42);
+  --r-1: 8px;  --r-2: 12px;  --r-3: 16px;  --r-pill: 999px;
+  --elev-1: 0 2px 10px -4px rgba(0,0,0,.35);
+  --elev-2: 0 10px 28px -16px rgba(0,0,0,.5);
+  --elev-float: 0 10px 30px -12px rgba(0,0,0,.55);
+  --head-grad: linear-gradient(115deg, #2dd4bf, #6366f1 46%, #a855f7);
+}
+html[data-theme="neon"] {
+  --bg: #060910;            --bg-2: #04060b;
+  --panel: #0c121c;         --panel-2: #0a0f18;     --panel-3: #111927;
+  --panel-deep: #080c15;    --well: #05080e;
+  --border: #16212f;        --border-2: #20354c;
+  --text-strong: #eafaff;   --text: #c6d6e6;        --text-2: #92a7be;
+  --text-3: #6f8499;        --muted: #56697e;
+  --accent: #22d3ee;        --accent-lite: #67e8f9; --accent-2: #a78bfa;   --accent-3: #f472b6;
+  --success: #2ff0ad;       --danger: #fb6f8a;      --gold: #fcd34d;       --gold-soft: #fde68a;
+  --accent-soft: rgba(34,211,238,.14);  --glow: rgba(34,211,238,.55);
+  --head-grad: linear-gradient(115deg, #22d3ee, #a78bfa 50%, #f472b6);
+}
+html[data-theme="vibrant"] {
+  --bg: #11121a;            --bg-2: #0d0e15;
+  --panel: #1a1b28;         --panel-2: #15161f;     --panel-3: #1f2030;
+  --panel-deep: #141420;    --well: #101019;
+  --border: #2a2c3c;        --border-2: #393b50;
+  --text-strong: #f6f2ea;   --text: #ddd9e4;        --text-2: #aaa6bb;
+  --text-3: #918da1;        --muted: #6f6b80;
+  --accent: #fb923c;        --accent-lite: #fdba74; --accent-2: #2dd4bf;   --accent-3: #fb7185;
+  --success: #4ade80;       --danger: #fb7185;      --gold: #facc15;       --gold-soft: #fde68a;
+  --accent-soft: rgba(251,146,60,.16);  --glow: rgba(251,146,60,.45);
+  --head-grad: linear-gradient(115deg, #fb923c, #fb7185 50%, #2dd4bf);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -8,8 +55,8 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: #0f1419;
-  color: #eef4fa;
+  background: var(--bg);
+  color: var(--text);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -37,8 +84,8 @@ input[type="number"]::-webkit-outer-spin-button {
   height: 100vh;
   overflow: hidden;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(0, 0, 0, 0.16)),
-    #0f1419;
+    radial-gradient(1200px 620px at 50% -12%, var(--accent-soft), transparent 60%),
+    linear-gradient(180deg, var(--bg), var(--bg-2));
 }
 
 #pixiStage {
@@ -55,11 +102,13 @@ input[type="number"]::-webkit-outer-spin-button {
 .hud {
   position: absolute;
   z-index: 3;
-  color: #eef4fa;
-  background: rgba(16, 20, 25, 0.82);
-  border: 1px solid rgba(132, 148, 166, 0.32);
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
-  backdrop-filter: blur(10px);
+  color: var(--text);
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--panel) 90%, transparent),
+    color-mix(in srgb, var(--panel-2) 92%, transparent));
+  border: 1px solid var(--border-2);
+  box-shadow: var(--elev-2), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(12px);
 }
 
 .top-hud {
@@ -133,10 +182,10 @@ select,
 button,
 .mini-field input {
   min-height: 34px;
-  border-radius: 6px;
-  border: 1px solid rgba(132, 148, 166, 0.38);
-  background: #18212a;
-  color: #eef4fa;
+  border-radius: var(--r-1);
+  border: 1px solid var(--border-2);
+  background: var(--panel-2);
+  color: var(--text);
   padding: 0 10px;
   text-decoration: none;
 }
@@ -162,7 +211,7 @@ button:disabled {
 select:disabled {
   cursor: not-allowed;
   opacity: 0.55;
-  color: #8a9cb0;
+  color: var(--muted);
 }
 
 .mini-field {
@@ -236,11 +285,11 @@ select:disabled {
   min-width: 0;
   display: grid;
   gap: 7px;
-  border: 1px solid rgba(132, 148, 166, 0.18);
+  border: 1px solid var(--border);
   border-left-width: 3px;
-  border-radius: 6px;
+  border-radius: var(--r-2);
   padding: 8px;
-  background: rgba(13, 18, 23, 0.48);
+  background: color-mix(in srgb, var(--well) 70%, transparent);
 }
 
 .team-config.team-a {
@@ -265,7 +314,7 @@ select:disabled {
 
 .team-config-head strong {
   font-size: 12px;
-  color: #c8d2de;
+  color: var(--text);
   white-space: nowrap;
 }
 
@@ -291,7 +340,7 @@ select:disabled {
 .player-slot {
   font-weight: 800;
   font-size: 12px;
-  color: #eef4fa;
+  color: var(--text-strong);
   text-align: center;
 }
 
@@ -496,6 +545,13 @@ body.embed-replay #topHud {
   display: none;
 }
 
+/* Broadcast embed: keep the transport bar BELOW the match canvas (the .bottom-hud is position:absolute
+   and otherwise floats OVER the bottom of the match, covering it). Reserve its band so it never overlaps
+   — applies only inside the World broadcast iframe (the standalone Match tab is not .embed-replay). */
+body.embed-replay #pixiStage {
+  bottom: 88px;
+}
+
 .brand-menu {
   display: inline-flex;
   align-items: center;
@@ -524,4 +580,210 @@ body.embed-replay #topHud {
   margin-left: 6px;
   vertical-align: middle;
   font-weight: 600;
+}
+
+/* ============================================================================ *
+ *  REPLAY PLAYER — themed polish so this viewer matches the World broadcast
+ *  player. Appended last so it wins over the base rules above by source order.
+ *  Pure chrome: the Pixi match canvas itself is untouched (functionality 1:1).
+ * ============================================================================ */
+.top-hud,
+.bottom-hud {
+  border-radius: var(--r-3);
+}
+.bottom-hud {
+  overflow: hidden;
+  padding: 12px 14px 11px;
+}
+/* signature gradient accent strip (like .bcast::before in the World player).
+   bottom-hud uses ::before (it is overflow:hidden, never scrolls). top-hud paints
+   the strip as a PINNED background layer instead — when Config is expanded the
+   top-hud becomes a scroll container, and an abspos ::before would scroll away. */
+.bottom-hud::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 3px;
+  background: var(--head-grad);
+  border-radius: var(--r-3) var(--r-3) 0 0;
+  pointer-events: none;
+}
+.top-hud {
+  background:
+    var(--head-grad) top / 100% 3px no-repeat,
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--panel) 90%, transparent),
+      color-mix(in srgb, var(--panel-2) 92%, transparent));
+}
+
+/* transport controls — themed, with a hover lift */
+.bottom-hud button,
+.top-hud button {
+  transition: background .18s ease, border-color .18s ease, box-shadow .18s ease, transform .12s ease;
+}
+.bottom-hud button:hover,
+.top-hud button:not(.primary):hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-2));
+  background: color-mix(in srgb, var(--accent-soft) 65%, var(--panel-2));
+  color: var(--text-strong);
+}
+.bottom-hud button:active { transform: translateY(1px); }
+
+/* the play button is the hero — accent gradient + glow */
+button.primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-3));
+  border: 1px solid transparent;
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 6px 18px -8px var(--glow), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+button.primary:hover {
+  filter: brightness(1.07);
+  box-shadow: 0 9px 24px -8px var(--glow), inset 0 1px 0 rgba(255, 255, 255, .24);
+}
+/* neon/vibrant accents are bright — a dark glyph keeps the play button + the
+   active theme dot legible. Both selectors are Match-only (no World impact). */
+html[data-theme="neon"] .bottom-hud button.primary,
+html[data-theme="vibrant"] .bottom-hud button.primary,
+html[data-theme="neon"] .theme-dock button.is-active,
+html[data-theme="vibrant"] .theme-dock button.is-active {
+  color: var(--bg);
+}
+
+/* playback scrubber — themed track + glowing thumb */
+#tickSlider {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--accent) 60%, transparent),
+    var(--border-2));
+  outline: none;
+}
+#tickSlider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent-lite);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 14px var(--glow);
+  cursor: pointer;
+}
+#tickSlider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-lite);
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 12px var(--glow);
+  cursor: pointer;
+}
+/* keyboard focus ring on the scrubber (outline:none above removes the UA ring) */
+#tickSlider:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 0 5px var(--accent), 0 0 14px var(--glow);
+}
+#tickSlider:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 3px var(--accent), 0 0 12px var(--glow);
+}
+.tick-readout { color: var(--text-2); }
+
+/* brand / menu / inputs / panels re-tinted to tokens */
+.brand strong { color: var(--text-strong); }
+.brand span { color: var(--text-2); }
+.mini-field { color: var(--text-2); }
+.muted { color: var(--text-2); }
+.brand-menu,
+.back-btn,
+.embed-title {
+  border-color: var(--border-2);
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  color: var(--text);
+}
+/* scope the hamburger hover to Match only (.brand wraps it here; on World it does
+   not, so this never overrides world.css's own .brand-menu:hover). */
+.back-btn:hover,
+.brand .brand-menu:hover {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--border-2));
+  color: var(--text-strong);
+}
+.back-btn,
+.embed-title { border-radius: var(--r-2); }
+.inspect-panel { border-radius: var(--r-2); }
+.inspect-panel h2 { color: var(--text-strong); }
+#inspectBody { color: var(--text); }
+.row { border-bottom-color: var(--border); }
+
+/* generate button + status tones -> themed */
+.generate-command {
+  background: color-mix(in srgb, var(--accent-2) 22%, var(--panel));
+  border-color: color-mix(in srgb, var(--accent-2) 60%, transparent);
+  color: var(--text-strong);
+}
+.generate-status {
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--well) 70%, transparent);
+  color: var(--text-2);
+}
+.generate-status[data-tone="ok"] { color: var(--success); }
+.generate-status[data-tone="error"] {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+}
+.generate-status[data-tone="loading"] { color: var(--gold); }
+.top-hud.show-all-models .models-toggle {
+  border-color: color-mix(in srgb, var(--gold) 55%, transparent);
+  color: var(--gold);
+}
+
+/* floating theme switcher (mirrors the World control; shares localStorage key) */
+.theme-dock {
+  position: fixed;
+  z-index: 8;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border: 1px solid var(--border-2);
+  box-shadow: var(--elev-float);
+  backdrop-filter: blur(10px);
+}
+.theme-dock button {
+  width: 30px;
+  height: 30px;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-2);
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .18s ease, color .18s ease, box-shadow .18s ease, transform .12s ease;
+}
+.theme-dock button:hover { transform: scale(1.08); color: var(--text-strong); }
+.theme-dock button.is-active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-3));
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 0 14px -3px var(--glow);
+}
+body.embed-replay .theme-dock { display: none; }
+
+
+/* ---- Per-locale: JA is CJK; give the Match HUD a CJK-capable font ----------- */
+html[lang="ja"] {
+  font-family: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Yu Gothic UI",
+    "Meiryo", "Noto Sans JP", "MS PGothic", Inter, ui-sans-serif, system-ui, sans-serif;
 }

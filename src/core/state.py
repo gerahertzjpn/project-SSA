@@ -67,6 +67,13 @@ class MovingGroup:
     speed: float = 1.0
     final_dst: Optional[str] = None
     visual_units: dict = field(default_factory=dict)  # unit_type -> [stable replay visual ids]
+    # Arc-length fraction (0..1) of this group's position along its path at the
+    # moment its journey segment was (re)started. 0 for a group that departs from
+    # path[0] (a node); >0 only for a group resumed MID-path (e.g. survivors that
+    # continue after an edge battle). The smooth visual projector sweeps from here
+    # to the path end instead of always from path[0], so a mid-edge resume does not
+    # snap the survivors back onto the source node. See visual2d.moving_group_visual_smooth.
+    visual_start_frac: float = 0.0
 
     def total_units(self) -> int:
         return sum(self.units.values())

@@ -28,15 +28,48 @@ ATTR_KEYS = ("attack", "defense", "economy", "tempo", "consistency", "potential"
 
 FACTIONS = ("humans", "infected", "robots")
 
-# Name generation — world-scoped, diverse, deterministic by seed.
-_NAME_PREFIX = (
+# Legacy syllables — kept ONLY to reproduce the exact RNG draw pattern the old generator consumed, so
+# that switching to the curated pool (below) does NOT shift any seeded world/run (full reproducibility).
+_LEGACY_PREFIX = (
     "Ash", "Bly", "Cor", "Dra", "Eko", "Fen", "Gax", "Hel", "Ira", "Jot",
     "Kor", "Lyx", "Mir", "Nyx", "Orb", "Pyr", "Quo", "Rho", "Syl", "Tau",
     "Umb", "Vex", "Wol", "Xan", "Ymir", "Zed",
 )
-_NAME_SUFFIX = (
+_LEGACY_SUFFIX = (
     "an", "ix", "or", "us", "ai", "en", "ra", "os", "yn", "el", "ar", "io",
     "ux", "is", "ov", "ek", "ym", "ad", "ul", "ez",
+)
+
+# Player nicknames — a curated pool of realistic esports-style handles (world-scoped, deterministic
+# by seed). Drawn unique; once exhausted we append a number to a base handle ("Vortex7") so even big
+# populations keep authentic gamer-tags instead of "Prospect00".
+_NICK_POOL = (
+    # edge / aggression
+    "Reaper", "Venom", "Havoc", "Rogue", "Riot", "Fury", "Vandal", "Savage", "Carnage", "Menace",
+    "Wrath", "Ruin", "Slayer", "Ravage", "Outlaw", "Renegade", "Maverick", "Marauder", "Berserk", "Rampage",
+    # mystery / shadow
+    "Specter", "Phantom", "Wraith", "Shadow", "Ghost", "Cipher", "Enigma", "Mirage", "Eclipse", "Oblivion",
+    "Nocturne", "Vesper", "Raven", "Onyx", "Obsidian", "Cinder", "Ember", "Smoke", "Dusk", "Nightfall",
+    "Twilight", "Umbra", "Void", "Abyss", "Hollow", "Grim", "Mortis", "Shade", "Revenant", "Spectre",
+    # tech / precision
+    "Pixel", "Vector", "Glitch", "Static", "Surge", "Pulse", "Volt", "Bolt", "Spark", "Flux",
+    "Circuit", "Proxy", "Vertex", "Apex", "Zenith", "Crux", "Nexus", "Matrix", "Cortex", "Synth",
+    "Quantum", "Photon", "Neon", "Laser", "Razor", "Edge", "Blade", "Saber", "Talon", "Spike",
+    # beasts / mythic
+    "Hydra", "Kraken", "Drake", "Wyvern", "Cobra", "Viper", "Mamba", "Falcon", "Raptor", "Lynx",
+    "Panther", "Jaguar", "Fenrir", "Cerberus", "Titan", "Atlas", "Orion", "Nova", "Comet", "Meteor",
+    "Solar", "Lunar", "Frost", "Blaze", "Inferno", "Tempest", "Cyclone", "Quake", "Glacier", "Tundra",
+    # short / stylized
+    "Vex", "Nyx", "Sol", "Kade", "Zane", "Rune", "Jinx", "Koda", "Riven", "Ozz",
+    "Ryu", "Kai", "Zed", "Neo", "Axl", "Dex", "Rix", "Fyn", "Lux", "Vox",
+    "Nox", "Syx", "Zyl", "Kex", "Vyn", "Dro", "Qix", "Hux", "Jet", "Ace",
+    # leetspeak flavor
+    "Zer0", "Sn1per", "Gh0st", "Fr0st", "Pyr0", "N0va", "V1per", "Kha0s", "Sl1ck", "Hav0c",
+    "T0xic", "P1xel", "Bl1tz", "Sk0pe", "Wr3ck", "Cl0ud", "Fl4re", "Cr1t", "Vyr4l", "Pr0xy",
+    # call-signs
+    "Specs", "Drift", "Pace", "Clutch", "Frag", "Recoil", "Scope", "Flick", "Whiff", "Peek",
+    "Strafe", "Bunny", "Dash", "Juke", "Rush", "Camp", "Bait", "Smurf", "Tilt", "Carry",
+    "Anchor", "Pivot", "Relay", "Vanguard", "Sentry", "Pulse2", "Echo", "Pyre", "Rift", "Surge2",
 )
 _ARCHETYPES = (
     "Carry", "Anchor", "Tempo", "Macro", "Roamer", "Flex", "Pusher",
@@ -63,23 +96,35 @@ def team_id(world_id: str, franchise_id: str) -> str:
 # Player / team factories
 # --------------------------------------------------------------------------- #
 def _unique_nicknames(n: int, rng: random.Random) -> list[str]:
+    """``n`` unique realistic gamer-tags, deterministic by ``rng``.
+
+    To keep every seeded world/run byte-reproducible, this consumes ``rng`` with the EXACT pattern the
+    old syllable generator used (the burn loop below), then derives the curated handles from a stable,
+    NON-consuming snapshot of ``rng`` — so the gameplay RNG stream is identical to before, only the
+    returned names change."""
+    burn: set[str] = set()                              # replicate the old draw count -> same downstream rng
+    guard = 0
+    while len(burn) < n and guard < n * 50:
+        guard += 1
+        burn.add(rng.choice(_LEGACY_PREFIX) + rng.choice(_LEGACY_SUFFIX))
+    name_rng = random.Random(repr(rng.getstate()))      # stable per-world; does NOT consume the main rng
+    pool = list(_NICK_POOL)
+    name_rng.shuffle(pool)
     out: list[str] = []
     seen: set[str] = set()
-    guard = 0
-    while len(out) < n and guard < n * 50:
-        guard += 1
-        name = rng.choice(_NAME_PREFIX) + rng.choice(_NAME_SUFFIX)
+    for name in pool:
         if name not in seen:
             seen.add(name)
             out.append(name)
-    # Fallback for collisions / tiny syllable space.
-    i = 0
-    while len(out) < n:
-        cand = f"Prospect{i:02d}"
+            if len(out) >= n:
+                return out
+    k = 0
+    while len(out) < n:                                  # pool spent -> base + number ("Vortex7")
+        cand = f"{pool[k % len(pool)]}{(k // len(pool)) + 2}"
         if cand not in seen:
             seen.add(cand)
             out.append(cand)
-        i += 1
+        k += 1
     return out
 
 
@@ -102,7 +147,7 @@ STARTERS = len(POSITIONS)        # exactly 3 are FIELDED each series (the playbo
 # Clubs draft 3 STARTERS, then build DEPTH (a bench) on the market up to MAX_ROSTER — only then do
 # mid-series substitutions have someone to bring in. (With 90 pros / 22 clubs, drafting benches at
 # bootstrap would starve the transfer market, so depth is a market decision, like real football.)
-MAX_ROSTER = 5                   # cap: 3 starters + up to 2 bench
+MAX_ROSTER = 6                   # cap: 3 starters + up to 3 bench
 
 
 def _synth_position_affinity(rng: random.Random) -> dict:
@@ -156,6 +201,7 @@ def make_player(
         "soloq_rating": START_RATING,
         "soloq_history": [],
         "soloq_matches": [],                    # recent games: {season,round,teammates,opponents,won,delta}
+        "earnings": 0,                          # career prize money (split from team purses)
         "salary": 0.0,                          # set after first played season
         "salary_history": [],
         "status": "free_agent",                 # free_agent | rostered | rookie
@@ -237,10 +283,11 @@ _PLAYER_CARDS_PATH = ROOT / "population" / "player_cards_v1.json"
 _PLAYER_CARDS_CACHE: Optional[dict] = None
 
 
-def _load_player_cards() -> dict:
-    """net_id -> 6-attribute card derived from the net's measured play; {} if absent."""
+def _load_player_cards(force: bool = False) -> dict:
+    """net_id -> 6-attribute card derived from the net's measured play; {} if absent. ``force`` re-reads
+    the file (the training backend rewrites it in a subprocess, so re-eval must bypass the cache)."""
     global _PLAYER_CARDS_CACHE
-    if _PLAYER_CARDS_CACHE is None:
+    if _PLAYER_CARDS_CACHE is None or force:
         try:
             _PLAYER_CARDS_CACHE = json.loads(_PLAYER_CARDS_PATH.read_text(encoding="utf-8")).get("cards", {})
         except (OSError, ValueError):

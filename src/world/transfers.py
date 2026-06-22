@@ -170,7 +170,8 @@ def resolve_transfer_auction(world: dict, bids: list[dict], *,
 
 
 # --------------------------------------------------------------------------- #
-# Owned-player transfer request (buyer -> owner). Owner decides (LLM stub).
+# Owned-player transfer request (buyer -> owner). Owner decides via the LLM
+# manager when enabled; _default_accept is the heuristic fallback.
 # --------------------------------------------------------------------------- #
 AcceptFn = Callable[[dict, dict, int], bool]  # (world, player, offer) -> accept?
 
@@ -261,11 +262,11 @@ def rookie_draft(world: dict, *, want_fn: Optional[Callable[[dict, list], Option
 # --------------------------------------------------------------------------- #
 def _move_player_to_team(world: dict, player_id: str, team_id: str) -> None:
     player = get_player(world, player_id)
-    old = player.get("team_id")
-    if old and old in world["teams"]:
-        roster = world["teams"][old]["roster"]
-        if player_id in roster:
-            roster.remove(player_id)
+    # Remove from EVERY roster except the destination — never trust only player["team_id"]; if it is
+    # stale a "sold" player could otherwise stay on its old roster (display would contradict reality).
+    for tid, t in world["teams"].items():
+        if tid != team_id and player_id in t.get("roster", []):
+            t["roster"].remove(player_id)
     if player_id in world.get("free_agents", []):
         world["free_agents"].remove(player_id)
     player["team_id"] = team_id

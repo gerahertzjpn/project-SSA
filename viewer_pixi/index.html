@@ -12,12 +12,14 @@
       }
     }
   </script>
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem("worldTheme") || "aurora"; } catch (e) { document.documentElement.dataset.theme = "aurora"; }</script>
+  <script>try { document.documentElement.lang = localStorage.getItem("worldLang") || "ru"; } catch (e) { document.documentElement.lang = "ru"; }</script>
 </head>
 <body>
   <main class="pixi-shell">
     <div id="pixiStage" aria-label="Pixi replay map"></div>
 
-    <a id="backBtn" class="back-btn is-hidden" href="./home.html">&larr; Back</a>
+    <a id="backBtn" class="back-btn is-hidden" href="./home.html" data-i18n="← Back">&larr; Back</a>
     <div id="embedTitle" class="embed-title is-hidden" aria-live="polite"></div>
 
     <header id="topHud" class="hud top-hud compact" aria-label="Replay and match controls">
@@ -29,19 +31,19 @@
         </div>
         <div class="replay-controls">
           <select id="replaySelect" aria-label="Replay"></select>
-          <button id="loadBtn" type="button">Load</button>
-          <label class="mini-field" title="Matches to generate">
+          <button id="loadBtn" type="button" data-i18n="Load">Load</button>
+          <label class="mini-field" title="Matches to generate" data-i18n-attr="title:Matches to generate">
             <span>Runs</span>
-            <input id="generateCountInput" type="number" min="1" max="100" value="20" inputmode="numeric">
+            <input id="generateCountInput" type="number" min="1" max="100" value="5" inputmode="numeric">
           </label>
-          <label class="mini-field" title="Generation seed">
+          <label class="mini-field" title="Generation seed (blank = fresh random each run)" data-i18n-attr="title:Generation seed (blank = fresh random each run)">
             <span>Seed</span>
-            <input id="generateSeedInput" type="number" value="20260602" inputmode="numeric">
+            <input id="generateSeedInput" type="number" placeholder="random" inputmode="numeric">
           </label>
-          <button id="generateBtn" class="generate-command" type="button">Generate</button>
+          <button id="generateBtn" class="generate-command" type="button" data-i18n="Generate">Generate</button>
           <span id="generateStatus" class="generate-status" aria-live="polite" title=""></span>
-          <button id="modelsToggleBtn" class="mini-command models-toggle" type="button" aria-pressed="false">All models</button>
-          <button id="configToggleBtn" class="mini-command config-toggle" type="button" aria-expanded="false">Config</button>
+          <button id="modelsToggleBtn" class="mini-command models-toggle" type="button" aria-pressed="false" data-i18n="All models">All models</button>
+          <button id="configToggleBtn" class="mini-command config-toggle" type="button" aria-expanded="false" data-i18n="Config">Config</button>
         </div>
       </div>
       <div id="playerConfigGrid" class="player-config-grid" aria-label="Match players"></div>
@@ -65,13 +67,41 @@
 
     <aside id="inspectPanel" class="hud inspect-panel is-hidden" aria-live="polite">
       <div class="inspect-head">
-        <h2>Selection</h2>
-        <button id="inspectCloseBtn" class="mini-command" type="button" aria-label="Close selection">Close</button>
+        <h2 data-i18n="Selection">Selection</h2>
+        <button id="inspectCloseBtn" class="mini-command" type="button" aria-label="Close selection" data-i18n="Close">Close</button>
       </div>
-      <div id="inspectBody">Click a unit, room, or fight.</div>
+      <div id="inspectBody" data-i18n="Click a unit, room, or fight.">Click a unit, room, or fight.</div>
     </aside>
   </main>
 
-  <script type="module" src="./app.js?v=20260610-faction-lock-v2"></script>
+  <div id="themeSwitch" class="theme-dock" role="group" aria-label="Appearance" data-i18n-attr="aria-label:Appearance">
+    <button type="button" data-theme-pick="aurora" title="Aurora" aria-label="Aurora">◐</button>
+    <button type="button" data-theme-pick="neon" title="Neon" aria-label="Neon">◑</button>
+    <button type="button" data-theme-pick="vibrant" title="Vibrant" aria-label="Vibrant">◓</button>
+  </div>
+  <script>
+    (function () {
+      var sw = document.getElementById("themeSwitch");
+      if (!sw) return;
+      var btns = sw.querySelectorAll("button");
+      function mark(t) {
+        btns.forEach(function (b) { b.classList.toggle("is-active", b.dataset.themePick === t); });
+      }
+      sw.addEventListener("click", function (e) {
+        var b = e.target.closest("[data-theme-pick]");
+        if (!b) return;
+        var t = b.dataset.themePick;
+        document.documentElement.dataset.theme = t;
+        try { localStorage.setItem("worldTheme", t); } catch (err) {}
+        mark(t);
+      });
+      mark(document.documentElement.dataset.theme || "aurora");
+    })();
+  </script>
+
+  <script src="./i18n_catalog.js"></script>
+  <script src="./i18n_extra.js"></script>
+  <script src="./i18n.js"></script>
+  <script type="module" src="./app.js?v=20260617-visual-rework"></script>
 </body>
 </html>

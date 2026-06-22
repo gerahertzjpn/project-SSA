@@ -269,16 +269,24 @@ def finalize_season(world: dict, season: int, up_rows: list[dict], a_rows: list[
     upper_ranking = [r["team_id"] for r in up_rows]            # 1..10
     lower_ranking = _lower_final_ranking(lo_play["champion"], lo_play["grand_finalists"],
                                          a_rows, z_rows)        # 1..12
+    prizes_by_team: dict = {}
+    prize_breakdown: dict = {}
+    salaries_by_team: dict = {}
+    treasury_before = {tid: round(float(t.get("treasury", 0))) for tid, t in world["teams"].items()}
     if settle_economy:
         placements = []
         for place, tid in enumerate(upper_ranking, start=1):
             placements.append({"team_id": tid, "league": "upper", "place": place,
                                "grand_final_winner": tid == up_play["champion"]})
-        for place, tid in enumerate(lower_ranking, start=1):
-            placements.append({"team_id": tid, "league": "lower", "place": place,
-                               "grand_final_winner": tid == lo_play["champion"]})
-        economy.award_prizes(world, placements)
-        economy.pay_salaries(world)
+        # Lower prizes are PER GROUP (A and Z are separate, equal pools) — place = rank within the
+        # group, never a mixed 1..12. The grand-final winner still gets the lower champion bonus.
+        for grp, rows in (("A", a_rows), ("Z", z_rows)):
+            for r in rows:
+                placements.append({"team_id": r["team_id"], "league": "lower", "place": r["place"],
+                                   "group": grp, "grand_final_winner": r["team_id"] == lo_play["champion"]})
+        prize_breakdown = economy.award_prizes(world, placements)   # {tid: {place, league, prize, bonus, total}}
+        prizes_by_team = {tid: v["total"] for tid, v in prize_breakdown.items()}
+        salaries_by_team = economy.pay_salaries(world)
         _record_trophies(world, season, up_play["champion"], lo_play["champion"])
 
     # ---- promotion / relegation ---------------------------------------- #
@@ -301,6 +309,21 @@ def finalize_season(world: dict, season: int, up_rows: list[dict], a_rows: list[
             "upper": _public_standings(up_rows),
             "lower_A": _public_standings(a_rows),
             "lower_Z": _public_standings(z_rows),
+        },
+        # who won what + the season's money (treasury alone doesn't show it) — for History + Economy
+        "playoff": {
+            "upper": {"champion": up_play["champion"],
+                      "grand_finalists": up_play.get("grand_finalists", [])},
+            "lower": {"champion": lo_play["champion"],
+                      "grand_finalists": lo_play.get("grand_finalists", []),
+                      "promoted": lo_play.get("promoted", [])},
+        },
+        "money": {
+            "prizes_by_team": prizes_by_team,           # {tid: total} (int) — back-compat
+            "prize_breakdown": prize_breakdown,         # {tid: {place, league, prize, bonus, total}}
+            "salaries_by_team": salaries_by_team,
+            "treasury_before": treasury_before,
+            "treasury_after": {tid: round(float(t.get("treasury", 0))) for tid, t in world["teams"].items()},
         },
     }
     world.setdefault("history", []).append(summary)
@@ -340,47 +363,96 @@ def _apply_promotion_relegation(world: dict, promoted: list[str], relegated: lis
 # --------------------------------------------------------------------------- #
 # Season 0 bootstrap
 # --------------------------------------------------------------------------- #
+def _preseason_digest(world: dict, prev: dict) -> dict:
+    """Leader + biggest gainer/loser after a SoloQ pre-season, vs the ``prev`` rating snapshot.
+    Reserves (held out, never played) are excluded so the 'leader' is always a real player."""
+    active = [(pid, p) for pid, p in world["players"].items() if p.get("status") != "reserve"]
+    nick = lambda pid: world["players"][pid].get("nickname", pid)
+    rt = lambda p: round(float(p.get("soloq_rating", 1000.0)))
+    leader_pid, leader_p = max(active, key=lambda kp: float(kp[1].get("soloq_rating", 1000.0)))
+    deltas = [(pid, rt(p) - round(float(prev.get(pid, 1000.0)))) for pid, p in active]
+    gain_pid, gain_d = max(deltas, key=lambda x: x[1], default=(leader_pid, 0))
+    lose_pid, lose_d = min(deltas, key=lambda x: x[1], default=(leader_pid, 0))
+    return {"leader_nick": nick(leader_pid), "leader_rating": rt(leader_p),
+            "gainer_nick": nick(gain_pid), "gainer_delta": gain_d,
+            "loser_nick": nick(lose_pid), "loser_delta": lose_d}
+
+
 def bootstrap_world(world: dict, *, seed: Optional[int] = None,
                     play: Optional[PlayFn] = None,
                     draft_pick_fn: Optional[DraftPickFn] = None,
                     soloq_match_fn: Optional[Callable] = None,
+                    soloq_match_player: Optional[Callable] = None,
+                    workers: int = 1,
                     soloq_rounds: int = soloq.DEFAULT_ROUNDS,
-                    soloq_preseasons: int = 8) -> dict:
-    """Run the Season-0 bootstrap (see spec §8):
+                    soloq_preseasons: int = 8,
+                    progress_cb: Optional[Callable[[str, dict], None]] = None) -> dict:
+    """Run the Season-0 bootstrap (see spec §8), in real-world order:
 
-    1. SoloQ seeds player ratings (persists).
-    2. Balanced draft to 3 for all teams (Season 0: equal/random order). The
-       ``draft_pick_fn`` hook lets the LLM draft per-pick (L2); default = heuristic.
-    3. Lower-league series promote 2 each run until the upper league fills (10),
-       refilling lower from a reserve queue; then +3 warm-up runs.
+    1. DRAFT FIRST — every club picks its 3 starters (LLM via ``draft_pick_fn``, else heuristic),
+       BEFORE anyone has grinded ranked (Season 0: equal/random order; no weakest-first yet).
+    2. SoloQ pre-seasons — the drafted + free-agent players grind ranked, building rating history.
+    3. Lower-league series promote 2 each run until the upper league fills (10), refilling lower
+       from a reserve queue; then +3 warm-up runs.
     No money, no salaries, no match history, no Elo persist — ONLY SoloQ.
     ``seed`` optional: None → fresh entropy (unique world); explicit → reproducible.
+    ``progress_cb(msg, data)`` (optional) fires at every stage for LIVE progress + a stored chronicle.
     Ends with leagues set and treasuries seeded for Season 1.
     """
     resolved = seeds.resolve_seed(seed)
     sp = seeds.Spawner(resolved)        # independent child streams (no base+offset)
+    chronicle: list[dict] = []
 
-    # 1. SoloQ pre-seasons (net-backed when soloq_match_fn is supplied — real games seed ratings;
-    #    default None -> the rating-based stochastic model, so tests stay net-free). Several
-    #    pre-seasons of N rounds each, so every player builds up a SoloQ rating history (one point
-    #    per pre-season) the personal page can chart.
-    for _ in range(max(1, soloq_preseasons)):
-        soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed(), match_fn=soloq_match_fn)
+    def _log(msg: str, **data) -> None:
+        chronicle.append({"msg": msg, **data})
+        if progress_cb:
+            try:
+                progress_cb(msg, data)
+            except Exception:           # progress reporting must NEVER break the bootstrap
+                pass
 
-    # 2. Draft all teams to 3 (equal/random order in Season 0)
     all_team_ids = list(world["teams"].keys())
-    if len(all_team_ids) != UPPER_SIZE + LOWER_SIZE:
-        # Foundation supports the canonical 22; degrade gracefully otherwise.
-        pass
+
+    # 1. DRAFT FIRST (owner: draft -> then SoloQ + seasons).
+    _log("🎬 Драфт стартовых составов…", kind="draft_start")
     balanced_draft(world, all_team_ids, sp.random(), target_size=STARTERS, pick_fn=draft_pick_fn)
+    _log(f"✍️ Драфт завершён — {len(all_team_ids)} клубов набрали по {STARTERS} игрока", kind="draft_done")
+
+    # 2. SoloQ pre-seasons (AFTER the draft) — net-backed when soloq_match_fn is supplied (real games),
+    #    else the rating-based stochastic model (tests stay net-free). Each pre-season adds one point to
+    #    every player's rating history; we log each pre-season's leader + biggest mover.
+    prev = {pid: float(p.get("soloq_rating", 1000.0)) for pid, p in world["players"].items()}
+    npre = max(1, soloq_preseasons)
+    for i in range(1, npre + 1):
+        soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed(), match_fn=soloq_match_fn,
+                          match_player=soloq_match_player, workers=workers)
+        d = _preseason_digest(world, prev)
+        _log(f"🎮 Пред-сезон SoloQ {i}/{npre}: 👑 {d['leader_nick']} ({d['leader_rating']}) · "
+             f"▲ {d['gainer_nick']} (+{d['gainer_delta']}) · ▼ {d['loser_nick']} ({d['loser_delta']})",
+             kind="soloq_preseason", n=i, total=npre, **d)
+        prev = {pid: float(p.get("soloq_rating", 1000.0)) for pid, p in world["players"].items()}
 
     # 3. Bootstrap leagues
+    _log("🏟 Квалификация: повышаем клубы в верхнюю лигу…", kind="league_start")
     lower_ids = all_team_ids[:LOWER_SIZE]
     reserve = list(all_team_ids[LOWER_SIZE:])
     assign_lower_groups(world, lower_ids)
     upper_ids: list[str] = []
-    # Season 0 persists ONLY SoloQ -> do not accumulate per-position stats here.
-    play = play or make_play_fn(world, seed=sp.seed(), record_positions=False)
+    # Power starts at 1000 for EVERYONE and is COMPUTED from the bootstrap qualification matches
+    # (chess-Elo): each series moves Elo by margin × (result − expected), so clubs that win their way
+    # up earn a higher Season-1 Power — no artificial league seed.
+    for t in world["teams"].values():
+        t["elo"] = team_elo.START_ELO
+        t["elo_history"] = [round(team_elo.START_ELO)]
+    # per-position stats stay off in Season 0; but Power (Elo) DOES accrue from these games now.
+    base_play = play or make_play_fn(world, seed=sp.seed(), record_positions=False)
+
+    def play(home, away, best_of):                       # wrap: apply chess-Elo after each series
+        r = base_play(home, away, best_of)
+        if r.get("maps_home") != r.get("maps_away"):     # decisive series only (Elo needs a winner)
+            team_elo.apply_series_result(world, r["home"], r["away"],
+                                         r["maps_home"], r["maps_away"], r.get("best_of", best_of))
+        return r
 
     runs = 0
     guard = 0
@@ -400,6 +472,8 @@ def bootstrap_world(world: dict, *, seed: Optional[int] = None,
                 upper_ids.append(tid)
                 world["teams"][tid]["league"] = "upper"
                 world["teams"][tid]["group"] = None
+                _log(f"⬆️ {world['teams'][tid]['abbrev']} вышел в верхнюю лигу "
+                     f"({len(upper_ids)}/{UPPER_SIZE})", kind="promotion", team_id=tid)
         # refill lower from reserve
         current_lower = [t["team_id"] for t in world["teams"].values()
                          if t["league"] == "lower"]
@@ -420,16 +494,12 @@ def bootstrap_world(world: dict, *, seed: Optional[int] = None,
                 [r["team_id"] for r in brackets.standings(z_ids, brackets.play_group(z_ids, play))],
                 play)
 
-    # Season 0 doesn't persist per-series Elo, but the league a club EARNED (promotion IS a result)
-    # seeds its starting Power, so Elo is GLOBAL from day one — promoted (upper) clubs start above
-    # lower ones, then real results refine it. Within a tier it's flat (Season 1+ differentiates).
-    # A strong lower club can still overtake a weak upper one by out-performing (>seed gap) — not
-    # an absolute rule. Power depends ONLY on results, never on player ratings.
-    UPPER_SEED = team_elo.START_ELO + 120.0
+    # Power now reflects the bootstrap matches (Elo accrued above) — promoted clubs naturally sit
+    # higher, having WON their way up. Reset each club's history to a SINGLE clean point (its earned
+    # Power) so the Season-1 sparkline starts there. Power depends ONLY on results, never on ratings.
     for t in world["teams"].values():
-        seed = UPPER_SEED if t["league"] == "upper" else team_elo.START_ELO
-        t["elo"] = seed
-        t["elo_history"] = [round(seed)]
+        t["elo"] = round(float(t.get("elo", team_elo.START_ELO)), 2)
+        t["elo_history"] = [round(t["elo"])]
 
     # Seed treasuries for Season 1.
     for t in world["teams"].values():
@@ -438,9 +508,11 @@ def bootstrap_world(world: dict, *, seed: Optional[int] = None,
         elif t["league"] == "lower":
             t["treasury"] = economy.CONFIG.lower_seed_treasury
 
+    _log(f"🏆 Бутстрап завершён — верхняя лига заполнена "
+         f"({len(upper_ids)}/{UPPER_SIZE}), сезон 1 готов", kind="done")
     world["season"] = 1
     world["phase"] = "regular"
     world["bootstrap"] = {"lower_runs": runs, "extra_runs": BOOTSTRAP_EXTRA_RUNS,
                           "upper_filled": len(upper_ids) == UPPER_SIZE,
-                          "seed": resolved}
+                          "seed": resolved, "chronicle": chronicle}
     return world

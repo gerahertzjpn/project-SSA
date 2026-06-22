@@ -52,6 +52,24 @@ CONSISTENCY_TRIOS = (
 
 HOME, AWAY = ("A1", "A2", "A3"), ("B1", "B2", "B3")
 
+# Reference cast for the gauntlet (focal net = A1). The SAME cast must be used for the initial
+# derivation AND every re-derivation after training, else cards drift (a trained net would be scored
+# against a different opponent set). `reference_cast` enforces this by reusing whatever an existing
+# card file recorded.
+DEF_TEAM, DEF_OPP = ("humans_4", "infected_4"), ("robots_3", "humans_3", "infected_3")
+ALT_TEAM, ALT_OPP = ("humans_5", "infected_5"), ("robots_5", "humans_6", "infected_6")
+
+
+def reference_cast(alt_cast: bool, existing_meta: Optional[dict]):
+    """Pick the (teammates, opponents) gauntlet cast. Re-deriving into an EXISTING card set MUST
+    reuse that set's recorded cast so trained nets are re-carded under IDENTICAL conditions; a fresh
+    derive uses ALT/DEFAULT per the flag. Returns ((t1,t2), (o1,o2,o3))."""
+    if existing_meta:
+        rt, ro = existing_meta.get("reference_teammates"), existing_meta.get("reference_opponents")
+        if rt and ro:
+            return tuple(rt), tuple(ro)
+    return (ALT_TEAM, ALT_OPP) if alt_cast else (DEF_TEAM, DEF_OPP)
+
 
 def _idx(man):
     return {e["net_id"]: ("policy:" + e["checkpoint"], e["faction"])
@@ -119,9 +137,18 @@ def main():
         for e in json.loads(LEAGUE_REG.read_text(encoding="utf-8"))["entries"]:
             steps[e["net_id"]] = int(e.get("steps_trained", 0) or 0)
 
-    DEF_TEAM, DEF_OPP = ("humans_4", "infected_4"), ("robots_3", "humans_3", "infected_3")
-    ALT_TEAM, ALT_OPP = ("humans_5", "infected_5"), ("robots_5", "humans_6", "infected_6")
-    teammates, opponents = (ALT_TEAM, ALT_OPP) if args.alt_cast else (DEF_TEAM, DEF_OPP)
+    # Re-deriving into an existing card file? Reuse its EXACT recorded cast + games/order so a trained
+    # net is re-carded under the same conditions it was first carded (no drift).
+    existing_meta = None
+    if args.nets and OUT.exists():
+        try:
+            existing_meta = json.loads(OUT.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            existing_meta = None
+    teammates, opponents = reference_cast(args.alt_cast, existing_meta)
+    if existing_meta and not args.smoke and existing_meta.get("games_per_order"):
+        N = int(existing_meta["games_per_order"])
+        N_c = max(2, N // 3)
     fixed = set(teammates) | set(opponents)
     if args.nets:
         nets = [n.strip() for n in args.nets.split(",") if n.strip()]

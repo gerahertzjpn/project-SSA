@@ -52,7 +52,12 @@
       background: rgba(16, 20, 25, 0.78);
       color: inherit;
       text-decoration: none;
+      cursor: pointer;
       transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+    }
+    .home-card:focus-visible {
+      outline: 2px solid rgba(93, 160, 255, 0.7);
+      outline-offset: 2px;
     }
     .home-card:hover {
       transform: translateY(-3px);
@@ -66,41 +71,63 @@
     .home-card.regionals:hover { border-color: rgba(255, 196, 87, 0.6); }
     .home-foot { color: #6c7888; font-size: 12px; }
   </style>
+  <script>try { document.documentElement.lang = localStorage.getItem("worldLang") || "ru"; } catch (e) { document.documentElement.lang = "ru"; }</script>
 </head>
 <body>
   <main class="home">
     <div class="home-head">
       <h1>3v3 Autobattler</h1>
-      <p>Choose a mode to begin</p>
+      <p data-i18n="Choose a mode to begin">Choose a mode to begin</p>
     </div>
     <div class="home-cards">
-      <a class="home-card match" href="./index.html">
+      <div class="home-card match" role="link" tabindex="0" data-href="./index.html">
         <span class="icon">⚔️</span>
-        <h2>Match</h2>
-        <p>Configure player models &amp; factions, generate a single match, and watch it in the replay viewer.</p>
-      </a>
-      <a class="home-card league" href="./league.html">
+        <h2 data-i18n="Match">Match</h2>
+        <p data-i18n="Configure player models &amp; factions, generate a single match, and watch it in the replay viewer.">Configure player models &amp; factions, generate a single match, and watch it in the replay viewer.</p>
+      </div>
+      <div class="home-card league" role="link" tabindex="0" data-href="./league.html">
         <span class="icon">🏆</span>
-        <h2>League</h2>
-        <p>Build teams, run a full round-robin Bo3 season on the server, then reveal standings, history and recordings day by day.</p>
-      </a>
-      <a class="home-card regionals" href="./regionals.html">
+        <h2 data-i18n="League">League</h2>
+        <p data-i18n="Build teams, run a full round-robin Bo3 season on the server, then reveal standings, history and recordings day by day.">Build teams, run a full round-robin Bo3 season on the server, then reveal standings, history and recordings day by day.</p>
+      </div>
+      <div class="home-card regionals" role="link" tabindex="0" data-href="./regionals.html">
         <span class="icon">🎙</span>
-        <h2>Regionals</h2>
-        <p>LLM managers draft 18 unique players into 6 teams, play a Bo3 league plus a Bo5 playoff — with Elo ratings, prize money and a live commentator.</p>
-      </a>
-      <a class="home-card world" href="./world.html">
+        <h2 data-i18n="Regionals">Regionals</h2>
+        <p data-i18n="LLM managers draft 18 unique players into 6 teams, play a Bo3 league plus a Bo5 playoff — with Elo ratings, prize money and a live commentator.">LLM managers draft 18 unique players into 6 teams, play a Bo3 league plus a Bo5 playoff — with Elo ratings, prize money and a live commentator.</p>
+      </div>
+      <div class="home-card world" role="link" tabindex="0" data-href="./world.html">
         <span class="icon">🌍</span>
-        <h2>World</h2>
-        <p>Persistent 22-team world on the trained net population: two leagues, promotion/relegation, SoloQ ratings — all decided by REAL net matches. Pick 22 teams, then play out seasons.</p>
-      </a>
-      <a class="home-card world" href="./world_preview.html">
+        <h2 data-i18n="World">World</h2>
+        <p data-i18n="Persistent 22-team world on the trained net population: two leagues, promotion/relegation, SoloQ ratings — all decided by REAL net matches. Pick 22 teams, then play out seasons.">Persistent 22-team world on the trained net population: two leagues, promotion/relegation, SoloQ ratings — all decided by REAL net matches. Pick 22 teams, then play out seasons.</p>
+      </div>
+      <div class="home-card world" role="link" tabindex="0" data-href="./world_preview.html" style="display:none">
         <span class="icon">🎬</span>
-        <h2>World — предпросмотр <span class="wip-badge">debug</span></h2>
-        <p>Захардкоженный полный цикл (сезоны 0·1·2): SoloQ, драфт, лиги, матчи (случайный счёт), межсезонье — для отладки вида. Никаких запросов, плюс кнопка прямого эфира матча ×1.</p>
-      </a>
+        <h2><span data-i18n="World — preview">World — preview</span> <span class="wip-badge">debug</span></h2>
+        <p data-i18n="Hardcoded full cycle (seasons 0·1·2): SoloQ, draft, leagues, matches (random score), off-season — for view debugging. No requests, plus a ×1 live-broadcast button.">Hardcoded full cycle (seasons 0·1·2): SoloQ, draft, leagues, matches (random score), off-season — for view debugging. No requests, plus a ×1 live-broadcast button.</p>
+      </div>
     </div>
-    <div class="home-foot">Pixi viewer &middot; local server required for generation</div>
+    <div class="home-foot" data-i18n="Pixi viewer · local server required for generation">Pixi viewer &middot; local server required for generation</div>
   </main>
+  <script src="./i18n_catalog.js"></script>
+  <script src="./i18n_extra.js"></script>
+  <script src="./i18n.js"></script>
+  <script>
+    // Cards are <div> (not <a>) so privacy browsers that force-underline links
+    // (e.g. Firefox layout.css.always_underline_links) leave the text clean.
+    // Navigation, keyboard access and new-tab-on-modifier are handled here.
+    for (const card of document.querySelectorAll('.home-card[data-href]')) {
+      const href = card.dataset.href;
+      const openNewTab = () => window.open(href, '_blank', 'noopener');
+      card.addEventListener('click', (e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey) openNewTab();
+        else window.location.href = href;
+      });
+      // Middle-click → new tab, matching normal link behaviour.
+      card.addEventListener('auxclick', (e) => { if (e.button === 1) openNewTab(); });
+      card.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); window.location.href = href; }
+      });
+    }
+  </script>
 </body>
 </html>

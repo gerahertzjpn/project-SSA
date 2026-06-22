@@ -227,3 +227,44 @@ def test_run_offseason_with_locked_backend_records_locked():
         exe = rep["stages"]["training"]["execution"]
         assert exe["executed"] is False
         assert exe["results"][0]["status"] == "locked"   # FeatureLocked caught, reported honestly
+
+
+def test_skill_changes_and_card_cache_force_reload(tmp_path, monkeypatch):
+    """_skill_changes diffs card attributes; _load_player_cards(force=True) re-reads the file the
+    training subprocess rewrote (the equal-conditions re-eval relies on bypassing the cache)."""
+    from src.world import offseason
+    from src.world import world as wmod
+    w = {"players": {"p1": {"nickname": "A", "faction": "humans",
+                            "attributes": {"attack": 50, "defense": 40}}}}
+    changes = offseason._skill_changes(w, {"p1": {"attack": 45, "defense": 40}})
+    assert len(changes) == 1 and changes[0]["changes"] == {"attack": 5}
+    f = tmp_path / "cards.json"
+    f.write_text('{"cards": {"n1": {"attack": 77}}}', encoding="utf-8")
+    monkeypatch.setattr(wmod, "_PLAYER_CARDS_PATH", f)
+    wmod._PLAYER_CARDS_CACHE = {"n1": {"attack": 10}}                 # stale cache
+    assert wmod._load_player_cards()["n1"]["attack"] == 10            # served stale
+    assert wmod._load_player_cards(force=True)["n1"]["attack"] == 77  # re-read from disk
+    wmod._PLAYER_CARDS_CACHE = None                                   # reset for other tests
+
+
+def test_card_rederive_reuses_recorded_reference_cast():
+    """A trained net must be re-carded under the SAME gauntlet cast it was first carded with — else
+    cards drift (a net scored against a different opponent set). reference_cast guarantees this by
+    reusing whatever an existing card file recorded, regardless of the --alt-cast flag."""
+    pytest.importorskip("torch")                       # the script imports src.core.runner (torch)
+    from scripts.derive_player_cards import reference_cast
+    meta = {"reference_teammates": ["humans_5", "infected_5"],
+            "reference_opponents": ["robots_5", "humans_6", "infected_6"]}
+    recorded = (("humans_5", "infected_5"), ("robots_5", "humans_6", "infected_6"))
+    assert reference_cast(False, meta) == recorded      # re-derive reuses recorded cast...
+    assert reference_cast(True, meta) == recorded       # ...regardless of the flag (no drift)
+    assert reference_cast(False, None)[0] == ("humans_4", "infected_4")   # fresh derive honors flag
+    assert reference_cast(True, None)[0] == ("humans_5", "infected_5")
+    # the SHIPPED cards file must re-derive against its own recorded cast
+    import json, pathlib
+    p = pathlib.Path("population/player_cards_v1.json")
+    if p.exists():
+        m = json.loads(p.read_text(encoding="utf-8"))
+        if m.get("reference_teammates"):
+            assert reference_cast(False, m) == (tuple(m["reference_teammates"]),
+                                                tuple(m["reference_opponents"]))

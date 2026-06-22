@@ -57,7 +57,16 @@ def moving_group_visual_smooth(group: Any, current_tick: int) -> dict:
     denominator = float(arrival) - float(started)
     if denominator <= 0.0:
         return base
-    frac = _clamp01((float(current_tick) - float(started)) / denominator)
+    elapsed = _clamp01((float(current_tick) - float(started)) / denominator)
+    # A group resumed MID-path (edge-battle survivors continuing) keeps started_tick
+    # reset to "now" while it is already part-way along its path. Sweeping the time
+    # fraction from path[0] would teleport such a group back to its segment source
+    # node for a tick (the visible post-fight "teleport onto P2"). visual_start_frac
+    # records the arc fraction it began this leg at, so the sweep runs from there to
+    # the path end. It is 0 for a normal group that departs from path[0] (a node), so
+    # this is a no-op for every group except a mid-path resume.
+    start_frac = _clamp01(float(_field(group, "visual_start_frac", 0.0) or 0.0))
+    frac = start_frac + elapsed * (1.0 - start_frac)
 
     try:
         points = _path_points(path)
@@ -116,6 +125,63 @@ def _point_along_polyline(points: list[Point2D], frac: float) -> tuple[Point2D, 
 
     end_start, end_point = points[-2], points[-1]
     return end_point, _heading_vector(end_start, end_point)
+
+
+def _arc_offset_of_point(
+    points: list[Point2D], seg_lengths: list[float], query: Point2D
+) -> float:
+    """Cumulative arc length from points[0] to the polyline point closest to ``query``.
+
+    ``query`` is expected to already lie on the polyline (it is the segment/progress
+    projection produced by :func:`moving_group_visual`), so this just recovers its arc
+    offset; closest-point projection makes it robust to floating-point drift and to a
+    point that coincides with a vertex shared by two segments.
+    """
+
+    best_offset = 0.0
+    best_dist = None
+    travelled = 0.0
+    for index, length in enumerate(seg_lengths):
+        if length <= 0.0:
+            continue
+        start, end = points[index], points[index + 1]
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        t = ((query[0] - start[0]) * dx + (query[1] - start[1]) * dy) / (length * length)
+        t = max(0.0, min(1.0, t))
+        proj = (start[0] + dx * t, start[1] + dy * t)
+        dist = _dist(proj, query)
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best_offset = travelled + length * t
+        travelled += length
+    return best_offset
+
+
+def group_path_arc_fraction(group: Any) -> float:
+    """Arc-length fraction (0..1) of the group's current projected position along its
+    full path polyline.
+
+    Used to seed :attr:`MovingGroup.visual_start_frac` when a survivor group resumes
+    mid-edge after a battle, so the smooth projector sweeps from the group's real
+    position rather than snapping back to ``path[0]`` (the segment source node).
+    """
+
+    raw_path = _field(group, "path", None)
+    if not raw_path:
+        return 0.0
+    path = [str(node) for node in raw_path]
+    if len(path) < 2:
+        return 0.0
+    try:
+        points = _path_points(path)
+    except (KeyError, ValueError):
+        return 0.0
+    seg_lengths = [_dist(points[i], points[i + 1]) for i in range(len(points) - 1)]
+    total = sum(seg_lengths)
+    if total <= 0.0:
+        return 0.0
+    base = moving_group_visual(group)
+    return _clamp01(_arc_offset_of_point(points, seg_lengths, (base["x"], base["y"])) / total)
 
 
 def moving_group_visual(group: Any) -> dict:

@@ -6,38 +6,40 @@
   <title>World — предпросмотр · 3v3 Autobattler</title>
   <link rel="stylesheet" href="./styles.css" />
   <link rel="stylesheet" href="./world.css" />
+  <script>try { document.documentElement.dataset.theme = localStorage.getItem("worldTheme") || "aurora"; } catch (e) { document.documentElement.dataset.theme = "aurora"; }</script>
+  <script>try { document.documentElement.lang = localStorage.getItem("worldLang") || "ru"; } catch (e) { document.documentElement.lang = "ru"; }</script>
 </head>
 <body>
   <main class="world">
     <header class="world-head">
-      <a class="brand-menu" href="./home.html" title="Главное меню" aria-label="Главное меню">☰</a>
+      <a class="brand-menu" href="./home.html" title="Главное меню" aria-label="Главное меню" data-i18n-attr="title:Главное меню;aria-label:Главное меню"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false"><path d="M4 7h16M4 12h16M4 17h16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></a>
       <div class="world-title">
-        <h1>World — предпросмотр <span class="wip-badge">demo</span></h1>
-        <p>Полная копия World, всё захардкожено: никаких матчей, запросов и тренировок. Сезоны 0·1·2
+        <h1><span data-i18n="World — предпросмотр">World — предпросмотр</span> <span class="wip-badge">demo</span></h1>
+        <p data-i18n="Полная копия World, всё захардкожено: никаких матчей, запросов и тренировок. Сезоны 0·1·2 уже «отыграны», решения приняты за тебя и подсвечены. Все вкладки живые — «🔴 LIVE» (сезон по дням + эфир), «🆚 Очные», «💸 Трансферы», личные страницы игроков. Жми «Сыграть сезон» / «📅 По дням» / «Межсезонье».">Полная копия World, всё захардкожено: никаких матчей, запросов и тренировок. Сезоны 0·1·2
           уже «отыграны», решения приняты за тебя и подсвечены. Все вкладки живые — «🔴 LIVE»
           (сезон по дням + эфир), «🆚 Очные», «💸 Трансферы», личные страницы игроков. Жми
           «Сыграть сезон» / «📅 По дням» / «Межсезонье».</p>
       </div>
       <div class="world-open">
-        <select id="worldSelect" class="world-select" title="Открыть существующий мир"></select>
-        <button id="openBtn" class="ghost" disabled>Открыть</button>
-        <button id="newBtn" class="ghost">+ Новый</button>
+        <select id="worldSelect" class="world-select" title="Открыть существующий мир" data-i18n-attr="title:Открыть существующий мир"></select>
+        <button id="openBtn" class="ghost" disabled data-i18n="Открыть">Открыть</button>
+        <button id="newBtn" class="ghost" data-i18n="+ Новый">+ Новый</button>
       </div>
     </header>
 
     <div class="world-lock" style="background:#14202c;border-color:#244055;color:#bcd2ea">
-      🧪 <strong>Демо-предпросмотр.</strong> Всё фиктивное и случайно сгенерированное «как будто
-      реально просимулировано» — чтобы увидеть, как устроен World. Реальная вкладка работает на нейронках.
+      🧪 <strong data-i18n="Демо-предпросмотр.">Демо-предпросмотр.</strong> <span data-i18n="Всё фиктивное и случайно сгенерированное «как будто реально просимулировано» — чтобы увидеть, как устроен World. Реальная вкладка работает на нейронках.">Всё фиктивное и случайно сгенерированное «как будто
+      реально просимулировано» — чтобы увидеть, как устроен World. Реальная вкладка работает на нейронках.</span>
     </div>
 
     <div id="lockBanner" class="world-lock is-hidden"><span id="lockNote"></span></div>
 
     <section id="newSection" class="world-new is-hidden">
       <div class="world-new-head">
-        <h2>Новый World — выбери команды</h2>
+        <h2 data-i18n="Новый World — выбери команды">Новый World — выбери команды</h2>
         <div class="world-new-controls">
           <span id="selCount" class="sel-count">0 / 22</span>
-          <button id="startBtn" class="primary" disabled>Создать World</button>
+          <button id="startBtn" class="primary" disabled data-i18n="Создать World">Создать World</button>
         </div>
       </div>
       <div id="teamGrid" class="team-grid"></div>
@@ -63,25 +65,25 @@
         </div>
         <div class="view-actions">
           <span id="liveProgress" class="live-progress is-hidden"></span>
-          <button id="nextDayBtn" class="primary is-hidden">▶ Следующий день</button>
-          <button id="advanceBtn" class="primary">▶ Сыграть сезон</button>
-          <button id="liveStartBtn" class="ghost">📅 По дням</button>
-          <button id="offseasonBtn" class="ghost">⟳ Межсезонье</button>
+          <button id="nextDayBtn" class="primary is-hidden" data-i18n="▶ Следующий день">▶ Следующий день</button>
+          <button id="advanceBtn" class="primary" data-i18n="▶ Сыграть сезон">▶ Сыграть сезон</button>
+          <button id="liveStartBtn" class="ghost" data-i18n="📅 По дням">📅 По дням</button>
+          <button id="offseasonBtn" class="ghost" data-i18n="⟳ Межсезонье">⟳ Межсезонье</button>
         </div>
       </div>
 
       <nav id="tabbar" class="tabbar">
-        <button class="tab is-active" data-tab="leagues">🏆 Лиги</button>
-        <button class="tab" data-tab="live">🔴 LIVE</button>
-        <button class="tab" data-tab="matrix">🆚 Очные</button>
-        <button class="tab" data-tab="ratings">📊 Рейтинг</button>
-        <button class="tab" data-tab="schedule">📅 Расписание</button>
-        <button class="tab" data-tab="teams">🛡️ Команды</button>
-        <button class="tab" data-tab="draft">✍️ Драфт</button>
-        <button class="tab" data-tab="transfers">💸 Трансферы</button>
-        <button class="tab" data-tab="broadcast">📻 Эфир</button>
-        <button class="tab" data-tab="managers">💬 Менеджеры</button>
-        <button class="tab" data-tab="history">📜 История</button>
+        <button class="tab is-active" data-tab="leagues" data-i18n="🏆 Лиги">🏆 Лиги</button>
+        <button class="tab" data-tab="live" data-i18n="🔴 LIVE">🔴 LIVE</button>
+        <button class="tab" data-tab="matrix" data-i18n="🆚 Очные">🆚 Очные</button>
+        <button class="tab" data-tab="ratings" data-i18n="📊 Рейтинг">📊 Рейтинг</button>
+        <button class="tab" data-tab="schedule" data-i18n="📅 Расписание">📅 Расписание</button>
+        <button class="tab" data-tab="teams" data-i18n="🛡️ Команды">🛡️ Команды</button>
+        <button class="tab" data-tab="draft" data-i18n="✍️ Драфт">✍️ Драфт</button>
+        <button class="tab" data-tab="transfers" data-i18n="💸 Трансферы">💸 Трансферы</button>
+        <button class="tab" data-tab="broadcast" data-i18n="📻 Эфир">📻 Эфир</button>
+        <button class="tab" data-tab="managers" data-i18n="💬 Менеджеры">💬 Менеджеры</button>
+        <button class="tab" data-tab="history" data-i18n="📜 История">📜 История</button>
       </nav>
 
       <div id="trainingPanel" class="training-panel is-hidden"></div>
@@ -101,41 +103,36 @@
       </div>
     </section>
 
-    <div id="osModal" class="os-overlay is-hidden">
-      <div class="os-card">
-        <h3>⟳ Межсезонье — настройки</h3>
-        <p class="muted">В демо настройки уже выбраны за тебя (подсвечено). Жми «Запустить».</p>
-        <div class="os-fields">
-          <label>Раундов SoloQ<input id="osRounds" type="number" min="1" max="30" value="10"></label>
-          <label>Слотов аукциона<input id="osSlots" type="number" min="0" max="20" value="6"></label>
-          <label>Шагов на слот<input id="osSlotS" type="number" min="800000" step="100000" value="1000000"></label>
-          <label>Новичков (форк)<input id="osRookN" type="number" min="0" max="12" value="3"></label>
-          <label>Шагов на новичка<input id="osRookS" type="number" min="800000" step="100000" value="1000000"></label>
-          <label>Свободных агентов<input id="osFaN" type="number" min="0" max="10" value="2"></label>
-          <label>Шагов на агента<input id="osFaS" type="number" min="800000" step="100000" value="800000"></label>
-        </div>
-        <div id="osReserves" class="os-reserves"></div>
-        <div id="osEta" class="os-eta"></div>
-        <div class="os-actions">
-          <button id="osRun" class="primary">Запустить межсезонье</button>
-          <button id="osCancel" class="ghost">Отмена</button>
+    <!-- Off-season — INLINE layout (replaces the main view during межсезонье), mirrors world.html -->
+    <section id="offseasonView" class="offseason-view is-hidden">
+      <div class="osv-head">
+        <button id="osvBack" class="ghost" data-i18n="← В мир">← В мир</button>
+        <div class="osv-title">
+          <h2 id="osvTitle">⟳ Межсезонье</h2>
+          <span id="osvSub" class="muted"></span>
         </div>
       </div>
-    </div>
+      <div id="osvProgress" class="osv-progress is-hidden">
+        <div class="osv-pbar"><div id="osvPfill" class="osv-pfill"></div></div>
+        <div id="osvPlbl" class="osv-plbl muted"></div>
+      </div>
+      <nav id="osvTabs" class="osv-tabs is-hidden"></nav>
+      <div id="osvBody" class="osv-body"></div>
+    </section>
 
     <div id="selModal" class="os-overlay is-hidden">
       <div class="os-card sel-card">
-        <h3>Кто выйдет в сезон 0</h3>
-        <p class="muted">В демо выбор сделан за тебя — отмеченные выйдут точно, остальные добраны случайно.</p>
+        <h3 data-i18n="Кто выйдет в сезон 0">Кто выйдет в сезон 0</h3>
+        <p class="muted" data-i18n="В демо выбор сделан за тебя — отмеченные выйдут точно, остальные добраны случайно.">В демо выбор сделан за тебя — отмеченные выйдут точно, остальные добраны случайно.</p>
         <div class="sel-controls">
-          <label>Всего дебютирует (X)<input id="selX" type="number" min="66" max="90" value="78"></label>
+          <label><span data-i18n="Всего дебютирует (X)">Всего дебютирует (X)</span><input id="selX" type="number" min="66" max="90" value="78"></label>
           <span id="selNamed" class="muted">отмечено: 0</span>
           <span class="muted" id="selHint"></span>
         </div>
         <div id="selList" class="sel-list"></div>
         <div class="os-actions">
-          <button id="selCreate" class="primary">Создать World</button>
-          <button id="selCancel" class="ghost">Отмена</button>
+          <button id="selCreate" class="primary" data-i18n="Создать World">Создать World</button>
+          <button id="selCancel" class="ghost" data-i18n="Отмена">Отмена</button>
         </div>
       </div>
     </div>
@@ -156,20 +153,13 @@
       </div>
     </div>
 
-    <div id="chronModal" class="chron-overlay is-hidden">
-      <div class="chron-card">
-        <div class="chron-head">
-          <strong>📻 Хроника межсезонья</strong>
-          <span class="chron-sim">воспроизведение событий · симуляция</span>
-          <button id="chronClose" class="ghost">✕</button>
-        </div>
-        <div id="chronFeed" class="chron-feed"></div>
-      </div>
-    </div>
   </main>
 
   <!-- Real franchises + emblems (auto-generated from src/regionals/franchises.py), then the
        hardcoded data source (defines window.__PREVIEW__), then the real renderers. -->
+  <script src="./i18n_catalog.js"></script>
+  <script src="./i18n_extra.js"></script>
+  <script src="./i18n.js"></script>
   <script src="./world_preview_franchises.js"></script>
   <script src="./world_preview.js"></script>
   <script src="./world.js"></script>

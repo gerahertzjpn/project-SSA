@@ -239,6 +239,7 @@ def run_match(
     pretty_replay: bool = False,
     player_models: Optional[dict[str, str]] = None,
     player_factions: Optional[dict[str, str]] = None,
+    player_names: Optional[dict[str, str]] = None,
     orders: Optional[dict] = None,
     deterministic: bool = False,
 ) -> MatchResult:
@@ -285,6 +286,7 @@ def run_match(
                 "map2d": map2d_replay_meta(),
                 "player_models": dict(player_models or {}),
                 "player_factions": dict(player_factions or {}),
+                "player_names": dict(player_names or {}),     # slot -> World nickname (labels at each core)
                 "manager_orders": dict(orders or {}),
                 "winner_type": state.winner_type,
                 "core_combat_damage": round(state.core_combat_damage, 3),

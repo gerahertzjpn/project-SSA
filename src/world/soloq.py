@@ -26,8 +26,8 @@ TEAM_SIZE = 3
 BAND_STEP = 100
 DEFAULT_ROUNDS = 10
 K_FACTOR = 32.0
-SOLOQ_MATCH_CAP = 60        # keep the most recent N SoloQ games per player (history, no replays)
-IMPACT_SPREAD = 0.6  # up to ±60% modulation (vs ±20% for official games)
+SOLOQ_MATCH_CAP = 100       # keep the most recent N SoloQ games per player (bootstrap plays ~80)
+IMPACT_SPREAD = 0.35  # ±35% impact modulation — the Elo win/loss stays dominant (was ±60%, too strong)
 
 # match_fn(team_a_ids, team_b_ids, ratings, rng) -> (winner: "A"|"B", impacts)
 #   impacts: {player_id: float in [0,1]} (0.5 neutral).
@@ -110,6 +110,14 @@ def _round_matches(ratings: dict, rng: random.Random) -> list[tuple[list, list]]
     return matches
 
 
+def _match_seed(base_seed: int, rnd: int, idx: int) -> int:
+    """Deterministic, ORDER-INDEPENDENT per-match seed from (base_seed, round, match index). Used for
+    the parallel path so match i always gets the same seed regardless of how many ran before it."""
+    import hashlib
+    h = hashlib.blake2b(f"{base_seed}:{rnd}:{idx}".encode(), digest_size=8).digest()
+    return int.from_bytes(h, "little") % (2 ** 31 - 1) + 1
+
+
 def simulate_soloq(
     ratings: dict,
     *,
@@ -117,13 +125,23 @@ def simulate_soloq(
     seed: int = 0,
     match_fn: Optional[MatchFn] = None,
     record: bool = False,
+    match_player=None,
+    workers: int = 1,
 ) -> tuple[dict, list[dict]]:
     """Run SoloQ over ``ratings`` (pid -> rating). Returns (new_ratings, log).
 
     Pure: does not mutate the input dict. ``log`` is per-round stats (matches played, who skipped).
     With ``record=True`` each round entry also carries ``player_matches`` = {pid: {teammates,
     opponents, won, delta}} so the world can build a per-player game history.
-    """
+
+    Speed (safe): within ONE round every match has DISJOINT teams and deltas are computed off the
+    PRE-round ratings, so the matches are independent. When a picklable, seeded ``match_player``
+    (``net_match.SoloQSeriesPlayer``) is supplied, a round's matches are played with PRE-ASSIGNED
+    per-(round,index) seeds — over a process pool when ``workers > 1`` — then deltas are applied
+    sequentially in match order. Bit-identical to sequential. ROUNDS stay sequential (round r+1's
+    matchmaking bands read round r's updated ratings)."""
+    from src.world import parallel
+
     match_fn = match_fn or _default_match_fn
     rng = random.Random(seed)
     cur = dict(ratings)
@@ -133,23 +151,38 @@ def simulate_soloq(
         matches = _round_matches(cur, rng)
         played = {pid for m in matches for pid in (m[0] + m[1])}
         pm: dict[str, dict] = {}
-        for team_a, team_b in matches:
+        # PLAY the round's matches: parallel via the seeded player, else the sequential shared-rng fn.
+        if match_player is not None:
+            tasks = [(list(ta), list(tb), _match_seed(seed, rnd, i)) for i, (ta, tb) in enumerate(matches)]
+            outcomes = parallel.run_batch(match_player, tasks, workers)
+        else:
+            outcomes = [match_fn(ta, tb, cur, rng) for ta, tb in matches]
+        # APPLY in match order: teams are disjoint within a round, so deltas off the pre-round snapshot
+        # are order-independent (identical to applying inline).
+        for (team_a, team_b), (winner, impacts) in zip(matches, outcomes):
             avg_a = sum(cur[p] for p in team_a) / len(team_a)
             avg_b = sum(cur[p] for p in team_b) / len(team_b)
-            winner, impacts = match_fn(team_a, team_b, cur, rng)
+            # All 6 are in the SAME rating band (strict 100-step matchmaking). Snapshot their ratings
+            # AT MATCH TIME so the match detail stays band-consistent even after ratings drift later.
+            at_time = {p: round(cur[p]) for p in team_a + team_b}
+            mband = band_of(cur[team_a[0]])          # the matchmaking band (floor) — shared by all 6
             a_won = winner == "A"
-            for pid in team_a:
-                d = soloq_rating_delta(cur[pid], avg_b, a_won, impacts.get(pid, 0.5))
-                cur[pid] += d
-                if record:
-                    pm[pid] = {"teammates": [p for p in team_a if p != pid],
-                               "opponents": list(team_b), "won": a_won, "delta": round(d, 2)}
-            for pid in team_b:
-                d = soloq_rating_delta(cur[pid], avg_a, not a_won, impacts.get(pid, 0.5))
-                cur[pid] += d
-                if record:
-                    pm[pid] = {"teammates": [p for p in team_b if p != pid],
-                               "opponents": list(team_a), "won": not a_won, "delta": round(d, 2)}
+            # compute every player's delta off the PRE-match ratings, then apply (teams are disjoint)
+            deltas = {pid: round(soloq_rating_delta(cur[pid], avg_b, a_won, impacts.get(pid, 0.5)), 2)
+                      for pid in team_a}
+            deltas.update({pid: round(soloq_rating_delta(cur[pid], avg_a, not a_won, impacts.get(pid, 0.5)), 2)
+                           for pid in team_b})
+            for pid in team_a + team_b:
+                cur[pid] += deltas[pid]
+            if record:                                  # store ALL 6 ratings+deltas in each entry so the
+                for pid in team_a:                      # detail page resolves every player (round ids differ)
+                    pm[pid] = {"teammates": [p for p in team_a if p != pid], "opponents": list(team_b),
+                               "won": a_won, "delta": deltas[pid], "ratings": at_time, "deltas": deltas,
+                               "band": mband}
+                for pid in team_b:
+                    pm[pid] = {"teammates": [p for p in team_b if p != pid], "opponents": list(team_a),
+                               "won": not a_won, "delta": deltas[pid], "ratings": at_time, "deltas": deltas,
+                               "band": mband}
         entry = {"round": rnd, "matches": len(matches), "skipped": sorted(set(cur) - played)}
         if record:
             entry["player_matches"] = pm
@@ -160,13 +193,16 @@ def simulate_soloq(
 
 
 def apply_soloq(world: dict, *, rounds: int = DEFAULT_ROUNDS, seed: int = 0,
-                match_fn: Optional[MatchFn] = None) -> list[dict]:
+                match_fn: Optional[MatchFn] = None, match_player=None, workers: int = 1) -> list[dict]:
     """Run SoloQ over the world's players and write back ratings + history.
-    Returns the per-round log. Only SoloQ persists during Season 0."""
+    Returns the per-round log. Only SoloQ persists during Season 0.
+
+    ``match_player`` (seeded, picklable) + ``workers > 1`` play each round's matches in parallel."""
     players = world["players"]
     # Reserves are held OUT of season 0 (not yet debuted) -> they don't play SoloQ until introduced.
     ratings = {pid: p["soloq_rating"] for pid, p in players.items() if p.get("status") != "reserve"}
-    new_ratings, log = simulate_soloq(ratings, rounds=rounds, seed=seed, match_fn=match_fn, record=True)
+    new_ratings, log = simulate_soloq(ratings, rounds=rounds, seed=seed, match_fn=match_fn, record=True,
+                                      match_player=match_player, workers=workers)
     season = world.get("season", 0)
     for pid, r in new_ratings.items():
         p = players[pid]

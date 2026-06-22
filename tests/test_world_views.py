@@ -25,10 +25,31 @@ def _world_after_a_season():
     return w
 
 
+def test_soloq_match_is_band_consistent_and_resolves_all_deltas():
+    # The detail page must show 6 players, ALL with a numeric delta, ALL in the SAME 100-band, and
+    # those values must be the AT-MATCH-TIME snapshot (not the drifted current rating).
+    w = _world_after_a_season()
+    pid = next(p["player_id"] for p in w["players"].values()
+               if (p.get("soloq_matches") or []) and p.get("status") != "reserve")
+    m = w["players"][pid]["soloq_matches"][-1]
+    sm = views.soloq_match(w, pid, m["season"], m["round"])
+    everyone = sm["team_a"] + sm["team_b"]
+    assert len(everyone) == 6
+    assert all(isinstance(x["delta"], (int, float)) for x in everyone)   # no None deltas
+    assert len({x["band"] for x in everyone}) == 1 and everyone[0]["band"] == sm["band"]
+    assert isinstance(sm["won_a"], bool)
+    # the player's own attributes are exposed for the radar chart
+    pv = views.player_view(w, pid)
+    assert set(pv["attributes"]) <= {"attack", "defense", "economy", "tempo", "consistency", "potential"}
+
+
 def test_ranked_players_all_ranked_with_delta():
     w = _world_after_a_season()
     ranked = views.ranked_players(w)
-    assert len(ranked) == len(w["players"])           # EVERY player, not just rostered
+    entered = [p for p in w["players"].values() if p.get("status") != "reserve"]
+    assert len(ranked) == len(entered)                # EVERY ENTERED player (reserves excluded — they never played)
+    assert all(v.get("status") != "reserve" for v in ranked)
+    assert len(views.ranked_players(w, include_reserves=True)) == len(w["players"])  # opt-in shows all
     assert [v["rank"] for v in ranked] == list(range(1, len(ranked) + 1))
     assert all(ranked[i]["rating"] >= ranked[i + 1]["rating"] for i in range(len(ranked) - 1))
     # rich detail beyond "2 words + 1 number"
@@ -75,6 +96,38 @@ def test_team_view_has_record_and_roster():
     rec = tv["record"]
     assert rec["series_wins"] + rec["series_losses"] > 0     # played in the season
     assert "elo_history" in tv and "power" in tv
+
+
+def test_team_playbook_readable_base_and_overrides():
+    w = _world_after_a_season()
+    tid = next(t["team_id"] for t in w["teams"].values() if t.get("league") == "upper")
+    pb = views.team_playbook(w, tid)
+    assert pb["team_id"] == tid and pb["base_strategy"] and pb["base_strategy_id"]
+    assert pb["overrides"], "default plan ships contingency overrides"
+    o = pb["overrides"][0]
+    assert o["when"] and o["when"] != "—" and o["strategy"] and o["strategy_id"]
+    # the readable IF-clause is human Russian, not a raw condition dict
+    assert "{" not in o["when"] and "opp_faction_majority" not in o["when"]
+    assert views.team_view(w, tid)["playbook"]["overrides"]   # exposed on the team page too
+
+
+def test_history_prize_pool_and_bracket():
+    w = _world_after_a_season()
+    h = views.history_view(w)
+    assert h, "a finished season is recorded"
+    last = h[-1]
+    pool = last["prize_pool"]
+    # lower is split into SEPARATE A/Z pools (never one mixed 1..12 column)
+    assert pool["upper"] and "lower_A" in pool and "lower_Z" in pool and "lower" not in pool
+    assert all(r["place"] and r["place"] >= 1 for r in pool["upper"])   # no null places
+    # winner (place 1) gets the biggest purse + a grand-final bonus
+    champ_row = next((r for r in pool["upper"] if r["place"] == 1), None)
+    assert champ_row and champ_row["total"] >= champ_row["prize"]
+    # groups A and Z pay identically by within-group place (1st in A == 1st in Z)
+    if pool["lower_A"] and pool["lower_Z"]:
+        assert pool["lower_A"][0]["prize"] == pool["lower_Z"][0]["prize"]
+    assert len(last["promoted"]) == 2                                   # BOTH lower finalists go up
+    assert last["bracket"]["upper"] or last["bracket"]["lower"]         # playoff bracket attached
 
 
 def test_schedule_view_regular_plus_bracket():

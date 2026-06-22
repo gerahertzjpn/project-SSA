@@ -277,8 +277,22 @@ FRANCHISES: list[dict] = [
 # Emblems (SVG)
 # --------------------------------------------------------------------------- #
 
+# Per-shape scale so every badge fills the SAME visual footprint: a triangle's bounding area and a
+# star's thin arms cover less of the 120 box than a shield/diamond/circle, so they're scaled up
+# around their own visual centre (a transform ATTR on the element — works inside clipPath too).
+_SHAPE_SCALE: dict[str, tuple[float, float, float]] = {
+    "triangle": (1.24, 60.0, 58.0),   # 80px → ~99px, centred on the triangle's body
+    "star": (1.12, 60.0, 55.0),       # fatten the thin-armed star to match filled shapes
+}
+
+
 def _shape_el(shape: str, attrs: str) -> str:
-    """Badge outline element (120 viewbox, centred at 60,60) with given attrs."""
+    """Badge outline element (120 viewbox, centred at 60,60) with given attrs. Triangles/stars get a
+    scale transform so all shapes occupy the same visual box."""
+    sc = _SHAPE_SCALE.get(shape)
+    if sc:
+        s, cx, cy = sc
+        attrs = (f'transform="translate({cx} {cy}) scale({s}) translate({-cx} {-cy})" ' + attrs)
     if shape == "circle":
         return f'<circle cx="60" cy="60" r="52" {attrs}/>'
     if shape == "diamond":
@@ -350,47 +364,12 @@ _MOTIF_BY_ID: dict[str, str] = {
 
 
 def emblem_svg(franchise: dict) -> str:
-    abbrev = str(franchise.get("abbrev", "?"))[:3]
-    color = franchise.get("color", "#444444")
-    accent = franchise.get("accent", "#eeeeee")
-    shape = franchise.get("shape", "shield")
-    fid = str(franchise.get("franchise_id", "x"))
-    dark = _shade(color, 0.58)
-    # Background treatment varies the look beyond shape+colour.
-    style = ("solid", "split", "ring")[sum(ord(c) for c in fid) % 3]
-    motif = _MOTIFS.get(_MOTIF_BY_ID.get(fid, "diamond"), _MOTIFS["diamond"]).format(a=accent)
-
-    clip = f"clip-{fid}"
-    parts = [
-        f'<defs><clipPath id="{clip}">{_shape_el(shape, "")}</clipPath></defs>',
-        _shape_el(shape, f'fill="{color}"'),
-    ]
-    if style == "split":
-        parts.append(
-            f'<g clip-path="url(#{clip})"><rect x="60" y="0" width="60" height="120" '
-            f'fill="{dark}"/></g>'
-        )
-    parts.append(_shape_el(shape, f'fill="none" stroke="{accent}" stroke-width="4"'))
-    if style == "ring":
-        parts.append(
-            f'<g transform="translate(60 60) scale(0.72) translate(-60 -60)">'
-            f'{_shape_el(shape, f"fill=\"none\" stroke=\"{accent}\" stroke-width=\"5\"")}</g>'
-        )
-    parts.append(motif)
-    # Abbreviation: natural glyphs (no textLength stretching — it distorts narrow
-    # combos like "CRI"). A smaller size for 3 chars still fits every badge shape.
-    text_attrs = 'font-size="19"' if len(abbrev) >= 3 else 'font-size="24"'
-    parts.append(
-        f'<text x="60" y="70" text-anchor="middle" dominant-baseline="central" '
-        f'font-family="Arial, sans-serif" font-weight="800" {text_attrs} '
-        f'fill="{accent}">{abbrev}</text>'
-    )
-    return (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120" '
-        'preserveAspectRatio="xMidYMid meet">'
-        + "".join(parts)
-        + "</svg>"
-    )
+    """Distinctive esports-style emblem — a Beast Crest mascot for the animal/predator franchises,
+    else a bold Apex mark (5 variants). Implemented in src/regionals/emblem_styles.py; this delegates
+    so every caller (viewer server, write_logos, preview generator) stays unchanged.
+    (The legacy shape+motif helpers above are kept for reference / the emblem-lab scripts.)"""
+    from src.regionals import emblem_styles
+    return emblem_styles.emblem_svg(franchise)
 
 
 def logo_rel_path(franchise_id: str) -> str:

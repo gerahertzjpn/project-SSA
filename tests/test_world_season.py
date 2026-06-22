@@ -74,11 +74,14 @@ def test_bootstrap_fills_leagues_and_seeds_season_one():
     assert groups == {"A": 6, "Z": 6}
     # every team drafted to >=3
     assert all(len(t["roster"]) >= 3 for t in w["teams"].values())
-    # Season 0 persists ONLY SoloQ (no money/salaries/calendar). Elo is now seeded by the league a
-    # club EARNED (promotion is a result): upper clubs start above lower so Power is global from day 1.
-    assert all(t["elo"] == 1120.0 for t in upper_teams(w))
-    assert all(t["elo"] == 1000.0 for t in lower_teams(w))
-    assert all(len(t["elo_history"]) == 1 for t in w["teams"].values())
+    # Season 0 persists ONLY SoloQ (no money/salaries/calendar). Power (Elo) is COMPUTED from the
+    # bootstrap qualification matches starting from 1000 — promoted (upper) clubs end higher BY RESULTS
+    # (no artificial seed); each club's history resets to one clean Season-1 start point.
+    up = [t["elo"] for t in upper_teams(w)]
+    lo = [t["elo"] for t in lower_teams(w)]
+    assert all(t["elo_history"] == [round(t["elo"])] for t in w["teams"].values())   # clean 1-point start
+    assert any(t["elo"] != 1000.0 for t in w["teams"].values())                      # moved off 1000 by results
+    assert sum(up) / len(up) > sum(lo) / len(lo)                                      # upper earned higher avg Power
     assert w["calendar"] == []
     assert all(p["salary"] == 0.0 for p in w["players"].values())
     # ready for season 1 with seeded treasuries

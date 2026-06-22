@@ -1,4 +1,4 @@
-"""Training auction — BETA. Gradeslot certificates; real training is a HARD STUB.
+"""Training auction — gradeslot certificates feeding the real PPO/lineage backend.
 
 Between seasons the owner sets the **gradeslot** size in TRAINING STEPS
 (``steps_per_slot``, default 1,000,000) and we show the estimated wall-clock per
@@ -14,9 +14,10 @@ seasons, value is tracked in steps, not slot count — so a team can:
 Spend types: ``skill_up`` / ``teamplay`` / ``meta_adapt`` (any step budget) and
 ``create_player`` (a lineage fork; requires >= ``FORK_MIN_STEPS`` combined).
 
-``execute_training`` deliberately raises: WHAT each type optimizes and HOW the
-effect is validated is still being decided with the owner (see
-docs/cloudcode/WORLD_TRAINING_OPTIONS.md). No training right now.
+``execute_training`` dispatches to the injected backend (``backends.RealTrainingBackend``
+when wired by the viewer; the default ``NullBackend`` refuses so training never runs by
+accident). The op semantics live in ``training_ops.py``. See
+docs/cloudcode/WORLD_TRAINING_OPTIONS.md.
 """
 from __future__ import annotations
 
@@ -32,14 +33,29 @@ DEFAULT_SLOT_STEPS = 1_000_000
 FORK_MIN_STEPS = 4_000_000
 # Step budget is unconstrained for most ops; create_player is gated by FORK_MIN_STEPS.
 
+_FALLBACK_STEPS_PER_MIN = 50_000.0     # ≈ 833 steps/sec — used only until a real run is measured
+
+
+def _measured_throughput_per_min() -> float:
+    """Throughput (steps/min) for the ETA — read from the live-measured estimate the viewer persists
+    after each real training (``training_runs/_measured_sps.json``), so the estimate reflects THIS
+    machine. Falls back to a guess until the first run is measured."""
+    try:
+        import json
+        from pathlib import Path
+        p = Path(__file__).resolve().parents[2] / "training_runs" / "_measured_sps.json"
+        sps = float(json.loads(p.read_text(encoding="utf-8")).get("sps") or 0)
+        return sps * 60.0 if sps > 0 else _FALLBACK_STEPS_PER_MIN
+    except Exception:                  # noqa: BLE001 — any read/parse problem -> fallback
+        return _FALLBACK_STEPS_PER_MIN
+
 
 @dataclass
 class TrainingConfig:
-    """Owner-set per offseason. ``steps_per_slot`` is the gradeslot size; the
-    throughput is used only to show an ETA (calibrate on the real GPU)."""
+    """Owner-set per offseason. ``steps_per_slot`` is the gradeslot size; ``throughput_steps_per_min``
+    drives the ETA and defaults to the live-measured rate (auto-calibrates after the first real run)."""
     steps_per_slot: int = DEFAULT_SLOT_STEPS
-    # TODO: calibrate on RTX 4070 SUPER (CPU sim is the real bottleneck, not GPU).
-    throughput_steps_per_min: float = 50_000.0
+    throughput_steps_per_min: float = field(default_factory=_measured_throughput_per_min)
 
     def est_minutes(self, steps: int) -> float:
         return steps / max(1.0, self.throughput_steps_per_min)

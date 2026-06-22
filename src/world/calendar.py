@@ -22,11 +22,13 @@ def add_match(world: dict, *, season: int, stage: str, league: str,
               maps_home: int | None = None, maps_away: int | None = None,
               winner: str | None = None,
               home_strategy: str | None = None, away_strategy: str | None = None,
-              sequence: list | None = None) -> dict:
+              sequence: list | None = None, day: int | None = None) -> dict:
     """Append a (scheduled or played) match to the calendar. ``home_strategy`` /
     ``away_strategy`` record the CALLS each manager made (the playbook's active
     strategy) so the scouting layer can learn from past games. ``sequence`` is the
-    per-map winner list (for the match-detail page) — public; the hidden cores stat is NOT stored."""
+    per-map winner list (for the match-detail page) — public; the hidden cores stat is NOT stored.
+    ``day`` is the schedule DAY (regular: 2 series/day, playoffs 1/day) so a finished season's
+    schedule keeps the same day grouping the LIVE tab showed (None when the engine didn't track it)."""
     event = {
         "season": season,
         "month": world.get("month", 0),
@@ -41,6 +43,7 @@ def add_match(world: dict, *, season: int, stage: str, league: str,
         "home_strategy": home_strategy,      # the manager's CALL (None if unknown)
         "away_strategy": away_strategy,
         "sequence": sequence,                # per-map winner team-ids (None if unknown)
+        "day": day,                          # schedule day (None if untracked -> views assign 2/day)
         "played": winner is not None,
     }
     world.setdefault("calendar", []).append(event)
@@ -58,7 +61,7 @@ def record_series(world: dict, season: int, league: str, series: list[dict]) -> 
             maps_home=r["maps_home"], maps_away=r["maps_away"], winner=r["winner"],
             home_strategy=(pb.get("home") or {}).get("strategy"),
             away_strategy=(pb.get("away") or {}).get("strategy"),
-            sequence=r.get("sequence"),
+            sequence=r.get("sequence"), day=r.get("day"),
         )
 
 

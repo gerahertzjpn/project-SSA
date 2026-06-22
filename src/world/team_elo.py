@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from src.regionals.elo import expected_score
 
-K_FACTOR = 32.0
+K_FACTOR = 16.0   # owner: one series should move Power gently (was 32 — single games jumped too hard)
 START_ELO = 1000.0
 
 

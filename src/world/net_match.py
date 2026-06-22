@@ -122,6 +122,155 @@ def make_soloq_match_fn(
     return match_fn
 
 
+class SoloQSeriesPlayer:
+    """Picklable, STATELESS SoloQ 3v3 net player keyed by a PRE-ASSIGNED ``match_seed`` — so a round's
+    independent matches can run over a process pool, bit-identical to sequential (each match re-seeds
+    torch from its own seed). ``__call__(team_a, team_b, match_seed) -> (winner 'A'|'B', impacts)``.
+    Genuine draws break deterministically off the seed (no shared rng). SoloQ has no manager orders."""
+
+    def __init__(self, world: dict, manifest_path: Optional[str | Path] = None, *,
+                 run_match_fn: Callable = _default_run_match, replay_dir: Optional[str | Path] = None):
+        self.world = world
+        self.manifest_path = str(manifest_path) if manifest_path else None
+        self.run_match_fn = run_match_fn
+        self.replay_dir = str(replay_dir) if replay_dir is not None else None
+        self._idx: Optional[dict] = None
+
+    def __call__(self, team_a, team_b, match_seed: int):
+        if self._idx is None:
+            self._idx = net_model_index(load_manifest(self.manifest_path))
+        rdir = Path(self.replay_dir) if self.replay_dir is not None else None
+        if rdir is not None:
+            rdir.mkdir(parents=True, exist_ok=True)
+        models, factions, slot_pids = _models_factions(self.world, self._idx, list(team_a), list(team_b))
+        rec = rdir is not None
+        result = self.run_match_fn(seed=match_seed, bot_type="league",
+                                   mode="replay" if rec else "training",
+                                   replay_path=str(rdir / f"soloq_{match_seed}.json") if rec else None,
+                                   player_models=models, player_factions=factions)
+        if result.winner == "TEAM_A":
+            winner = "A"
+        elif result.winner == "TEAM_B":
+            winner = "B"
+        else:                                            # deterministic draw break off the match seed
+            winner = "A" if (match_seed % 2 == 0) else "B"
+        return winner, _slot_impacts(result.state, slot_pids)
+
+
+class NetSeriesPlayer:
+    """Picklable, STATELESS Bo-N net-series player: plays ONE series for a PRE-ASSIGNED ``series_seed``
+    and returns the result WITHOUT mutating the world. Position-stat credit is returned as ``map_lineups``
+    (per map: home lineup, away lineup, winner side) for the CALLER to apply — so a worker process never
+    writes to the (read-only) world snapshot. The sequential ``play()`` below and the parallel pool
+    (``world.parallel``) both go through this one implementation, so their results are identical.
+
+    Picklable: holds only the world dict (plain JSON), a manifest path, flags + a run-match callable
+    (defaults to the module ``run_match`` which is picklable). The net-id index is rebuilt lazily inside
+    the worker. Determinism: every per-map seed is derived from ``series_seed`` via ``Spawner``, and
+    ``run_match`` re-seeds torch per map — so the outcome depends only on (home, away, best_of, seed)."""
+
+    def __init__(self, world: dict, manifest_path: Optional[str | Path] = None, *,
+                 run_match_fn: Callable = _default_run_match, use_playbook: bool = True,
+                 replay_dir: Optional[str | Path] = None):
+        self.world = world
+        self.manifest_path = str(manifest_path) if manifest_path else None
+        self.run_match_fn = run_match_fn
+        self.use_playbook = use_playbook
+        self.replay_dir = str(replay_dir) if replay_dir is not None else None
+        self._idx: Optional[dict] = None
+
+    def __call__(self, home: str, away: str, best_of: int, series_seed: int) -> dict:
+        from src.core.rng import Spawner
+        from src.training.spaces import strategy_order_for_slot
+        from src.world import playbook
+        from src.world.world import POSITIONS
+
+        if self._idx is None:
+            self._idx = net_model_index(load_manifest(self.manifest_path))
+        idx, world = self._idx, self.world
+        rdir = Path(self.replay_dir) if self.replay_dir is not None else None
+        if rdir is not None:
+            rdir.mkdir(parents=True, exist_ok=True)
+
+        def _lineup_pids(lineup_map: dict) -> list[str]:
+            return [lineup_map[pos] for pos in POSITIONS]
+
+        def _orders(home_strat, away_strat) -> Optional[dict]:
+            o = {}
+            for i, slot in enumerate(HOME_SLOTS):
+                o[slot] = strategy_order_for_slot(home_strat, i)
+            for i, slot in enumerate(AWAY_SLOTS):
+                o[slot] = strategy_order_for_slot(away_strat, i)
+            return o
+
+        needed = best_of // 2 + 1
+        game_spawner = Spawner(series_seed)              # per-game seeds derived from THIS series seed
+        mh = ma = 0
+        streak_h = streak_a = 0          # consecutive-loss streaks for the comeback IF-THEN rules
+        sequence: list[str] = []         # winner of each decisive map (for the no-scrub broadcast)
+        map_results: list[dict] = []     # per map played: winner + the REAL replay file (for "watch the match")
+        map_lineups: list[tuple] = []    # per map: (home_lineup, away_lineup, winner_side) for position credit
+        last_meta = None
+        for _ in range(best_of):  # hard cap: a Bo-N can't exceed N games even with draws
+            if mh >= needed or ma >= needed:
+                break
+            # RE-RESOLVE the playbook with the live series score -> conditional strategy switch +
+            # substitution fire here (the club can change its three nets between games).
+            if self.use_playbook:
+                sh = {"series_won": mh, "series_lost": ma, "playoff_losing_streak": streak_h}
+                sa = {"series_won": ma, "series_lost": mh, "playoff_losing_streak": streak_a}
+                _dh, _da, meta = playbook.matchup_modifiers(world, home, away, best_of,
+                                                            state_home=sh, state_away=sa)
+                home_lu, away_lu = meta["home"]["lineup"], meta["away"]["lineup"]
+                orders = _orders(meta["home"]["strategy"], meta["away"]["strategy"])
+                last_meta = meta
+            else:
+                home_lu = playbook.optimal_lineup(world, home)
+                away_lu = playbook.optimal_lineup(world, away)
+                orders = None
+            models, factions, slot_pids = _models_factions(
+                world, idx, _lineup_pids(home_lu), _lineup_pids(away_lu))
+            # slot -> World player NAME (+ SoloQ) so the replay can label each player at their core
+            player_names = {slot: world["players"].get(pid, {}).get("nickname", pid)
+                            for slot, pid in slot_pids}
+
+            gseed = game_spawner.seed()
+            rec = rdir is not None
+            replay_name = f"league_{gseed}.json" if rec else None
+            result = self.run_match_fn(seed=gseed, bot_type="league",
+                                       mode="replay" if rec else "training",
+                                       replay_path=str(rdir / replay_name) if rec else None,
+                                       player_models=models, player_factions=factions, orders=orders,
+                                       player_names=player_names)
+            if result.winner == "TEAM_A":
+                mh += 1; streak_h = 0; streak_a += 1; sequence.append(home)
+                map_winner = home
+            elif result.winner == "TEAM_B":
+                ma += 1; streak_a = 0; streak_h += 1; sequence.append(away)
+                map_winner = away
+            else:
+                map_winner = None                        # draw: played but clinches nothing
+            # remember the REAL replay file for this map so the broadcast can play the actual match
+            map_results.append({"winner": map_winner, "winner_side": result.winner, "replay": replay_name})
+            map_lineups.append((home_lu, away_lu, result.winner))   # caller credits position stats
+        winner = home if mh > ma else (away if ma > mh else home)  # tie on the cap -> home seed
+        out = {"home": home, "away": away, "maps_home": mh, "maps_away": ma, "winner": winner,
+               "best_of": best_of, "sequence": sequence, "map_results": map_results,
+               "map_lineups": map_lineups}
+        if last_meta:
+            out["playbook"] = last_meta
+        return out
+
+
+def apply_position_credit(world: dict, map_lineups: list) -> None:
+    """Credit per-position winrate from a series' ``map_lineups`` (in map order) — the side effect
+    NetSeriesPlayer deferred so workers stay world-read-only. Commutative, so order-safe."""
+    from src.world import playbook
+    for home_lu, away_lu, side in map_lineups or []:
+        playbook.record_position_results(world, home_lu, side == "TEAM_A")
+        playbook.record_position_results(world, away_lu, side == "TEAM_B")
+
+
 def make_net_play_fn(
     world: dict,
     manifest_path: Optional[str | Path] = None,
@@ -142,75 +291,23 @@ def make_net_play_fn(
     per-side ORDER overlay so the nets actually play the called game plan. The playbook is
     RE-RESOLVED before every game with the live series score, so conditional strategy switches AND
     substitutions (a club swapping a player mid-series) really happen — the club, not its current
-    three nets, is what persists."""
+    three nets, is what persists.
+
+    Sequential default: this wrapper draws each series' seed from a single ``Spawner`` and applies
+    position credit immediately. The PARALLEL path (``live_season.play_and_store(workers=N)``) instead
+    pre-assigns all series seeds, runs ``NetSeriesPlayer`` over a process pool, and applies the credit
+    afterwards in canonical order — identical results either way."""
     from src.core.rng import Spawner
-    from src.training.spaces import strategy_order_for_slot
-    from src.world import playbook
-    from src.world.world import POSITIONS
 
-    idx = net_model_index(load_manifest(manifest_path))
+    player = NetSeriesPlayer(world, manifest_path, run_match_fn=run_match_fn,
+                             use_playbook=use_playbook, replay_dir=replay_dir)
     series_spawner = Spawner(seed)
-    rdir = Path(replay_dir) if replay_dir is not None else None
-    if rdir is not None:
-        rdir.mkdir(parents=True, exist_ok=True)
-
-    def _lineup_pids(lineup_map: dict) -> list[str]:
-        return [lineup_map[pos] for pos in POSITIONS]
-
-    def _orders(home_strat, away_strat) -> Optional[dict]:
-        o = {}
-        for i, slot in enumerate(HOME_SLOTS):
-            o[slot] = strategy_order_for_slot(home_strat, i)
-        for i, slot in enumerate(AWAY_SLOTS):
-            o[slot] = strategy_order_for_slot(away_strat, i)
-        return o
 
     def play(home: str, away: str, best_of: int) -> dict:
-        needed = best_of // 2 + 1
-        game_spawner = Spawner(series_spawner.seed())  # independent per-game seeds
-        mh = ma = 0
-        streak_h = streak_a = 0          # consecutive-loss streaks for the comeback IF-THEN rules
-        sequence: list[str] = []         # winner of each decisive map (for the no-scrub broadcast)
-        last_meta = None
-        for _ in range(best_of):  # hard cap: a Bo-N can't exceed N games even with draws
-            if mh >= needed or ma >= needed:
-                break
-            # RE-RESOLVE the playbook with the live series score -> conditional strategy switch +
-            # substitution fire here (the club can change its three nets between games).
-            if use_playbook:
-                sh = {"series_won": mh, "series_lost": ma, "playoff_losing_streak": streak_h}
-                sa = {"series_won": ma, "series_lost": mh, "playoff_losing_streak": streak_a}
-                _dh, _da, meta = playbook.matchup_modifiers(world, home, away, best_of,
-                                                            state_home=sh, state_away=sa)
-                home_lu, away_lu = meta["home"]["lineup"], meta["away"]["lineup"]
-                orders = _orders(meta["home"]["strategy"], meta["away"]["strategy"])
-                last_meta = meta
-            else:
-                home_lu = playbook.optimal_lineup(world, home)
-                away_lu = playbook.optimal_lineup(world, away)
-                orders = None
-            models, factions, _ = _models_factions(
-                world, idx, _lineup_pids(home_lu), _lineup_pids(away_lu))
-
-            gseed = game_spawner.seed()
-            rec = rdir is not None
-            result = run_match_fn(seed=gseed, bot_type="league",
-                                  mode="replay" if rec else "training",
-                                  replay_path=str(rdir / f"league_{gseed}.json") if rec else None,
-                                  player_models=models, player_factions=factions, orders=orders)
-            if result.winner == "TEAM_A":
-                mh += 1; streak_h = 0; streak_a += 1; sequence.append(home)
-            elif result.winner == "TEAM_B":
-                ma += 1; streak_a = 0; streak_h += 1; sequence.append(away)
-            # a draw counts as a played game toward the cap but clinches nothing
-            if use_playbook and record_positions:        # credit THIS game's lineup with its result
-                playbook.record_position_results(world, home_lu, result.winner == "TEAM_A")
-                playbook.record_position_results(world, away_lu, result.winner == "TEAM_B")
-        winner = home if mh > ma else (away if ma > mh else home)  # tie on the cap -> home seed
-        out = {"home": home, "away": away, "maps_home": mh, "maps_away": ma, "winner": winner,
-               "best_of": best_of, "sequence": sequence}
-        if last_meta:
-            out["playbook"] = last_meta
+        out = player(home, away, best_of, series_spawner.seed())
+        lineups = out.pop("map_lineups", [])
+        if use_playbook and record_positions:
+            apply_position_credit(world, lineups)
         return out
 
     return play

@@ -62,12 +62,14 @@ def test_soloq_team_balance():
     assert abs(avg_a - avg_b) < 60  # close averages
 
 
-def test_soloq_impact_up_to_60_percent():
+def test_soloq_impact_modulation():
+    # impact modulates the Elo delta by ±IMPACT_SPREAD (the win/loss term stays dominant)
+    spread = soloq.IMPACT_SPREAD
     base = soloq.soloq_rating_delta(1000, 1000, won=True, impact=0.5)
     hi = soloq.soloq_rating_delta(1000, 1000, won=True, impact=1.0)
     lo = soloq.soloq_rating_delta(1000, 1000, won=True, impact=0.0)
-    assert hi == round(base * 1.6, 10) or abs(hi - base * 1.6) < 1e-9
-    assert abs(lo - base * 0.4) < 1e-9
+    assert abs(hi - base * (1 + spread)) < 1e-9
+    assert abs(lo - base * (1 - spread)) < 1e-9
 
 
 def test_soloq_deterministic():
@@ -98,7 +100,7 @@ def test_elo_sweep_moves_more_than_close():
     sweep = team_elo.series_elo_delta(1000, 1000, 3, 0, 5)
     close = team_elo.series_elo_delta(1000, 1000, 3, 2, 5)
     assert sweep > close > 0
-    assert abs(sweep - 16.0) < 1e-9  # K=32, margin 1.0, (1-0.5)
+    assert abs(sweep - 8.0) < 1e-9  # K=16, margin 1.0, (1-0.5)
 
 
 def test_elo_zero_sum():
@@ -113,9 +115,40 @@ def test_elo_zero_sum():
 # -------------------------------------------------------------- economy ---- #
 def test_prizes_upper_beats_lower():
     assert economy.placement_prize("upper", 1) == 1000
-    assert economy.placement_prize("lower", 1) == 450
+    assert economy.placement_prize("lower", 1) == 300        # 1st WITHIN a group (A and Z identical)
     assert economy.placement_prize("upper", 1) > economy.placement_prize("lower", 1)
     assert economy.placement_prize("upper", 99) == 0
+    # lower groups have 6 places; A's place-N prize == Z's place-N prize (same table)
+    assert economy.placement_prize("lower", 6) > 0 and economy.placement_prize("lower", 7) == 0
+
+
+def test_prize_schedule_structure():
+    sched = economy.prize_schedule()
+    assert len(sched["upper"]["places"]) == 10 and sched["upper"]["champion_bonus"] > 0
+    assert len(sched["lower"]["places"]) == 6 and sched["lower"]["per_group"] is True
+    # places are strictly non-increasing (1st pays the most)
+    for lg in ("upper", "lower"):
+        pl = sched[lg]["places"]
+        assert all(pl[i] >= pl[i + 1] for i in range(len(pl) - 1))
+
+
+def test_award_prizes_credits_treasury_and_splits_player_earnings():
+    w = new_world("w-prize", FRANCHISES, seed=4)
+    tid = next(iter(w["teams"]))
+    team = w["teams"][tid]
+    roster = list(w["players"])[:3]
+    team["roster"] = roster
+    for pid in roster:
+        w["players"][pid]["earnings"] = 0
+    before = team["treasury"]
+    awarded = economy.award_prizes(w, [{"team_id": tid, "league": "upper", "place": 1,
+                                         "grand_final_winner": True}])
+    b = awarded[tid]
+    assert b["prize"] == 1000 and b["bonus"] == 500 and b["total"] == 1500
+    assert team["treasury"] == before + 1500                       # purse credited to the club
+    share = 1500 // 3
+    assert all(w["players"][pid]["earnings"] == share for pid in roster)   # split among the roster
+    assert sum(w["players"][pid]["earnings"] for pid in roster) <= 1500    # never over-pays
 
 
 def test_salary_first_contract_jumps_then_moves_slowly():
