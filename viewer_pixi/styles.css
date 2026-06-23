@@ -552,6 +552,44 @@ body.embed-replay #pixiStage {
   bottom: 88px;
 }
 
+/* Core-kill feed — top-right of the match: "killer ⚔ ⬢ victim", revealed as playback reaches it. */
+#killFeed {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  max-width: 46%;
+  pointer-events: none;
+}
+#killFeed:empty { display: none; }
+.kf-head {
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  color: #8b97a6;
+}
+.kf-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  border-radius: 7px;
+  background: rgba(7, 10, 16, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  font-size: 12.5px;
+  font-weight: 800;
+  white-space: nowrap;
+  animation: kfIn 0.22s ease;
+}
+.kf-victim { text-decoration: line-through; opacity: 0.92; }
+.kf-x { color: #ff6b6b; font-size: 12px; }
+.kf-core { color: #d3dbe6; font-size: 11px; }
+@keyframes kfIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: none; } }
+
 .brand-menu {
   display: inline-flex;
   align-items: center;

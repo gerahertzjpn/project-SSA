@@ -893,6 +893,8 @@ async function loadSelectedReplay() {
   appState.playing = false;
   appState.sprites.clear();
   layers.units.removeChildren();
+  appState.coreKills = computeCoreKills(replay);     // right-side kill feed (who snapped whose core)
+  resetKillFeed();
   resetFx();
   appState.nodeMeta = replay.meta?.map2d?.nodes || {};
   appState.lastMapSignature = "";
@@ -968,6 +970,7 @@ function frame(deltaMS) {
     }
   }
   renderReplay(deltaMS);
+  updateKillFeed();                  // reveal core kills on the right as playback reaches them
   advanceProjectiles(dt);
   advanceParticles(dt);
   renderEffectsLayer();
@@ -2644,6 +2647,13 @@ function displayUnitCode(type) {
   return value || "?";
 }
 
+// Per-PLAYER shades inside each team's hue range, so you can tell which of a side's three players
+// sent an army / holds a point — while the team still reads as one colour family (A = warm, B = cool).
+const TEAM_SHADES = {
+  A: [0xff5b6b, 0xff8a3d, 0xf25ba0],   // red / orange / pink  (home — warm)
+  B: [0x4fa8ff, 0x2fd0c0, 0x8a86ff],   // blue / teal / indigo (away — cool)
+};
+
 function teamColor(team) {
   if (team === "BARON") {
     return COLORS.baron;  // Lord renders purple, matching its node ring/halo
@@ -2651,7 +2661,90 @@ function teamColor(team) {
   if (team === "NEUTRAL") {
     return COLORS.neutral;
   }
-  return String(team || "").startsWith("B") ? COLORS.teamB : COLORS.teamA;
+  const s = String(team || "");
+  const shades = s.startsWith("B") ? TEAM_SHADES.B : TEAM_SHADES.A;
+  const idx = parseInt(s.slice(1), 10);            // A1/A2/A3 (or B1..) -> a per-player shade
+  return idx >= 1 && idx <= shades.length ? shades[idx - 1] : shades[0];
+}
+
+// ---- core-kill feed (right side): "who destroyed whose core", revealed as playback reaches it ----
+function colorCss(team) {
+  return "#" + (teamColor(team) >>> 0).toString(16).padStart(6, "0");
+}
+
+function kfEsc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// Scan the replay once: a core "dies" when its core_hp crosses to 0; the killer is the enemy player
+// occupying that node (visiting_units) at that tick, the victim is the core's own player.
+function computeCoreKills(replay) {
+  const ticks = replay?.ticks || [];
+  const names = replay?.meta?.player_names || {};
+  const kills = [];
+  const prevHp = {};
+  for (const t of ticks) {
+    for (const nid of Object.keys(t.nodes || {})) {
+      if (!isCoreNode(nid)) continue;
+      const hp = Number(t.nodes[nid].core_hp ?? 0);
+      const was = prevHp[nid];
+      if (was != null && was > 0 && hp <= 0) {
+        const victimTeam = nid.charAt(0);
+        const vis = t.nodes[nid].visiting_units || {};
+        let killer = null, best = -1;
+        for (const slot of Object.keys(vis)) {
+          if (slot.charAt(0) === victimTeam) continue;     // the attacker is the ENEMY occupant
+          const n = Object.values(vis[slot] || {}).reduce((a, b) => a + Number(b || 0), 0);
+          if (n > best) { best = n; killer = slot; }
+        }
+        kills.push({
+          tick: Number(t.tick) || 0,
+          killerSlot: killer,
+          killerName: killer ? (names[killer] || killer) : "Соперник",
+          victimSlot: nid,
+          victimName: names[nid] || nid,
+        });
+      }
+      prevHp[nid] = hp;
+    }
+  }
+  return kills;
+}
+
+function killFeedEl() {
+  let el = document.getElementById("killFeed");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "killFeed";
+    (els.stage || document.body).appendChild(el);
+  }
+  return el;
+}
+
+function resetKillFeed() {
+  appState._killFeedShown = -1;
+  killFeedEl().innerHTML = "";
+}
+
+function updateKillFeed() {
+  const kills = appState.coreKills || [];
+  const cur = Math.round(appState.tickFloat || 0);
+  let n = 0;
+  for (const k of kills) if (k.tick <= cur) n += 1;
+  if (n === appState._killFeedShown) return;               // unchanged -> no DOM churn
+  appState._killFeedShown = n;
+  const el = killFeedEl();
+  if (!n) { el.innerHTML = ""; return; }
+  const rows = kills.filter((k) => k.tick <= cur).map((k) =>
+    `<div class="kf-row"><span class="kf-killer" style="color:${colorCss(k.killerSlot || victimEnemy(k))}">${kfEsc(k.killerName)}</span>` +
+    `<span class="kf-x">⚔</span><span class="kf-core">⬢</span>` +
+    `<span class="kf-victim" style="color:${colorCss(k.victimSlot)}">${kfEsc(k.victimName)}</span></div>`).join("");
+  el.innerHTML = `<div class="kf-head">💀 ЯДРА</div>${rows}`;
+}
+
+function victimEnemy(k) {            // colour an unattributed killer as the opposing side's base shade
+  return String(k.victimSlot || "A").charAt(0) === "A" ? "B1" : "A1";
 }
 
 function nodeFill(owner) {
