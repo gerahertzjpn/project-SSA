@@ -69,6 +69,32 @@ def test_season0_selection_holds_back_reserves_and_introduces_later():
     assert len(w["reserves"]) == 15
 
 
+def test_create_player_from_fork_creates_binds_and_rosters():
+    """A team's create_player must MAKE a new player OWN the forked net + join the paying team's roster.
+    The bug this guards: create_player trained a unique net but created no player, orphaning the net."""
+    from src.world.offseason import create_player_from_fork
+    parent_pid = "w-cf-p000"
+    w = {
+        "world_id": "w-cf",
+        "players": {parent_pid: {"player_id": parent_pid, "net_id": "robots_3", "faction": "robots",
+                                 "archetype": "base", "nickname": "Parent", "attributes": {},
+                                 "generation": 0, "team_id": "t1"}},
+        "teams": {"t1": {"name": "Club", "roster": [parent_pid]}},
+    }
+    fork_result = {"net_id": "robots_skirmisher_gZ_1", "genotype_hash": "deadbeef",
+                   "generation": 1, "parent_id": "robots_3"}
+    info = create_player_from_fork(w, "t1", parent_pid, fork_result)
+    new_pid = info["new_player_id"]
+    assert new_pid in w["players"] and new_pid != parent_pid
+    new = w["players"][new_pid]
+    assert new["net_id"] == "robots_skirmisher_gZ_1"                 # bound to the forked net
+    assert new["parent_ids"] == [parent_pid]                        # descends from the RIGHT parent
+    assert new["faction"] == "robots"                               # faction preserved (net is locked)
+    assert new["team_id"] == "t1" and new_pid in w["teams"]["t1"]["roster"]   # rostered on the payer
+    # a failed/empty fork must NOT create a phantom player
+    assert create_player_from_fork(w, "t1", parent_pid, {}) is None
+
+
 def test_offseason_depth_signings_build_benches():
     import json
     import pathlib

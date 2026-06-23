@@ -304,6 +304,45 @@ def reconcile_trained_card(world: dict, net_ids: list) -> list[dict]:
     return _skill_changes(world, before)
 
 
+def create_player_from_fork(world: dict, team_id: Optional[str], parent_player_id: Optional[str],
+                            fork_result: dict, *, manifest_path: Optional[str] = None) -> Optional[dict]:
+    """A team's PAID create_player just forked + trained a UNIQUE net — now MAKE A PLAYER own it. This
+    was the missing half of create_player: fork_net trained a real unique net but nothing created
+    ``world['players'][new]`` or rostered it, so the net was orphaned. Mirrors the rookie create+bind
+    (rookies.generate_rookies + backends.fork_rookie_net) but the new player joins the paying team's
+    roster directly (a polished 4M fork, not a raw draft prospect). Returns the new player's info."""
+    import random
+    from src.world.world import make_player, _unique_nicknames
+    from src.world.rookies import _next_player_index
+    new_net = (fork_result or {}).get("net_id")
+    if not new_net:
+        return None
+    parent = world["players"].get(parent_player_id) or {}
+    faction, archetype = parent.get("faction"), parent.get("archetype")
+    idx = _next_player_index(world)
+    seed = int((str(fork_result.get("genotype_hash") or "") + "0")[:8] or "0", 16) or idx
+    rng = random.Random(seed)
+    used = {p.get("nickname") for p in world["players"].values()}
+    nick = next((nm for nm in _unique_nicknames(idx + 16, rng) if nm not in used), f"Prospect{idx}")
+    gen = int(fork_result.get("generation", (parent.get("generation") or 0) + 1))
+    p = make_player(world["world_id"], idx, nick, rng, tier=0.5, origin="create_player",
+                    parent_id=parent_player_id, generation=gen, net_id=new_net,
+                    faction=faction, archetype=archetype, role="pro", signable=True)
+    p["status"] = "rostered"
+    p["generation"] = gen
+    p["parent_ids"] = [parent_player_id] if parent_player_id else []
+    pid = p["player_id"]
+    world["players"][pid] = p
+    if team_id and team_id in world.get("teams", {}):
+        p["team_id"] = team_id
+        roster = world["teams"][team_id].setdefault("roster", [])
+        if pid not in roster:
+            roster.append(pid)
+    reconcile_trained_card(world, [new_net])            # pull the fork's REAL derived card onto the player
+    return {"new_player_id": pid, "net_id": new_net, "team_id": team_id, "nickname": nick,
+            "parent_id": parent_player_id}
+
+
 def _skill_changes(world: dict, before: dict) -> list[dict]:
     """Players whose card characteristics changed this off-season (trained / re-evaluated), with the
     per-attribute before→after deltas — so the UI can show WHO improved and HOW."""
@@ -562,6 +601,10 @@ def _execute_training(world: dict, jobs: list[dict], cfg, backend,
                 res = training_auction.execute_training(world, {**job, "spend_type": op},
                                                         cfg, backend=backend)
                 passed = getattr(res, "passed", None)
+                if op == "create_player":               # fork trained a net -> MAKE a player own it
+                    create_player_from_fork(world, job.get("team_id"),
+                                            (job.get("target") or {}).get("player_id"),
+                                            getattr(res, "train", None) or {})
             elif kind == "rookie":
                 backend.fork({"world": world, "target": job["target"],
                               "op": "create_player", "total_steps": job["total_steps"]})

@@ -702,7 +702,7 @@ def start_world_training_batch(world_id: str, team_jobs: list, rookie_ids: list,
     def worker() -> None:
         with TRAINING_SEM:                       # one heavy batch at a time
             from src.world import backends, net_match
-            from src.world.offseason import reconcile_trained_card
+            from src.world.offseason import reconcile_trained_card, create_player_from_fork
             pool = backends.make_training_pool()             # ONE pool for the whole batch
             be = backends.RealTrainingBackend(run_dir=TRAINING_RUN_DIR, require_flag=False)
             try:
@@ -715,13 +715,17 @@ def start_world_training_batch(world_id: str, team_jobs: list, rookie_ids: list,
                         ctx = {"target": target, "total_steps": steps, "op": op,
                                "net_ids": target.get("net_ids"), "shared_pool": pool}
                         res = getattr(be, _OP_METHOD.get(op, "continue_ppo"))(ctx, prog)
-                        nids = [n for n in ([target.get("net_id"), (res or {}).get("net_id")]
-                                            + list(target.get("net_ids") or [])) if n]
                         with _world_lock(world_id):
                             w = load_world(world_id)
-                            deltas = reconcile_trained_card(w, nids)
-                            if deltas:
-                                w.setdefault("last_offseason", {}).setdefault("skills", []).extend(deltas)
+                            if op == "create_player":       # fork trained a net -> MAKE a player own it
+                                create_player_from_fork(w, j.get("team_id"), target.get("player_id"),
+                                                        res or {}, manifest_path=str(FROZEN_POP))
+                            else:
+                                nids = [n for n in ([target.get("net_id"), (res or {}).get("net_id")]
+                                                    + list(target.get("net_ids") or [])) if n]
+                                deltas = reconcile_trained_card(w, nids)
+                                if deltas:
+                                    w.setdefault("last_offseason", {}).setdefault("skills", []).extend(deltas)
                             save_world(w)
                         _upd(jid, status="done", done=steps, result=res)
                     except Exception as error:  # noqa: BLE001
