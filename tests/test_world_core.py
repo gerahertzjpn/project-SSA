@@ -47,6 +47,20 @@ def test_soloq_bands_never_cross():
         assert len(bands) == 1
 
 
+def test_soloq_sub1000_share_one_pool():
+    # everyone below 1000 matchmakes together (different 100-floors, ONE pool); >=1000 still 100-banded
+    ratings = {f"lo{i}": 720.0 + i * 40 for i in range(6)}    # 720..920, all < 1000
+    ratings.update({f"hi{i}": 1050.0 for i in range(6)})      # a separate 1000-band division
+    matches = soloq._round_matches(ratings, random.Random(0))
+    assert len(matches) == 2                                  # the entry pool + the 1000 band
+    lo, hi = {f"lo{i}" for i in range(6)}, {f"hi{i}" for i in range(6)}
+    for a, b in matches:                                      # pools never cross
+        ids = set(a + b)
+        assert ids <= lo or ids <= hi
+    assert soloq.band_of(720) == soloq.band_of(990) == 0      # different sub-1000 floors -> same pool
+    assert soloq.band_of(1000) == 1000 and soloq.band_of(1150) == 1100   # >=1000 unchanged
+
+
 def test_soloq_skips_when_band_too_small():
     ratings = {f"p{i}": 1000.0 for i in range(5)}  # only 5 -> can't fill a 6-man match
     matches = soloq._round_matches(ratings, random.Random(0))

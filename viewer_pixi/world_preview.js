@@ -216,8 +216,8 @@
   function sqRunRounds(sqR, pids, nRounds, roundStart) {
     let rnd = roundStart;
     for (let k = 0; k < nRounds; k++, rnd++) {
-      const bands = {};                            // a player can ONLY meet others in their 100-band
-      pids.forEach((pid) => { const bd = Math.floor(sqR[pid] / 100) * 100; (bands[bd] = bands[bd] || []).push(pid); });
+      const bands = {};                            // below 1000 = ONE entry pool; ≥1000 = 100-bands
+      pids.forEach((pid) => { const bd = sqR[pid] < 1000 ? 0 : Math.floor(sqR[pid] / 100) * 100; (bands[bd] = bands[bd] || []).push(pid); });
       Object.keys(bands).forEach((bd) => {
         const members = shuf(bands[bd].slice());   // random lobby composition; tiny bands replay each round
         const full = Math.floor(members.length / 6) * 6;
@@ -227,7 +227,7 @@
           const avgA = ta.reduce((s, p) => s + sqR[p], 0) / 3, avgB = tb.reduce((s, p) => s + sqR[p], 0) / 3;
           const aWon = R() < sqExpected(avgA, avgB);
           const atTime = {}; chunk.forEach((p) => (atTime[p] = Math.round(sqR[p])));
-          const mband = Math.floor(sqR[chunk[0]] / 100) * 100;   // matchmaking band, shared by all 6
+          const mband = sqR[chunk[0]] < 1000 ? 0 : Math.floor(sqR[chunk[0]] / 100) * 100;   // shared by all 6
           const imp = {}; chunk.forEach((p) => { let im = 0.25 + R() * 0.5;
             if ((aWon && ta.indexOf(p) >= 0) || (!aWon && tb.indexOf(p) >= 0)) im = Math.min(1, im + 0.15); imp[p] = im; });
           const dd = {};

@@ -3,9 +3,11 @@
 Players' ratings are no longer driven by their team's official wins/losses;
 they come from SoloQ: a simulated ladder run before the season. Rules:
 
-- 10 rounds. Each round players are grouped into rating **bands of step 100**
-  (band = floor(rating/100)*100); a 900-1000 player never shares a match with a
-  1000-1100 player.
+- 10 rounds. Each round players are grouped for matchmaking: everyone BELOW 1000
+  shares ONE entry pool (too few sub-1000 players to fill clean 100-step matches,
+  and newcomers should actually get games); at/above 1000 it's rating **bands of
+  step 100** (band = floor(rating/100)*100), so a 1000-1100 player never shares a
+  match with a 1100-1200 player.
 - Within a band, random 3v3 teams are formed, but the two teams' **average
   ratings are balanced** as far as possible (greedy). Matches are **Bo1**.
 - A player with no room (band has < 6, or the leftover after grouping) **skips**.
@@ -24,6 +26,7 @@ from src.regionals.elo import expected_score
 
 TEAM_SIZE = 3
 BAND_STEP = 100
+ENTRY_POOL_CEILING = 1000   # everyone below this shares ONE matchmaking pool; ≥ it splits by 100-bands
 DEFAULT_ROUNDS = 10
 K_FACTOR = 32.0
 SOLOQ_MATCH_CAP = 100       # keep the most recent N SoloQ games per player (bootstrap plays ~80)
@@ -35,6 +38,11 @@ MatchFn = Callable[[list, list, dict, random.Random], tuple]
 
 
 def band_of(rating: float) -> int:
+    """Matchmaking band. Players BELOW ENTRY_POOL_CEILING all share ONE pool (band 0) — there are too
+    few sub-1000 players to fill clean 100-step matches, and newcomers should get real games. At/above
+    the ceiling, 100-step bands (divisions) as before — that logic is unchanged."""
+    if rating < ENTRY_POOL_CEILING:
+        return 0
     return int(rating // BAND_STEP) * BAND_STEP
 
 
