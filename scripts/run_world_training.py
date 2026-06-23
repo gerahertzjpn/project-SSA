@@ -35,27 +35,31 @@ def main() -> None:
     world = json.loads(wp.read_text(encoding="utf-8"))
     be = backends.RealTrainingBackend(run_dir=RUN_DIR, require_flag=False)
     skills_log = []
+    pool = backends.make_training_pool(args.workers)   # ONE pool for ALL jobs (spawn once, not per job)
+    try:
+        for nid in [n.strip() for n in args.skill_nets.split(",") if n.strip()]:
+            print(f"[skill] training {nid} ({args.skill_steps:,} steps) ...", flush=True)
+            try:
+                r = be.continue_ppo({"target": {"net_id": nid}, "total_steps": args.skill_steps,
+                                     "op": "skill_up", "shared_pool": pool}, None)
+                print("   ok:", r, flush=True)
+                skills_log.extend(reconcile_trained_card(world, [nid]))
+                wp.write_text(json.dumps(world, ensure_ascii=False), encoding="utf-8")
+            except Exception as e:  # noqa: BLE001
+                print("   FAIL:", repr(e), flush=True)
 
-    for nid in [n.strip() for n in args.skill_nets.split(",") if n.strip()]:
-        print(f"[skill] training {nid} ({args.skill_steps:,} steps) ...", flush=True)
-        try:
-            r = be.continue_ppo({"target": {"net_id": nid}, "total_steps": args.skill_steps,
-                                 "op": "skill_up"}, None)
-            print("   ok:", r, flush=True)
-            skills_log.extend(reconcile_trained_card(world, [nid]))
-            wp.write_text(json.dumps(world, ensure_ascii=False), encoding="utf-8")
-        except Exception as e:  # noqa: BLE001
-            print("   FAIL:", repr(e), flush=True)
-
-    for rid in [r.strip() for r in args.rookies.split(",") if r.strip()]:
-        print(f"[rookie] forking unique net for {rid} ({args.rookie_steps:,} steps) ...", flush=True)
-        try:
-            r = backends.fork_rookie_net(RUN_DIR, world, rid, args.rookie_steps,
-                                         manifest_path=MANIFEST, workers=args.workers)
-            print("   ok: bound", r["bound_net"], flush=True)
-            wp.write_text(json.dumps(world, ensure_ascii=False), encoding="utf-8")
-        except Exception as e:  # noqa: BLE001
-            print("   FAIL:", repr(e), flush=True)
+        for rid in [r.strip() for r in args.rookies.split(",") if r.strip()]:
+            print(f"[rookie] forking unique net for {rid} ({args.rookie_steps:,} steps) ...", flush=True)
+            try:
+                r = backends.fork_rookie_net(RUN_DIR, world, rid, args.rookie_steps,
+                                             manifest_path=MANIFEST, workers=args.workers, shared_pool=pool)
+                print("   ok: bound", r["bound_net"], flush=True)
+                wp.write_text(json.dumps(world, ensure_ascii=False), encoding="utf-8")
+            except Exception as e:  # noqa: BLE001
+                print("   FAIL:", repr(e), flush=True)
+    finally:
+        if pool is not None:
+            pool.close(); pool.join()
 
     # record the skill deltas in the off-season report so «Характеристики» shows them
     if skills_log:

@@ -478,20 +478,17 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None, lang:
                           "source": e.get("source"), "team": e.get("team_id")} for e in events][:200]
             st = report.get("stages", {})
             train_jobs = (st.get("training", {}) or {}).get("jobs", []) or []
-            # NO cap on how many trainings launch — every won training runs (serially, via
-            # TRAINING_SEM). The only training limit in this project is MIN_TRAINING_STEPS (800k).
-            launched = [start_training_job(world_id, j, j.get("player_name")) for j in train_jobs]
-            # ALSO launch each rookie's own unique-net fork (was previously dropped, so rookies never
-            # trained). Each forks from its parent net, registers + binds the result, plays SoloQ with it.
+            # The WHOLE training queue (team jobs + each rookie's own unique-net fork) runs in ONE
+            # background batch sharing ONE worker pool — the expensive process spawn is paid once, not
+            # per job. Every won training runs (no cap; MIN_TRAINING_STEPS=800k is the only floor).
             rk = st.get("rookies") or {}
             rstep = int(rk.get("steps_per_rookie", 1_300_000))
-            for rid in (rk.get("created") or []):
-                start_rookie_fork_job(world_id, rid, rstep)
+            launched = start_world_training_batch(world_id, train_jobs, list(rk.get("created") or []), rstep)
             _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
                 "next_season": report.get("next_season"),
                 "rookies": (st.get("rookies") or {}).get("n", 0),
                 "training_auctioned": ((st.get("training", {}) or {}).get("auction") or {}).get("awarded", 0),
-                "training_launched": len(launched) + len(rk.get("created") or []),
+                "training_launched": len(launched),
                 "training_skipped": 0,
                 "chronicle": chronicle,
                 "log": [e["msg"] for e in events][:50],
@@ -677,6 +674,92 @@ def start_rookie_fork_job(world_id: str, rookie_player_id: str, steps: int) -> s
 
     threading.Thread(target=worker, daemon=True).start()
     return job_id
+
+
+def start_world_training_batch(world_id: str, team_jobs: list, rookie_ids: list, rookie_steps: int) -> list:
+    """Run an off-season's ENTIRE training queue (team skill/teamplay jobs + each rookie's unique-net
+    fork) in ONE background thread sharing ONE worker pool — the Windows process spawn is paid once,
+    not per job (~7 min saved per extra job). Each job trains, re-derives its card with the SAME
+    gauntlet, and reconciles it into the world; each gets its own TRAINING_JOBS tracker row for the UI."""
+    def _reg(op: str, player: str, steps: int) -> str:
+        jid = uuid.uuid4().hex
+        with TRAINING_JOBS_LOCK:
+            TRAINING_JOBS[jid] = {"job_id": jid, "world_id": world_id, "op": op, "player": player,
+                                  "done": 0, "total": int(steps), "status": "queued",
+                                  "error": None, "started_at": None}
+        return jid
+
+    def _upd(jid: str, **kw) -> None:
+        with TRAINING_JOBS_LOCK:
+            if jid in TRAINING_JOBS:
+                TRAINING_JOBS[jid].update(**kw)
+
+    team = [(j, _reg(j.get("spend_type", "skill_up"),
+                     j.get("player_name") or (j.get("target") or {}).get("player_id") or "team",
+                     j.get("total_steps", 800_000))) for j in team_jobs]
+    rookies = [(rid, _reg("rookie_fork", rid, rookie_steps)) for rid in rookie_ids]
+
+    def worker() -> None:
+        with TRAINING_SEM:                       # one heavy batch at a time
+            from src.world import backends, net_match
+            from src.world.offseason import reconcile_trained_card
+            pool = backends.make_training_pool()             # ONE pool for the whole batch
+            be = backends.RealTrainingBackend(run_dir=TRAINING_RUN_DIR, require_flag=False)
+            try:
+                for j, jid in team:
+                    op = j.get("spend_type", "skill_up"); steps = int(j.get("total_steps", 800_000))
+                    target = j.get("target", {})
+                    _upd(jid, status="running", started_at=time.time())
+                    prog = (lambda d, t, _j=jid: _upd(_j, done=int(d), total=int(t)))
+                    try:
+                        ctx = {"target": target, "total_steps": steps, "op": op,
+                               "net_ids": target.get("net_ids"), "shared_pool": pool}
+                        res = getattr(be, _OP_METHOD.get(op, "continue_ppo"))(ctx, prog)
+                        nids = [n for n in ([target.get("net_id"), (res or {}).get("net_id")]
+                                            + list(target.get("net_ids") or [])) if n]
+                        with _world_lock(world_id):
+                            w = load_world(world_id)
+                            deltas = reconcile_trained_card(w, nids)
+                            if deltas:
+                                w.setdefault("last_offseason", {}).setdefault("skills", []).extend(deltas)
+                            save_world(w)
+                        _upd(jid, status="done", done=steps, result=res)
+                    except Exception as error:  # noqa: BLE001
+                        traceback.print_exc(); _upd(jid, status="error", error=str(error))
+
+                for rid, jid in rookies:
+                    _upd(jid, status="running", started_at=time.time())
+                    prog = (lambda d, t, _j=jid: _upd(_j, done=int(d), total=int(t)))
+                    try:
+                        with _world_lock(world_id):
+                            w = load_world(world_id); rk = w["players"][rid]
+                            ppid = ((rk.get("parent_ids") or [None])[0]
+                                    or (rk.get("lineage") or {}).get("parent_id"))
+                            par = w["players"].get(ppid) or {}
+                            pnet = par.get("net_id") or rk.get("net_id")
+                            fac, arch = par.get("faction"), par.get("archetype")
+                        if not pnet:
+                            raise ValueError(f"rookie {rid} has no parent net")
+                        res = backends.fork_net(TRAINING_RUN_DIR, pnet, rookie_steps, prog, shared_pool=pool)
+                        nn = res["net_id"]
+                        net_match.register_forked_net(str(FROZEN_POP), nn, fac,
+                                                      f"{TRAINING_RUN_DIR}/nets/{nn}/latest.pt", arch)
+                        with _world_lock(world_id):
+                            w = load_world(world_id); rk = w["players"][rid]
+                            rk["net_id"] = nn; rk["faction"] = fac; rk["archetype"] = arch
+                            rk["generation"] = int(res.get("generation", rk.get("generation", 1)))
+                            if ppid:
+                                rk["parent_ids"] = [ppid]
+                            reconcile_trained_card(w, [nn]); save_world(w)
+                        _upd(jid, status="done", done=rookie_steps, result=res)
+                    except Exception as error:  # noqa: BLE001
+                        traceback.print_exc(); _upd(jid, status="error", error=str(error))
+            finally:
+                if pool is not None:
+                    pool.close(); pool.join()
+
+    threading.Thread(target=worker, daemon=True).start()
+    return [jid for _, jid in team] + [jid for _, jid in rookies]
 
 
 def training_jobs_status(world_id: str) -> dict:

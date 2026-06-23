@@ -79,6 +79,20 @@ def _train_workers() -> int:
     return max(2, (os.cpu_count() or 4) - 2)
 
 
+def make_training_pool(workers: int = 0):
+    """A spawn worker pool REUSABLE across many training jobs in one off-season. The Windows process
+    spawn (re-import torch + load checkpoints per worker) costs ~minutes; creating the pool ONCE and
+    handing it to every job pays that once instead of per job (~7 min saved per extra job). Safe to
+    share because run_update's tasks are self-contained (each carries its own net weights), and each
+    task re-sets torch threads itself. Returns None when workers<=1 (callers then run inline)."""
+    import multiprocessing as mp
+    from src.training.league_trainer import _init_worker
+    workers = max(1, int(workers) or _train_workers())
+    if workers <= 1:
+        return None
+    return mp.get_context("spawn").Pool(processes=workers, initializer=_init_worker, initargs=(1,))
+
+
 def _spec_from_registry_entry(e: dict):
     """Rebuild a DescendantSpec from its on-disk registry row (forked children / drifted nets that
     build_population() does not return). The genotype fields are all serialised, so the rebuilt spec's
@@ -122,7 +136,8 @@ def _pop_index(run_dir: str) -> dict:
 def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
                   *, workers: int = 0, sparring: Optional[list] = None,
                   order_weight: Optional[float] = None, forced_strategy: Optional[str] = None,
-                  no_order_prob: Optional[float] = None, meta_opponents: Optional[list] = None) -> dict:
+                  no_order_prob: Optional[float] = None, meta_opponents: Optional[list] = None,
+                  shared_pool=None) -> dict:
     """REAL single-net PPO — continue training ONE population net for ~steps_goal steps vs the
     league opponent mix (frozen ancestors + scripted), then save ONLY this net's checkpoint, merge
     its registry row, and re-derive its card.
@@ -196,8 +211,9 @@ def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
         trainer.config.ancestor_opponent_prob = 0.0
         trainer.config.descendant_opponent_prob = 1.0
 
-    pool = None
-    if workers > 1:
+    pool = shared_pool                         # reuse the off-season pool if one was handed in
+    own_pool = pool is None and workers > 1
+    if own_pool:
         pool = mp.get_context("spawn").Pool(processes=workers, initializer=_init_worker,
                                             initargs=(cfg.torch_threads,))
     start = int(trainer.steps_by_net[net_id])
@@ -220,7 +236,7 @@ def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
         _merge_registry_steps(run_dir, net_id, int(trainer.steps_by_net[net_id]), update)
         _rederive_card(net_id)
     finally:
-        if pool is not None:
+        if own_pool and pool is not None:
             pool.close()
             pool.join()
         # drop the transient pools we wrote so the canonical run dir stays clean
@@ -338,7 +354,7 @@ def _install_meta_pool(trainer, run_dir: str, meta_ids: list):
 
 
 def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
-                 *, workers: int = 0) -> dict:
+                 *, workers: int = 0, shared_pool=None) -> dict:
     """teamplay — train a team's 3 starter nets JOINTLY as one controlled team (any factions),
     vs ancestors+scripted. The faction-balanced _triples scheduler is overridden to pin the one
     real roster triple; all three nets are saved (they all belong to the team)."""
@@ -361,8 +377,9 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
     trainer._triples = lambda: [tuple(ids)]   # the roster plays as ONE fixed triple (any factions)
     fresh_pool = getattr(trainer, "pool_path", None)
 
-    pool = None
-    if workers > 1:
+    pool = shared_pool
+    own_pool = pool is None and workers > 1
+    if own_pool:
         pool = mp.get_context("spawn").Pool(processes=workers, initializer=_init_worker,
                                             initargs=(cfg.torch_threads,))
     start = {i: int(trainer.steps_by_net[i]) for i in ids}
@@ -385,7 +402,7 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
             _merge_registry_steps(run_dir, i, int(trainer.steps_by_net[i]), update)
             _rederive_card(i)
     finally:
-        if pool is not None:
+        if own_pool and pool is not None:
             pool.close()
             pool.join()
         if fresh_pool and Path(fresh_pool).name.startswith("pool_") and Path(fresh_pool).exists():
@@ -398,7 +415,7 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
 
 
 def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None,
-             *, workers: int = 0) -> dict:
+             *, workers: int = 0, shared_pool=None) -> dict:
     """create_player — spawn a NEW unique child from a parent: clone the parent's weights, perturb
     them (Gaussian, for a unique behaviour + warm start), assign a fresh spec (unique genotype_hash),
     mini-train it vs ancestors+scripted, save under the child net_id, and append it to the registry."""
@@ -462,8 +479,9 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
     trainer = LeagueTrainer(cfg, descendants=descendants)
     fresh_pool = getattr(trainer, "pool_path", None)
 
-    pool = None
-    if workers > 1:
+    pool = shared_pool
+    own_pool = pool is None and workers > 1
+    if own_pool:
         pool = mp.get_context("spawn").Pool(processes=workers, initializer=_init_worker,
                                             initargs=(cfg.torch_threads,))
     start = int(trainer.steps_by_net[child.net_id])
@@ -483,7 +501,7 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
                                int(trainer.steps_by_net[child.net_id]), update)
         _rederive_card(child.net_id)
     finally:
-        if pool is not None:
+        if own_pool and pool is not None:
             pool.close()
             pool.join()
         if fresh_pool and Path(fresh_pool).name.startswith("pool_") and Path(fresh_pool).exists():
@@ -497,7 +515,7 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
 
 
 def fork_rookie_net(run_dir: str, world: dict, rookie_player_id: str, steps_goal: int, *,
-                    manifest_path=None, workers: int = 0, progress_cb=None) -> dict:
+                    manifest_path=None, workers: int = 0, progress_cb=None, shared_pool=None) -> dict:
     """The FULL rookie-training pipeline (this is what was missing). Fork a UNIQUE net from the rookie's
     PARENT net via real PPO, REGISTER it in the manifest so net_match can resolve it, then BIND it to
     the rookie (net_id/faction/archetype/generation/parent) and re-derive its card. After this the
@@ -511,7 +529,7 @@ def fork_rookie_net(run_dir: str, world: dict, rookie_player_id: str, steps_goal
     parent_net = parent.get("net_id") or rookie.get("net_id")
     if not parent_net:
         raise ValueError(f"rookie {rookie_player_id} has no parent net to fork from")
-    res = fork_net(run_dir, parent_net, steps_goal, progress_cb, workers=workers)
+    res = fork_net(run_dir, parent_net, steps_goal, progress_cb, workers=workers, shared_pool=shared_pool)
     new_net = res["net_id"]
     faction = parent.get("faction") or rookie.get("faction")
     archetype = parent.get("archetype") or rookie.get("archetype")
@@ -585,7 +603,8 @@ class RealTrainingBackend(training_ops.TrainingBackend):
                                             n_games=n, seed_base=9100))
             except Exception:  # noqa: BLE001 - baseline is optional; training proceeds regardless
                 pass
-        return train_one_net(self.run_dir, net_id, steps, progress_cb, **kw)
+        return train_one_net(self.run_dir, net_id, steps, progress_cb,
+                             shared_pool=ctx.get("shared_pool"), **kw)
 
     def cotrain(self, ctx: dict, progress_cb=None) -> dict:
         """teamplay — joint training of a roster's 3 nets."""
@@ -593,13 +612,15 @@ class RealTrainingBackend(training_ops.TrainingBackend):
         ids = ctx.get("net_ids") or (ctx.get("target") or {}).get("net_ids")
         if not ids:
             raise ValueError("cotrain needs ctx['net_ids'] — the roster's 3 nets")
-        return cotrain_team(self.run_dir, ids, max(1, int(ctx.get("total_steps", 1_000_000))), progress_cb)
+        return cotrain_team(self.run_dir, ids, max(1, int(ctx.get("total_steps", 1_000_000))), progress_cb,
+                            shared_pool=ctx.get("shared_pool"))
 
     def fork(self, ctx: dict, progress_cb=None) -> dict:
         """create_player — spawn + mini-train a unique child from the parent net."""
         self._gate()
         return fork_net(self.run_dir, _ctx_net_id(ctx),
-                        max(1, int(ctx.get("total_steps", 1_000_000))), progress_cb)
+                        max(1, int(ctx.get("total_steps", 1_000_000))), progress_cb,
+                        shared_pool=ctx.get("shared_pool"))
 
     def evaluate(self, ctx: dict) -> dict:
         """Held-out gauntlet winrate AFTER training; before-metrics come from ctx (set pre-train)."""
