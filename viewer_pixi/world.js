@@ -1413,6 +1413,10 @@ function openReplayModal(maps, startI, opts) {
   const center = live
     ? `<div class="rp-center">` +
         `<span class="rp-live-ind"><span class="rp-livedot"></span>LIVE</span>` +
+        // эфир score: starts 0:0 and ticks up as each WATCHED map finishes (spoiler-safe — you only
+        // see a map count after you've watched it).
+        `<div class="rp-score live"><span class="rp-sc h">0</span>` +
+          `<span class="rp-scsep">:</span><span class="rp-sc a">0</span></div>` +
         (bestOf ? `<span class="rp-bo">BO${esc(String(bestOf))}</span>` : "") +
       `</div>`
     : `<div class="rp-center">` +
@@ -1470,6 +1474,7 @@ function openReplayModal(maps, startI, opts) {
     modal._close = null;
   }
   if (live) {                                     // эфир: map ends -> the embedded player pings us, roll the next
+    let liveH = 0, liveA = 0;                                   // running series score (revealed map-by-map)
     const onMsg = (e) => {
       if (e.origin !== window.location.origin) {                // only our own embedded player
         console.warn("[world] ignored cross-origin message", e.origin); return;
@@ -1479,6 +1484,14 @@ function openReplayModal(maps, startI, opts) {
         const sel = frame.contentDocument.getElementById("speedSelect");
         if (sel) modal._liveSpeed = sel.value;
       } catch (er) { /* ignore */ }
+      const ended = maps[cur];                                  // the map that just finished -> tick the score
+      if (ended) {
+        if (ended.homeWon) liveH++; else liveA++;
+        const h = modal.querySelector(".rp-score.live .rp-sc.h");
+        const a = modal.querySelector(".rp-score.live .rp-sc.a");
+        if (h) h.textContent = String(liveH);
+        if (a) a.textContent = String(liveA);
+      }
       const pos = playable.indexOf(cur);
       if (pos < playable.length - 1) {
         show(playable[pos + 1]);                                // roll the next map

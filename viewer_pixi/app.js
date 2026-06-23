@@ -2086,18 +2086,20 @@ function drawStaticMap() {
     label.alpha = isBaron ? 0.95 : 0.7;
     layers.labels.addChild(label);
 
-    // Player NAME at the core they play (World broadcast): names live here, not in a top strip.
+    // Player NAME beside the core they play (World broadcast): to the OUTER SIDE of the core, off the
+    // HP bar — home (A*) cores sit on the left so their names hang left; away (B*) hang right.
     // Reads meta.player_names (slot -> nickname); absent on legacy replays -> simply not drawn.
     const pname = appState.replay?.meta?.player_names?.[nodeId];
     if (isCoreNode(nodeId) && pname) {
+      const homeSide = nodeId.charAt(0) === "A";
       const nameLbl = new Text({
         text: pname,
-        style: { fill: deadCore ? "#5a6470" : teamColor(owner), fontSize: 12, fontWeight: "800",
-                 stroke: { color: "#070b12", width: 3 } },
+        style: { fill: deadCore ? "#5a6470" : teamColor(owner), fontSize: 13, fontWeight: "800",
+                 stroke: { color: "#070b12", width: 3.5 } },
       });
-      nameLbl.anchor.set(0.5);
-      nameLbl.x = x;
-      nameLbl.y = y + radius + 11;          // just below the core they command
+      nameLbl.anchor.set(homeSide ? 1 : 0, 0.5);     // text hangs to the OUTER side, beside the core
+      nameLbl.x = homeSide ? (x - radius - 8) : (x + radius + 8);
+      nameLbl.y = y;                                  // vertically centred on the core, clear of the HP bar
       nameLbl.alpha = deadCore ? 0.5 : 0.97;
       layers.labels.addChild(nameLbl);
     }
