@@ -2375,7 +2375,10 @@ function fitCamera(center = true) {
   }
   const width = Math.max(1, appState.app.screen.width);
   const height = Math.max(1, appState.app.screen.height);
-  const scale = Math.min(width / WORLD_W, height / WORLD_H) * 0.92;
+  // In the World broadcast the canvas is much wider than the map, so the map is height-constrained and
+  // leaves top/bottom slack — fill more there. The standalone Match tab keeps 0.92 (room for its HUDs).
+  const fill = (typeof EMBED !== "undefined" && EMBED && EMBED.active) ? 0.98 : 0.92;
+  const scale = Math.min(width / WORLD_W, height / WORLD_H) * fill;
   appState.camera.scale = scale;
   if (center) {
     appState.camera.x = (width - WORLD_W * scale) / 2;
