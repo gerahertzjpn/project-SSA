@@ -419,6 +419,103 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
             "steps_added": {i: int(trainer.steps_by_net[i]) - start[i] for i in ids}}
 
 
+def train_many_nets(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
+                    *, workers: int = 0, shared_pool=None) -> dict:
+    """BATCHED skill_up: continue-train MANY target nets in ONE trainer instead of one job per net.
+
+    Single-net train_one_net forms ONE faction-balanced triple = target + 2 THROWAWAY partners, so ~2/3
+    of the pool's compute trains discarded nets. Batching groups the targets into faction-balanced triples
+    (1 net per faction) so the triple-mates are OTHER real targets — every controlled slot is useful — and
+    runs them together. Each target keeps its OWN per-net recipe/shaping (shaping is per-net in the env), so
+    this is purely waste-elimination + parallelism, NOT a recipe change. Short factions are padded with the
+    fewest throwaway partners needed to complete a triple. All TARGETS are saved + re-derived; padding is not.
+
+    Measured (32-core): sequential single-net useful throughput ~906 steps/s/net (2/3 wasted); batched packs
+    the pool with real targets -> the whole off-season's skill nets finish in ~1 net's wall-clock × ceil(K/3).
+    """
+    import multiprocessing as mp
+    import torch
+    from collections import defaultdict, deque
+    from src.training.league_trainer import LeagueTrainer, LeagueConfig, FACTIONS, _init_worker
+    from src.training.population_roster import build_population
+    from src.training.policy import to_cpu_state_dict
+
+    by_id = _pop_index(run_dir)
+    targets = [t for t in dict.fromkeys(net_ids) if t in by_id]   # de-dup, keep order, must have ckpts
+    if not targets:
+        raise ValueError(f"no trainable targets among {net_ids!r} in {run_dir}")
+    if len(targets) == 1:                                          # nothing to batch -> the single-net path
+        return train_one_net(run_dir, targets[0], steps_goal, progress_cb,
+                             workers=workers, shared_pool=shared_pool)
+
+    pop = build_population()
+    tgt_by_fac = defaultdict(deque)
+    for t in targets:
+        tgt_by_fac[by_id[t].faction].append(t)
+    n_triples = max(len(tgt_by_fac[f]) for f in FACTIONS) or 1
+    used = set(targets)
+    triples = []
+    for _ in range(n_triples):                                    # 1 net per faction per triple
+        triple = []
+        for f in FACTIONS:
+            if tgt_by_fac[f]:
+                triple.append(tgt_by_fac[f].popleft())
+            else:                                                 # pad a short faction with a throwaway
+                part = next((d.net_id for d in pop if d.faction == f and d.net_id not in used), None)
+                if part is None:
+                    part = next(d.net_id for d in pop if d.faction == f)
+                used.add(part); triple.append(part)
+        triples.append(tuple(triple))
+    all_ids = [nid for tr in triples for nid in tr]
+    descendants = [by_id[i] for i in all_ids]
+    workers = max(1, int(workers) or _train_workers())
+    # keep each net's per-update batch ≈ the single-net skill_up (ept≈30 at W=30) while filling the pool:
+    # aim for ~2×workers total episodes across the triples (the benchmark's utilisation sweet spot).
+    ept = max(2, round(2 * workers / n_triples))
+    cfg = LeagueConfig(run_dir=run_dir, workers=workers, episodes_per_triple=ept,
+                       target_steps_per_net=1_000_000_000_000,
+                       ancestor_opponent_prob=0.7, descendant_opponent_prob=0.0)
+    trainer = LeagueTrainer(cfg, descendants=descendants)
+    trainer._triples = lambda: triples                            # pin OUR triples (cover all targets)
+    fresh_pool = getattr(trainer, "pool_path", None)
+
+    pool = shared_pool
+    own_pool = pool is None and workers > 1
+    if own_pool:
+        pool = mp.get_context("spawn").Pool(processes=workers, initializer=_init_worker,
+                                            initargs=(cfg.torch_threads,))
+    start = {i: int(trainer.steps_by_net[i]) for i in all_ids}
+    update = 0
+    try:
+        while min(int(trainer.steps_by_net[t]) - start[t] for t in targets) < steps_goal:
+            update += 1
+            trainer.run_update(update, pool=pool)
+            if progress_cb:
+                done = min(int(trainer.steps_by_net[t]) - start[t] for t in targets)
+                progress_cb(min(steps_goal, done), steps_goal)
+        for t in targets:                                         # save + re-derive ONLY the targets
+            net = trainer.nets[t]
+            net_dir = Path(run_dir) / "nets" / t
+            net_dir.mkdir(parents=True, exist_ok=True)
+            torch.save({"policy_state": to_cpu_state_dict(net), "update": update, "net_id": t,
+                        "genotype_hash": by_id[t].genotype_hash(),
+                        "steps_trained": int(trainer.steps_by_net[t]),
+                        **_interface_meta()}, net_dir / "latest.pt")
+            _merge_registry_steps(run_dir, t, int(trainer.steps_by_net[t]), update)
+            _rederive_card(t)
+    finally:
+        if own_pool and pool is not None:
+            pool.close()
+            pool.join()
+        if fresh_pool and Path(fresh_pool).name.startswith("pool_") and Path(fresh_pool).exists():
+            try:
+                Path(fresh_pool).unlink()
+            except OSError:
+                pass
+    return {"net_ids": targets, "triples": len(triples), "episodes_per_triple": ept, "updates": update,
+            "steps_added": {t: int(trainer.steps_by_net[t]) - start[t] for t in targets}}
+
+
 def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None,
              *, workers: int = 0, shared_pool=None) -> dict:
     """create_player — spawn a NEW unique child from a parent: clone the parent's weights, perturb

@@ -706,7 +706,40 @@ def start_world_training_batch(world_id: str, team_jobs: list, rookie_ids: list,
             pool = backends.make_training_pool()             # ONE pool for the whole batch
             be = backends.RealTrainingBackend(run_dir=TRAINING_RUN_DIR, require_flag=False)
             try:
+                # BATCH plain skill_up jobs into ONE trainer. Single-net skill_up forms a triple of
+                # target + 2 THROWAWAY partners, wasting ~2/3 of the pool; co-training the real targets
+                # in faction-balanced triples is ~2-4x faster for the whole off-season with NO per-net
+                # recipe change (each net keeps its own shaping). Other ops run individually below.
+                skill_ids = {jid for j, jid in team
+                             if j.get("spend_type", "skill_up") == "skill_up"
+                             and (j.get("target") or {}).get("net_id")}
+                if len(skill_ids) < 2:
+                    skill_ids = set()                    # 0/1 skill jobs -> nothing to batch
+                if skill_ids:
+                    batch = [(j, jid) for j, jid in team if jid in skill_ids]
+                    net_ids = [j["target"]["net_id"] for j, _ in batch]
+                    goal = max(int(j.get("total_steps", 800_000)) for j, _ in batch)
+                    for _, bjid in batch:
+                        _upd(bjid, status="running", started_at=time.time())
+                    bprog = (lambda d, t: [_upd(bj, done=int(d), total=int(t)) for _, bj in batch])
+                    try:
+                        res = backends.train_many_nets(TRAINING_RUN_DIR, net_ids, goal, bprog, shared_pool=pool)
+                        with _world_lock(world_id):
+                            w = load_world(world_id)
+                            deltas = reconcile_trained_card(w, net_ids)
+                            if deltas:
+                                w.setdefault("last_offseason", {}).setdefault("skills", []).extend(deltas)
+                            save_world(w)
+                        for _, bjid in batch:
+                            _upd(bjid, status="done", done=goal, result=res)
+                    except Exception as error:  # noqa: BLE001
+                        traceback.print_exc()
+                        for _, bjid in batch:
+                            _upd(bjid, status="error", error=str(error))
+
                 for j, jid in team:
+                    if jid in skill_ids:
+                        continue                         # trained in the batch above
                     op = j.get("spend_type", "skill_up"); steps = int(j.get("total_steps", 800_000))
                     target = j.get("target", {})
                     _upd(jid, status="running", started_at=time.time())
