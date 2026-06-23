@@ -71,6 +71,14 @@ def _interface_meta() -> dict:
             "action_dim": ACTION_DIM, "config": {"hidden_size": 128}}
 
 
+def _train_workers() -> int:
+    """Use the WHOLE machine for PPO (leave 2 cores for the OS). The skill-job failures were the
+    metadata bug, NOT the worker count — teamplay trained fine at full workers — so training runs at
+    max throughput, not a throttled handful."""
+    import os
+    return max(2, (os.cpu_count() or 4) - 2)
+
+
 def _spec_from_registry_entry(e: dict):
     """Rebuild a DescendantSpec from its on-disk registry row (forked children / drifted nets that
     build_population() does not return). The genotype fields are all serialised, so the rebuilt spec's
@@ -112,7 +120,7 @@ def _pop_index(run_dir: str) -> dict:
 
 
 def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
-                  *, workers: int = 6, sparring: Optional[list] = None,
+                  *, workers: int = 0, sparring: Optional[list] = None,
                   order_weight: Optional[float] = None, forced_strategy: Optional[str] = None,
                   no_order_prob: Optional[float] = None, meta_opponents: Optional[list] = None) -> dict:
     """REAL single-net PPO — continue training ONE population net for ~steps_goal steps vs the
@@ -173,7 +181,7 @@ def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
     # No co-evo descendant opponents: the only descendants loaded are the controlled triple itself,
     # so the "descendants" opponent branch would have nobody to draw -> train vs frozen ancestors
     # (the rush pressure) + scripted baselines, which is the faithful single-net opponent mix.
-    workers = max(1, int(workers))
+    workers = max(1, int(workers) or _train_workers())
     cfg = LeagueConfig(run_dir=run_dir, workers=workers, episodes_per_triple=max(2, workers),
                        target_steps_per_net=1_000_000_000_000,
                        ancestor_opponent_prob=0.7, descendant_opponent_prob=0.0,
@@ -330,7 +338,7 @@ def _install_meta_pool(trainer, run_dir: str, meta_ids: list):
 
 
 def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
-                 *, workers: int = 6) -> dict:
+                 *, workers: int = 0) -> dict:
     """teamplay — train a team's 3 starter nets JOINTLY as one controlled team (any factions),
     vs ancestors+scripted. The faction-balanced _triples scheduler is overridden to pin the one
     real roster triple; all three nets are saved (they all belong to the team)."""
@@ -345,7 +353,7 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
     if len(ids) < 3 or any(i not in by_id for i in ids):
         raise ValueError(f"cotrain needs 3 nets with checkpoints in {run_dir}, got {net_ids!r}")
     descendants = [by_id[i] for i in ids]
-    workers = max(1, int(workers))
+    workers = max(1, int(workers) or _train_workers())
     cfg = LeagueConfig(run_dir=run_dir, workers=workers, episodes_per_triple=max(2, workers),
                        target_steps_per_net=1_000_000_000_000,
                        ancestor_opponent_prob=0.7, descendant_opponent_prob=0.0)
@@ -390,7 +398,7 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
 
 
 def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None,
-             *, workers: int = 6) -> dict:
+             *, workers: int = 0) -> dict:
     """create_player — spawn a NEW unique child from a parent: clone the parent's weights, perturb
     them (Gaussian, for a unique behaviour + warm start), assign a fresh spec (unique genotype_hash),
     mini-train it vs ancestors+scripted, save under the child net_id, and append it to the registry."""
@@ -447,7 +455,7 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
             continue
         partners.append(next(d for d in pop if d.faction == fac and d.net_id != parent_net_id))
     descendants = [child, *partners]
-    workers = max(1, int(workers))
+    workers = max(1, int(workers) or _train_workers())
     cfg = LeagueConfig(run_dir=run_dir, workers=workers, episodes_per_triple=max(2, workers),
                        target_steps_per_net=1_000_000_000_000,
                        ancestor_opponent_prob=0.7, descendant_opponent_prob=0.0)
@@ -489,7 +497,7 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
 
 
 def fork_rookie_net(run_dir: str, world: dict, rookie_player_id: str, steps_goal: int, *,
-                    manifest_path=None, workers: int = 6, progress_cb=None) -> dict:
+                    manifest_path=None, workers: int = 0, progress_cb=None) -> dict:
     """The FULL rookie-training pipeline (this is what was missing). Fork a UNIQUE net from the rookie's
     PARENT net via real PPO, REGISTER it in the manifest so net_match can resolve it, then BIND it to
     the rookie (net_id/faction/archetype/generation/parent) and re-derive its card. After this the

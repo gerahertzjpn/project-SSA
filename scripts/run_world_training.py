@@ -26,7 +26,7 @@ def main() -> None:
     ap.add_argument("world_id")
     ap.add_argument("--skill-steps", type=int, default=800_000)
     ap.add_argument("--rookie-steps", type=int, default=1_300_000)
-    ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--workers", type=int, default=0, help="0 = use the whole machine")
     ap.add_argument("--skill-nets", default="", help="comma net_ids to skill-train")
     ap.add_argument("--rookies", default="", help="comma rookie player_ids to fork")
     args = ap.parse_args()

@@ -655,8 +655,7 @@ def start_rookie_fork_job(world_id: str, rookie_player_id: str, steps: int) -> s
                     faction, archetype = parent.get("faction"), parent.get("archetype")
                 if not parent_net:
                     raise ValueError(f"rookie {rookie_player_id} has no parent net")
-                res = backends.fork_net(TRAINING_RUN_DIR, parent_net, steps, progress,
-                                        workers=_world_workers())   # hours, NO world lock held
+                res = backends.fork_net(TRAINING_RUN_DIR, parent_net, steps, progress)  # full machine, no lock
                 new_net = res["net_id"]
                 net_match.register_forked_net(str(FROZEN_POP), new_net, faction,
                                               f"{TRAINING_RUN_DIR}/nets/{new_net}/latest.pt", archetype)

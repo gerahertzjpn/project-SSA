@@ -20,7 +20,7 @@ fair-RELATIVE; defense/economy are clean per-net (own core_hp / own buildings).
     python scripts/derive_player_cards.py --games 15       # full 108-net run
 """
 from __future__ import annotations
-import argparse, json, math, statistics, sys, time
+import argparse, json, math, os, statistics, sys, time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -117,6 +117,35 @@ def clamp100(x):
     return int(round(max(0.0, min(1.0, x)) * 100))
 
 
+def _derive_one(net, idx, teammates, opponents, N, N_c, step):
+    """Full gauntlet for ONE net (top-level so it's picklable for a process pool). Deterministic:
+    fixed cast + fixed per-game seeds, identical to the sequential path."""
+    push = [play(idx, net, teammates, opponents, "all_in", 1000 + g) for g in range(N)]
+    turt = [play(idx, net, teammates, opponents, "turtle", 2000 + g) for g in range(N)]
+    free = [play(idx, net, teammates, opponents, None, 3000 + g) for g in range(N)]
+    trio_wr = []
+    for ti, opp in enumerate(CONSISTENCY_TRIOS):
+        gms = [play(idx, net, teammates, opp, None, 4000 + ti * 100 + g) for g in range(N_c)]
+        trio_wr.append(statistics.mean(g["won"] for g in gms))
+    raw_attack = statistics.mean(p["core_dmg"] for p in push)
+    raw_defense = statistics.mean(p["own_hp"] for p in turt)
+    raw_tempo = statistics.mean(p["core_dmg"] / p["ticks"] for p in push)
+    tech_ww = statistics.mean((g["tier"] / 2.0) * (1.0 if g["won"] else 0.5) for g in free)
+    raw_eco = statistics.mean(g["eco"] for g in free)
+    raw_res = statistics.mean(g["res"] for g in free)
+    economy = 0.5 * tech_ww + 0.3 * (raw_eco / REF_ECO_BLD) + 0.2 * (raw_res / REF_RES)
+    spread = statistics.pstdev(trio_wr) if len(trio_wr) > 1 else 0.0
+    consistency = 1.0 - min(1.0, 2.0 * spread)
+    pot = 1.0 - (math.log10(max(step, 1) / POT_MIN_STEPS) / math.log10(POT_MAX_STEPS / POT_MIN_STEPS))
+    return {"attack": clamp100(raw_attack / REF_ATTACK), "defense": clamp100(raw_defense / REF_OWN_CORE),
+            "economy": clamp100(economy), "tempo": clamp100(raw_tempo / REF_TEMPO_RATE),
+            "consistency": clamp100(consistency), "potential": clamp100(pot),
+            "raw": {"attack_dmg": round(raw_attack, 1), "defense_hp": round(raw_defense, 1),
+                    "tempo_rate": round(raw_tempo, 3), "tech_ww": round(tech_ww, 3),
+                    "eco_bld": round(raw_eco, 2), "res": round(raw_res, 1),
+                    "trio_winrates": [round(w, 2) for w in trio_wr], "steps": int(step)}}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--smoke", action="store_true")
@@ -124,6 +153,7 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--nets", default="", help="comma net_ids to (re)derive; merges into OUT")
     ap.add_argument("--alt-cast", action="store_true", help="alternate reference cast (to card the default cast)")
+    ap.add_argument("--workers", type=int, default=0, help="parallel net workers (0 = whole machine)")
     args = ap.parse_args()
     N = 4 if args.smoke else args.games
     N_c = max(2, N // 3)          # games per opponent-trio for the consistency spread
@@ -157,42 +187,27 @@ def main():
         if args.smoke: nets = nets[:6]
         elif args.limit: nets = nets[:args.limit]
 
-    print(f"deriving {len(nets)} cards — N={N}/order (Олл-ин/Черепаха/free) vs fixed cast ...")
+    W = args.workers or (os.cpu_count() or 4)
+    print(f"deriving {len(nets)} cards — N={N}/order (Олл-ин/Черепаха/free) vs fixed cast, {W} workers ...")
     cards, t0 = {}, time.time()
-    for i, net in enumerate(nets):
-        push = [play(idx, net, teammates, opponents, "all_in", 1000 + g) for g in range(N)]
-        turt = [play(idx, net, teammates, opponents, "turtle", 2000 + g) for g in range(N)]
-        free = [play(idx, net, teammates, opponents, None, 3000 + g) for g in range(N)]
-        # consistency: winrate vs each of several DIFFERENT opponent trios; low spread = stable.
-        trio_wr = []
-        for ti, opp in enumerate(CONSISTENCY_TRIOS):
-            gms = [play(idx, net, teammates, opp, None, 4000 + ti * 100 + g) for g in range(N_c)]
-            trio_wr.append(statistics.mean(g["won"] for g in gms))
-
-        raw_attack = statistics.mean(p["core_dmg"] for p in push)
-        raw_defense = statistics.mean(p["own_hp"] for p in turt)
-        raw_tempo = statistics.mean(p["core_dmg"] / p["ticks"] for p in push)
-        tech_ww = statistics.mean((g["tier"] / 2.0) * (1.0 if g["won"] else 0.5) for g in free)
-        raw_eco = statistics.mean(g["eco"] for g in free)
-        raw_res = statistics.mean(g["res"] for g in free)
-        economy = 0.5 * tech_ww + 0.3 * (raw_eco / REF_ECO_BLD) + 0.2 * (raw_res / REF_RES)
-        spread = statistics.pstdev(trio_wr) if len(trio_wr) > 1 else 0.0
-        consistency = 1.0 - min(1.0, 2.0 * spread)         # spread 0 -> 100, spread .5 -> 0
-        st = steps.get(net, POT_MAX_STEPS)
-        pot = 1.0 - (math.log10(max(st, 1) / POT_MIN_STEPS) / math.log10(POT_MAX_STEPS / POT_MIN_STEPS))
-        cards[net] = {"attack": clamp100(raw_attack / REF_ATTACK), "defense": clamp100(raw_defense / REF_OWN_CORE),
-                      "economy": clamp100(economy), "tempo": clamp100(raw_tempo / REF_TEMPO_RATE),
-                      "consistency": clamp100(consistency), "potential": clamp100(pot),
-                      "raw": {"attack_dmg": round(raw_attack, 1), "defense_hp": round(raw_defense, 1),
-                              "tempo_rate": round(raw_tempo, 3), "tech_ww": round(tech_ww, 3),
-                              "eco_bld": round(raw_eco, 2), "res": round(raw_res, 1),
-                              "trio_winrates": [round(w, 2) for w in trio_wr],
-                              "steps": int(st)}}
-        if args.smoke or (i + 1) % 10 == 0:
-            c = cards[net]
-            print(f"  [{i+1}/{len(nets)}] {net:<26} {role_by.get(net,''):<8} "
-                  f"atk{c['attack']:>3} def{c['defense']:>3} eco{c['economy']:>3} "
-                  f"tmp{c['tempo']:>3} con{c['consistency']:>3} pot{c['potential']:>3}  {time.time()-t0:.0f}s")
+    args_by_net = {net: (net, idx, teammates, opponents, N, N_c, steps.get(net, POT_MAX_STEPS))
+                   for net in nets}
+    if W > 1 and len(nets) > 1:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        with ProcessPoolExecutor(max_workers=min(W, len(nets))) as ex:
+            futs = {ex.submit(_derive_one, *a): net for net, a in args_by_net.items()}
+            for j, fut in enumerate(as_completed(futs)):
+                net = futs[fut]
+                cards[net] = fut.result()
+                if (j + 1) % 10 == 0 or j + 1 == len(nets):
+                    print(f"  [{j+1}/{len(nets)}] {time.time()-t0:.0f}s", flush=True)
+    else:
+        for i, net in enumerate(nets):
+            cards[net] = _derive_one(*args_by_net[net])
+            if args.smoke or (i + 1) % 10 == 0:
+                c = cards[net]
+                print(f"  [{i+1}/{len(nets)}] {net:<26} {role_by.get(net,''):<8} "
+                      f"atk{c['attack']:>3} def{c['defense']:>3} tmp{c['tempo']:>3}  {time.time()-t0:.0f}s")
 
     out_cards = cards
     if args.nets and OUT.exists():                 # partial (re)derive -> merge into existing
