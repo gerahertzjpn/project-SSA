@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from src.world import valuation
 from src.world.training_ops import MIN_TRAINING_STEPS
-from src.world.world import make_player
+from src.world.world import _unique_nicknames, make_player
 
 # A rookie fork is raw-but-playable; far cheaper than a team's polished 4M create_player.
 RECOMMENDED_STEPS_PER_ROOKIE = 1_000_000
@@ -82,14 +82,21 @@ def _next_player_index(world: dict) -> int:
 
 
 def _make_rookie_card(world: dict, index: int, parent: dict, seed: int,
-                      rng: random.Random) -> dict:
-    """A raw, high-upside prospect derived from ``parent`` (attenuated skill,
-    boosted potential). net_id stays None until the backend forks the real net."""
+                      rng: random.Random, nickname: str) -> dict:
+    """A raw, high-upside prospect derived from ``parent`` (attenuated skill, boosted potential).
+
+    The rookie INHERITS the parent's net (net_id + faction + archetype) so it is immediately playable —
+    it can grind SoloQ from its first season instead of sitting net-less. (A unique fork can later
+    specialise it; sharing the parent net is the safe, always-resolvable baseline so it actually plays.)"""
     wid = world["world_id"]
-    p = make_player(wid, index, f"Rookie{index:03d}", rng, tier=0.35,
-                    origin="rookie_fork", parent_id=parent["player_id"],
-                    generation=parent.get("lineage", {}).get("generation", 0) + 1)
+    gen = parent.get("lineage", {}).get("generation", 0) + 1
+    p = make_player(wid, index, nickname, rng, tier=0.35,
+                    origin="rookie_fork", parent_id=parent["player_id"], generation=gen,
+                    net_id=parent.get("net_id"), faction=parent.get("faction"),
+                    archetype=parent.get("archetype"))
     p["status"] = "rookie"
+    p["generation"] = gen                      # top-level lineage (registry/uniqueness tracking)
+    p["parent_ids"] = [parent["player_id"]]
     p["soloq_rating"] = 930.0        # raw: starts below average, must prove itself
     # inherit a faded echo of the parent's profile, with high upside
     pa = parent.get("attributes", {})
@@ -111,12 +118,18 @@ def generate_rookies(world: dict, budget: RookieBudget, *, seed: int = 0) -> dic
         return {"created": [], "n": 0, "note": "no eligible parents"}
     rng.shuffle(parents)
 
+    # Real, unique gamer-tags (never the old "Rookie<NNN>" placeholder). Draw n_rookies + used names so
+    # that after excluding handles already in the world at least n_rookies remain free; deterministic by seed.
+    used = {p.get("nickname") for p in world["players"].values()}
+    pool_nicks = [nm for nm in _unique_nicknames(budget.n_rookies + len(used), rng) if nm not in used]
+
     created, plan, parent_of = [], [], {}
     idx = _next_player_index(world)
     for i in range(budget.n_rookies):
         parent = world["players"][parents[i % len(parents)]]
         rseed = ROOKIE_SEED_BASE + seed * 1000 + i      # unique seed per rookie
-        card = _make_rookie_card(world, idx + i, parent, rseed, rng)
+        nick = pool_nicks[i] if i < len(pool_nicks) else f"Prospect{idx + i}"
+        card = _make_rookie_card(world, idx + i, parent, rseed, rng, nick)
         world["players"][card["player_id"]] = card
         world.setdefault("rookies_pool", []).append(card["player_id"])
         created.append(card["player_id"])

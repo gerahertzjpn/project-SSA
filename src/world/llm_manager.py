@@ -311,6 +311,16 @@ def auction_max_bids(world: dict, team_ids: list[str], item_value: int, *,
     """L1: each team's max bid for a training gradeslot. LLM decides whether/how much to bid
     (0 = pass) when active; else (or on failure) the character heuristic ``manager.auction_bid``,
     with a fallback notification. The CODE then runs the sealed auction (auction_one_training)."""
+    teams = [world["teams"][t] for t in team_ids]
+
+    def _roster_str(t: dict) -> float:
+        rs = [world["players"][p]["soloq_rating"] for p in t.get("roster", []) if p in world["players"]]
+        return (sum(rs) / len(rs)) if rs else 1000.0
+
+    treas = [float(t.get("treasury", 0)) for t in teams] or [0.0]
+    rstr = [_roster_str(t) for t in teams] or [1000.0]
+    league_ctx = {"avg_treasury": sum(treas) / len(treas), "avg_roster": sum(rstr) / len(rstr)}
+
     bids = {}
     for tid in team_ids:
         team = world["teams"][tid]
@@ -318,7 +328,7 @@ def auction_max_bids(world: dict, team_ids: list[str], item_value: int, *,
         bid = None
         if _active(llm):
             try:
-                bid = _llm_auction_bid(world, team, llm, item_value, profile)
+                bid = _llm_auction_bid(world, team, llm, item_value, profile, league_ctx, _roster_str(team))
             except Exception as exc:
                 events.fallback(feed, f"train-bid:{tid}", str(exc))
         if bid is None:
@@ -327,20 +337,36 @@ def auction_max_bids(world: dict, team_ids: list[str], item_value: int, *,
     return bids
 
 
-def _llm_auction_bid(world: dict, team: dict, llm, item_value: int, profile) -> int:
+def _llm_auction_bid(world: dict, team: dict, llm, item_value: int, profile, league_ctx: dict,
+                     my_roster: float) -> int:
+    """A STRATEGIC, per-club bid. Each manager judges its OWN situation (wealth, roster strength,
+    league, character) so bids genuinely VARY — a weak/ambitious/rich club splurges, a strong/frugal
+    one saves or passes — instead of everyone copying one shared anchor."""
     roster = ", ".join(f"{world['players'][pid]['nickname']}"
                        f"(SoloQ{int(world['players'][pid]['soloq_rating'])})"
                        for pid in team["roster"]) or "пусто"
-    # NB: the structured-output API rejects "minimum"/"maximum" on integer — clamp in code instead.
+    avg_t, avg_r = league_ctx["avg_treasury"], league_ctx["avg_roster"]
+    treasury = float(team.get("treasury", 0))
+    wealth = ("богатая" if treasury > avg_t * 1.15 else "бедная" if treasury < avg_t * 0.85 else "средняя")
+    strength = ("сильный" if my_roster > avg_r + 25 else "слабый" if my_roster < avg_r - 25 else "средний")
+    lg = "высшая" if team.get("league") == "upper" else "низшая"
+    # manager character drives WILLINGNESS to pay (aggressive/risky overpay, frugal save)
+    char = (f"агрессия {profile.aggression:.0%}, риск {profile.risk:.0%}, "
+            f"бережливость {profile.frugality:.0%}")
     schema = {"type": "object", "additionalProperties": False,
               "properties": {"max_bid": {"type": "integer"}, "reason": {"type": "string"}},
               "required": ["max_bid"]}
-    prompt = (f"Аукцион тренировок. Клуб {team['name']}. Казна: {team['treasury']}. "
-              f"Состав: {roster}. Ориентир стоимости слота: ~{item_value} "
-              f"({training_auction.DEFAULT_SLOT_STEPS:,} шагов тренировки).\n"
-              f"Решаешь, СТОИТ ли побороться за слот тренировки и сколько максимум поставить "
-              f"(max_bid; 0 = пропустить). Усиливай клуб к титулу, не разоряя казну.")
-    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=200)
+    prompt = (f"Закрытый аукцион тренировочных слотов (1 слот = {training_auction.DEFAULT_SLOT_STEPS:,} "
+              f"шагов PPO для одного из твоих игроков). Клуб {team['name']} — {lg} лига.\n"
+              f"ТВОЯ СИТУАЦИЯ: казна {int(treasury)} ({wealth}; средняя по лиге ~{int(avg_t)}). "
+              f"Состав {strength} (твой ср. SoloQ {int(my_roster)} vs лига ~{int(avg_r)}): {roster}.\n"
+              f"ТВОЙ ХАРАКТЕР: {char}.\n"
+              f"РЕШИ САМ, сколько слот стоит ИМЕННО ТЕБЕ сейчас, исходя из твоей ситуации и амбиций — "
+              f"НЕ копируй чужой ориентир и не ставь шаблонный процент от казны. Слабому/амбициозному "
+              f"клубу тренировка ценнее (ставь выше, можно перебить рынок); сильному/бережливому — "
+              f"сэкономь или вовсе пропусти (0). Рынок примерно ~{item_value}, но это лишь грубый "
+              f"ориентир. max_bid — целое, 0 = пропуск.")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=300)
     return int(ans.get("max_bid", 0))
 
 

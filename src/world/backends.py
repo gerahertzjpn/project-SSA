@@ -61,8 +61,18 @@ def _rederive_card(net_id: str) -> None:
                     "--nets", net_id, "--games", "12"], cwd=str(root), check=False)
 
 
+def _interface_meta() -> dict:
+    """Interface metadata that PolicyBot.validate_checkpoint_compatible REQUIRES. MUST be written on
+    EVERY re-trained checkpoint — without it the net loads as (None,None,None) and every PolicyBot
+    that tries to use it raises 'incompatible policy interface' (the bug behind the skill-training
+    errors: a re-trained net could never be loaded again)."""
+    from src.training.spaces import ACTION_DIM, OBSERVATION_DIM, OBSERVATION_VERSION
+    return {"observation_version": OBSERVATION_VERSION, "observation_dim": OBSERVATION_DIM,
+            "action_dim": ACTION_DIM, "config": {"hidden_size": 128}}
+
+
 def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
-                  *, workers: int = 26, sparring: Optional[list] = None,
+                  *, workers: int = 6, sparring: Optional[list] = None,
                   order_weight: Optional[float] = None, forced_strategy: Optional[str] = None,
                   no_order_prob: Optional[float] = None, meta_opponents: Optional[list] = None) -> dict:
     """REAL single-net PPO — continue training ONE population net for ~steps_goal steps vs the
@@ -157,7 +167,8 @@ def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
         net_dir.mkdir(parents=True, exist_ok=True)
         torch.save({"policy_state": to_cpu_state_dict(net), "update": update, "net_id": net_id,
                     "genotype_hash": target.genotype_hash(),
-                    "steps_trained": int(trainer.steps_by_net[net_id])}, net_dir / "latest.pt")
+                    "steps_trained": int(trainer.steps_by_net[net_id]),
+                    **_interface_meta()}, net_dir / "latest.pt")
         _merge_registry_steps(run_dir, net_id, int(trainer.steps_by_net[net_id]), update)
         _rederive_card(net_id)
     finally:
@@ -279,7 +290,7 @@ def _install_meta_pool(trainer, run_dir: str, meta_ids: list):
 
 
 def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
-                 *, workers: int = 26) -> dict:
+                 *, workers: int = 6) -> dict:
     """teamplay — train a team's 3 starter nets JOINTLY as one controlled team (any factions),
     vs ancestors+scripted. The faction-balanced _triples scheduler is overridden to pin the one
     real roster triple; all three nets are saved (they all belong to the team)."""
@@ -321,7 +332,8 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
             net_dir.mkdir(parents=True, exist_ok=True)
             torch.save({"policy_state": to_cpu_state_dict(net), "update": update, "net_id": i,
                         "genotype_hash": by_id[i].genotype_hash(),
-                        "steps_trained": int(trainer.steps_by_net[i])}, net_dir / "latest.pt")
+                        "steps_trained": int(trainer.steps_by_net[i]),
+                        **_interface_meta()}, net_dir / "latest.pt")
             _merge_registry_steps(run_dir, i, int(trainer.steps_by_net[i]), update)
             _rederive_card(i)
     finally:
@@ -338,7 +350,7 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
 
 
 def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None,
-             *, workers: int = 26) -> dict:
+             *, workers: int = 6) -> dict:
     """create_player — spawn a NEW unique child from a parent: clone the parent's weights, perturb
     them (Gaussian, for a unique behaviour + warm start), assign a fresh spec (unique genotype_hash),
     mini-train it vs ancestors+scripted, save under the child net_id, and append it to the registry."""
@@ -386,7 +398,8 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
     child_dir = Path(run_dir) / "nets" / child.net_id
     child_dir.mkdir(parents=True, exist_ok=True)
     torch.save({"policy_state": to_cpu_state_dict(net), "update": 0, "net_id": child.net_id,
-                "genotype_hash": child.genotype_hash(), "steps_trained": 0}, child_dir / "latest.pt")
+                "genotype_hash": child.genotype_hash(), "steps_trained": 0,
+                **_interface_meta()}, child_dir / "latest.pt")
 
     # mini-train the child vs ancestors+scripted (one partner per OTHER faction -> valid triple)
     partners = []
@@ -417,7 +430,8 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
         net = trainer.nets[child.net_id]
         torch.save({"policy_state": to_cpu_state_dict(net), "update": update, "net_id": child.net_id,
                     "genotype_hash": child.genotype_hash(),
-                    "steps_trained": int(trainer.steps_by_net[child.net_id])}, child_dir / "latest.pt")
+                    "steps_trained": int(trainer.steps_by_net[child.net_id]),
+                    **_interface_meta()}, child_dir / "latest.pt")
         _append_registry_entry(run_dir, descendant_registry_entry(child),
                                int(trainer.steps_by_net[child.net_id]), update)
         _rederive_card(child.net_id)
@@ -480,14 +494,19 @@ class RealTrainingBackend(training_ops.TrainingBackend):
                   "forced_strategy": spec.strategy_bias if spec else None}
         elif op == "meta_adapt":                   # train against the current top nets (the meta)
             kw = {"meta_opponents": ctx.get("meta_opponents") or _default_meta(self.run_dir, net_id)}
-        # measure the pre-training winrate so execute()'s regression guard has a real baseline
+        # measure the pre-training winrate so execute()'s regression guard has a real baseline. This is
+        # only a diagnostic baseline — a flaky eval (e.g. an opponent checkpoint that fails to load) must
+        # NEVER abort the actual training, so it's best-effort.
         if ctx.get("op"):
             n = int(ctx.get("eval_games", 8))
             tgt_opps = ctx.get("target_opponents") or (kw.get("meta_opponents") or _general_cast(exclude=net_id))
-            ctx.setdefault("target_before", evaluate_net(net_id, tgt_opps, run_dir=self.run_dir, n_games=n))
-            ctx.setdefault("general_before",
-                           evaluate_net(net_id, _general_cast(exclude=net_id), run_dir=self.run_dir,
-                                        n_games=n, seed_base=9100))
+            try:
+                ctx.setdefault("target_before", evaluate_net(net_id, tgt_opps, run_dir=self.run_dir, n_games=n))
+                ctx.setdefault("general_before",
+                               evaluate_net(net_id, _general_cast(exclude=net_id), run_dir=self.run_dir,
+                                            n_games=n, seed_base=9100))
+            except Exception:  # noqa: BLE001 - baseline is optional; training proceeds regardless
+                pass
         return train_one_net(self.run_dir, net_id, steps, progress_cb, **kw)
 
     def cotrain(self, ctx: dict, progress_cb=None) -> dict:

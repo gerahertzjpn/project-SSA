@@ -284,6 +284,26 @@ def _reeval_trained_cards(world: dict, queue: list[dict], feed: Optional[list] =
     return updated
 
 
+def reconcile_trained_card(world: dict, net_ids: list) -> list[dict]:
+    """An ASYNC training job finished and re-derived its card(s) on disk — pull the fresh attributes
+    back onto the bound world player(s) and return the per-player before→after skill deltas. This is
+    the missing reconciliation step in the live cycle: real training runs in a background thread that
+    rewrites the card on disk, but nothing loaded it back into the world (so 'карточка пересчитана'
+    contradicted the empty 'Характеристики'). Call this on job completion + extend last_offseason.skills."""
+    from src.world.world import _load_player_cards, ATTR_KEYS
+    nids = {n for n in (net_ids or []) if n}
+    if not nids:
+        return []
+    before = {pid: dict(p.get("attributes") or {}) for pid, p in world["players"].items()
+              if p.get("net_id") in nids}
+    cards = _load_player_cards(force=True)              # re-read from disk (the job just rewrote it)
+    for p in world["players"].values():
+        nid = p.get("net_id")
+        if nid in nids and nid in cards:
+            p["attributes"] = {k: int(cards[nid][k]) for k in ATTR_KEYS if k in cards[nid]}
+    return _skill_changes(world, before)
+
+
 def _skill_changes(world: dict, before: dict) -> list[dict]:
     """Players whose card characteristics changed this off-season (trained / re-evaluated), with the
     per-attribute before→after deltas — so the UI can show WHO improved and HOW."""

@@ -584,6 +584,22 @@ def start_training_job(world_id: str, job: dict, player_name: str | None = None)
                        "net_ids": target.get("net_ids")}
                 method = getattr(be, _OP_METHOD.get(op, "continue_ppo"))
                 res = method(ctx, progress)
+                # RECONCILE: the job just re-derived the trained net's card ON DISK — pull it back into
+                # the world + record the skill delta, so "карточка пересчитана" actually shows up in
+                # the «Характеристики» tab instead of staying empty.
+                try:
+                    nids = [n for n in ([target.get("net_id"), (res or {}).get("net_id")]
+                                        + list(target.get("net_ids") or [])) if n]
+                    if nids:
+                        from src.world import offseason as _os
+                        with _world_lock(world_id):
+                            w = load_world(world_id)
+                            deltas = _os.reconcile_trained_card(w, nids)
+                            if deltas:
+                                w.setdefault("last_offseason", {}).setdefault("skills", []).extend(deltas)
+                            save_world(w)
+                except Exception:  # noqa: BLE001 - reconciliation is best-effort; training already succeeded
+                    traceback.print_exc()
                 with TRAINING_JOBS_LOCK:
                     st = TRAINING_JOBS[job_id].get("started_at")
                     TRAINING_JOBS[job_id].update(status="done", done=steps, result=res)
