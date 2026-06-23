@@ -61,6 +61,17 @@ def test_soloq_sub1000_share_one_pool():
     assert soloq.band_of(1000) == 1000 and soloq.band_of(1150) == 1100   # >=1000 unchanged
 
 
+def test_soloq_zero_sum_but_still_rewards_impact():
+    # anti-inflation: an equal-rated pool must CONSERVE total rating (was +400+/10 rounds before the
+    # mean-subtraction). Only sub-cent rounding residual is allowed.
+    ratings = {f"z{i}": 1000.0 for i in range(60)}
+    new, _ = soloq.simulate_soloq(ratings, rounds=10, seed=3)
+    assert abs(sum(new.values()) - sum(ratings.values())) < 5.0
+    # but playing well STILL earns more: a higher-impact winner gains more than a lower-impact one
+    assert (soloq.soloq_rating_delta(1000, 1000, True, 0.9)
+            > soloq.soloq_rating_delta(1000, 1000, True, 0.3))
+
+
 def test_soloq_skips_when_band_too_small():
     ratings = {f"p{i}": 1000.0 for i in range(5)}  # only 5 -> can't fill a 6-man match
     matches = soloq._round_matches(ratings, random.Random(0))

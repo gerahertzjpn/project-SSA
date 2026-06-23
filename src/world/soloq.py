@@ -175,11 +175,17 @@ def simulate_soloq(
             at_time = {p: round(cur[p]) for p in team_a + team_b}
             mband = band_of(cur[team_a[0]])          # the matchmaking band (floor) — shared by all 6
             a_won = winner == "A"
-            # compute every player's delta off the PRE-match ratings, then apply (teams are disjoint)
-            deltas = {pid: round(soloq_rating_delta(cur[pid], avg_b, a_won, impacts.get(pid, 0.5)), 2)
-                      for pid in team_a}
-            deltas.update({pid: round(soloq_rating_delta(cur[pid], avg_a, not a_won, impacts.get(pid, 0.5)), 2)
-                           for pid in team_b})
+            # compute every player's impact-modulated delta off the PRE-match ratings (teams disjoint)
+            raw = {pid: soloq_rating_delta(cur[pid], avg_b, a_won, impacts.get(pid, 0.5)) for pid in team_a}
+            raw.update({pid: soloq_rating_delta(cur[pid], avg_a, not a_won, impacts.get(pid, 0.5))
+                        for pid in team_b})
+            # ANTI-INFLATION (zero-sum per match): the impact boost (winners skew high) + any base
+            # imbalance inject a net surplus into the pool, so ratings drift UP over time. Remove it by
+            # subtracting the mean delta -> the 6 deltas sum to ~0 (points won == points lost). Subtracting
+            # a CONSTANT preserves the gaps between players, so a high-impact winner still gains the most
+            # and a low-impact loser still loses the most ("play well -> more pts"); only the drift dies.
+            mean_d = sum(raw.values()) / len(raw)
+            deltas = {pid: round(d - mean_d, 2) for pid, d in raw.items()}
             for pid in team_a + team_b:
                 cur[pid] += deltas[pid]
             if record:                                  # store ALL 6 ratings+deltas in each entry so the
