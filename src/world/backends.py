@@ -80,11 +80,12 @@ def _train_workers() -> int:
 
 
 def make_training_pool(workers: int = 0):
-    """A spawn worker pool REUSABLE across many training jobs in one off-season. The Windows process
-    spawn (re-import torch + load checkpoints per worker) costs ~minutes; creating the pool ONCE and
-    handing it to every job pays that once instead of per job (~7 min saved per extra job). Safe to
-    share because run_update's tasks are self-contained (each carries its own net weights), and each
-    task re-sets torch threads itself. Returns None when workers<=1 (callers then run inline)."""
+    """A spawn worker pool REUSABLE across many training jobs in one off-season. On Windows (no fork)
+    each worker is a fresh interpreter that re-imports torch (~1-3s each, in parallel) -> the whole
+    pool spawn is tens of seconds, NOT minutes (measured), and it does NOT load checkpoints per worker:
+    net weights ride in each self-contained run_update task. Creating the pool ONCE and handing it to
+    every job still pays that spawn once instead of per job. Safe to share because the tasks carry their
+    own weights and re-set torch threads. Returns None when workers<=1 (callers then run inline)."""
     import multiprocessing as mp
     from src.training.league_trainer import _init_worker
     workers = max(1, int(workers) or _train_workers())
@@ -99,6 +100,10 @@ def _spec_from_registry_entry(e: dict):
     genotype_hash matches the original — it can be trained/forked exactly like a roster net."""
     from src.training.population_roster import DescendantSpec
     oc = e.get("opponent_curriculum") or {}
+    # older fork rows (g2/g3 nets) didn't persist the curriculum -> rebuild it as an even split rather
+    # than an EMPTY tuple, which makes the trainer's _pick_ancestors do rng.choice([]) and crash.
+    curri = tuple((k, float(v)) for k, v in oc.items()) or \
+        (("humans", 0.333), ("infected", 0.333), ("robots", 0.334))
     return DescendantSpec(
         net_id=e["net_id"], faction=e["faction"], parent_id=(e.get("parent_ids") or [""])[0] or "",
         generation=int(e.get("generation", 1)), seed=int(e.get("seed", 0)),
@@ -107,7 +112,7 @@ def _spec_from_registry_entry(e: dict):
         gae_lambda=float(e.get("gae_lambda", 0.95)), hidden_size=int(e.get("hidden_size", 128)),
         order_shaping_weight=float(e.get("order_shaping_weight", 0.0)),
         core_progress_weight=float(e.get("core_progress_weight", 0.0)),
-        opponent_curriculum=tuple((k, float(v)) for k, v in oc.items()),
+        opponent_curriculum=curri,
         strategy_bias=e.get("strategy_bias", "standard"),
         free_agent=bool(e.get("free_agent", False)), plays_league=bool(e.get("plays_league", True)),
         signable=bool(e.get("signable", True)), in_soloq=bool(e.get("in_soloq", True)),
@@ -423,26 +428,37 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
     import numpy as np
     import torch
     from src.training.league_trainer import LeagueTrainer, LeagueConfig, FACTIONS, _init_worker
-    from src.training.population_roster import build_population, respawn_descendant, descendant_registry_entry
+    from src.training.population_roster import (build_population, respawn_descendant,
+                                                descendant_registry_entry, DEFAULT_ARCHETYPES)
     from src.training.policy import MaskedActorCritic, to_cpu_state_dict
 
     by_id = _pop_index(run_dir)        # frozen pop + on-disk forks, so a rookie can fork from a g2 parent
     parent = by_id.get(parent_net_id)
-    if parent is None:
-        raise ValueError(f"parent {parent_net_id!r} has no checkpoint in {run_dir}")
-    parent_ckpt = Path(run_dir) / "nets" / parent_net_id / "latest.pt"
+    if parent is not None:                         # a league descendant / on-disk fork (this run-dir)
+        parent_ckpt = Path(run_dir) / "nets" / parent_net_id / "latest.pt"
+        faction, base_arch = parent.faction, parent.archetype
+        recipe = {"learning_rate": parent.learning_rate, "entropy_coef": parent.entropy_coef,
+                  "clip_coef": parent.clip_coef, "gae_lambda": parent.gae_lambda}
+        gen = parent.generation + 1
+    else:                                          # a "streamer" ANCESTOR: lives in a DIFFERENT run-dir;
+        from src.training.population import build_default_population   # resolve checkpoint via the manifest
+        anc = next((a for a in build_default_population() if a.net_id == parent_net_id), None)
+        parent_ckpt = _manifest_checkpoint(parent_net_id)
+        if anc is None or parent_ckpt is None:
+            raise ValueError(f"parent {parent_net_id!r} not found among descendants or ancestors")
+        faction, base_arch = anc.faction, DEFAULT_ARCHETYPES[0].name   # ancestors carry no archetype
+        recipe = {"learning_rate": anc.learning_rate, "entropy_coef": anc.entropy_coef,
+                  "clip_coef": anc.clip_coef, "gae_lambda": anc.gae_lambda}
+        gen = 1                                     # ancestors are generation 0 -> child is gen 1
     if not parent_ckpt.exists():
         raise FileNotFoundError(f"parent checkpoint missing: {parent_ckpt}")
 
     existing = {d.genotype_hash() for d in by_id.values()}
-    recipe = {"learning_rate": parent.learning_rate, "entropy_coef": parent.entropy_coef,
-              "clip_coef": parent.clip_coef, "gae_lambda": parent.gae_lambda}
     seed = (abs(hash(parent_net_id)) % (2**31 - 1)) or 1
     rng = np.random.default_rng(seed)
-    gen = parent.generation + 1
     child = None
     for k in range(1, 1000):                       # find a fresh net_id + unique genotype
-        cand = respawn_descendant(parent.faction, parent_net_id, parent.archetype, gen, k,
+        cand = respawn_descendant(faction, parent_net_id, base_arch, gen, k,
                                   rng, existing, recipe)
         if cand.net_id not in by_id:
             child = cand
@@ -470,7 +486,8 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
     for fac in FACTIONS:
         if fac == child.faction:
             continue
-        partners.append(next(d for d in pop if d.faction == fac and d.net_id != parent_net_id))
+        partners.append(next(d for d in by_id.values()
+                             if d.faction == fac and d.net_id != parent_net_id))
     descendants = [child, *partners]
     workers = max(1, int(workers) or _train_workers())
     cfg = LeagueConfig(run_dir=run_dir, workers=workers, episodes_per_triple=max(2, workers),
@@ -499,6 +516,11 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
                     **_interface_meta()}, child_dir / "latest.pt")
         _append_registry_entry(run_dir, descendant_registry_entry(child),
                                int(trainer.steps_by_net[child.net_id]), update)
+        # register in the population manifest BEFORE re-deriving — the card gauntlet resolves the net's
+        # OWN checkpoint via the manifest, so a fresh, not-yet-registered fork KeyErrors on its net_id.
+        from src.world import net_match
+        net_match.register_forked_net(None, child.net_id, child.faction,
+                                      str(child_dir / "latest.pt"), child.archetype)
         _rederive_card(child.net_id)
     finally:
         if own_pool and pool is not None:
@@ -562,6 +584,15 @@ def _append_registry_entry(run_dir: str, entry: dict, steps: int, update: int) -
 # default broad opponent cast for the evaluate guard (resolved per-faction from the manifest)
 def _general_cast(exclude=()) -> list:
     return _one_per_faction(_manifest_index(), exclude=set(exclude))
+
+
+def _manifest_checkpoint(net_id: str):
+    """Resolve a net's checkpoint Path from the population manifest. Ancestors ("streamers") live in a
+    DIFFERENT run-dir than the league descendants, so a rookie forking from a streamer parent can't
+    assume run_dir/nets/<id>/latest.pt — the manifest is the source of truth. Returns None if unknown."""
+    from src.world import net_match
+    mid = net_match.net_model_index(net_match.load_manifest()).get(net_id)
+    return Path(mid.split("policy:", 1)[-1]) if mid else None
 
 
 class RealTrainingBackend(training_ops.TrainingBackend):

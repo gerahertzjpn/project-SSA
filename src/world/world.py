@@ -252,7 +252,10 @@ def seed_population_players(world_id: str, manifest: dict, rng: random.Random):
     - ANCESTORS -> 'streamer' players: permanent free agents bound to an ancestor net, SoloQ
       only, NEVER signable -> kept OUT of the draftable free-agent pool.
     """
-    descendants = manifest.get("descendants", [])
+    # rookie/child nets forked INSIDE a specific world get registered in the manifest so net_match can
+    # resolve them during play — but they are NOT part of the canonical draftable population. Exclude
+    # them when seeding a NEW world, else one world's rookies would debut as pros in another.
+    descendants = [e for e in manifest.get("descendants", []) if e.get("origin") != "rookie_fork"]
     ancestors = manifest.get("ancestors", [])
     cards = _load_player_cards()                  # net_id -> {attack, defense, ...} or {}
     nicks = _unique_nicknames(len(descendants) + len(ancestors), rng)

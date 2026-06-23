@@ -270,7 +270,7 @@ class LeagueTrainer:
         return [tuple(by_fac[f][i] for f in FACTIONS) for i in range(n)]
 
     def _pick_ancestors(self, curriculum, rng):
-        weights = dict(curriculum)
+        weights = dict(curriculum) or {f: 1.0 for f in FACTIONS}  # empty curriculum -> even, never choice([])
         facs = list(weights)
         probs = np.array([weights[f] for f in facs], dtype=float)
         probs = probs / probs.sum()

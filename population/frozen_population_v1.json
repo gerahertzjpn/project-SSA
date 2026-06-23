@@ -1824,6 +1824,33 @@
       "free_agent": false,
       "checkpoint": "training_runs/league_population_v1/nets/infected_skirmisher_g2_11/latest.pt",
       "checkpoint_sha256_16": "295295fb59d01d0f"
+    },
+    {
+      "net_id": "infected_skirmisher_g3_1",
+      "faction": "infected",
+      "checkpoint": "training_runs/league_population_v1/nets/infected_skirmisher_g3_1/latest.pt",
+      "archetype": "skirmisher_g2x11",
+      "role": "player",
+      "persona": "pro",
+      "origin": "rookie_fork"
+    },
+    {
+      "net_id": "robots_skirmisher_g1_1",
+      "faction": "robots",
+      "checkpoint": "training_runs/league_population_v1/nets/robots_skirmisher_g1_1/latest.pt",
+      "archetype": "base",
+      "role": "player",
+      "persona": "pro",
+      "origin": "rookie_fork"
+    },
+    {
+      "net_id": "robots_skirmisher_g1_2",
+      "faction": "robots",
+      "checkpoint": "training_runs/league_population_v1/nets/robots_skirmisher_g1_2/latest.pt",
+      "archetype": "base",
+      "role": "player",
+      "persona": "pro",
+      "origin": "rookie_fork"
     }
   ],
   "ancestors": [
