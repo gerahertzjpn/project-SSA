@@ -1277,24 +1277,34 @@ async function watchMatch(home, away, gid) {  // watch ONE match live (one-time)
   try {
     const { result, live } = await apiPost("/live/watch", { home, away });
     const maps = bcastMaps(result);
+    // The game is committed server-side, but DON'T touch the LIVE tab yet: the modal backdrop fades in
+    // (and is semi-transparent), so revealing the card's final score now flashes it BEHIND the эфир for
+    // ~0.5s. Defer all reveal to when the эфир modal is CLOSED (after watching) — zero spoiler leak.
+    const commitReveal = () => {
+      if (live.done && !live.active) {            // that was the season's final game
+        state.world.phase = "offseason_due";
+        flashResult(`<div class="season-done">Сезон раскрыт полностью! 🏆 ${esc((live.done || {}).upper_champion || "")} — пора в межсезонье.</div>`);
+        openWorld(state.worldId).then(() => switchTab("live"));
+        return;
+      }
+      state.world.live = live;                    // the watched game is committed: stats update now
+      state.justRevealed = gid;                   // only THIS card's score should pop (not the day's others)
+      renderLive(live);                           // card now shows its score + «посмотреть повтор»
+    };
     if (maps.some((m) => m.url)) {                // ЭФИР: настоящий матч, без перемотки/спойлеров, со скоростью
       const c = (live.day_matches || []).find((x) => String(x.gid) === String(result.gid));
       openReplayModal(maps, 0, {                  // no score => spoiler-safe broadcast scoreboard
         live: true, bestOf: result.best_of,
         home: { id: result.home, abbrev: result.home_abbrev, name: c ? c.home.name : result.home_abbrev, players: c ? c.home.players : null },
         away: { id: result.away, abbrev: result.away_abbrev, name: c ? c.away.name : result.away_abbrev, players: c ? c.away.players : null },
+        onClose: commitReveal,                    // reveal the LIVE card ONLY after the эфир is closed
       });
     } else if (bc) {
-      await playBroadcast(bc, result);            // нет записей -> единственный вариант: счёт по картам
+      await playBroadcast(bc, result);            // нет записей -> in-card счёт по картам (its own reveal)
+      commitReveal();
+    } else {
+      commitReveal();
     }
-    if (live.done && !live.active) {              // that was the season's final game
-      state.world.phase = "offseason_due";
-      flashResult(`<div class="season-done">Сезон раскрыт полностью! 🏆 ${esc((live.done || {}).upper_champion || "")} — пора в межсезонье.</div>`);
-      await openWorld(state.worldId); switchTab("live"); return;
-    }
-    state.world.live = live;                      // the watched game is committed: stats update at once
-    state.justRevealed = gid;                     // only THIS card's score should pop (not the day's others)
-    renderLive(live);                             // card now shows its score + «посмотреть повтор»
   } catch (e) {
     if (bc) bc.innerHTML = `<div class="result-error">${esc(e.message)}</div>`;
   } finally { state.busy = false; renderHeader(state.world); }
@@ -1403,6 +1413,8 @@ function openReplayModal(maps, startI, opts) {
   }
   if (modal._onKey) { document.removeEventListener("keydown", modal._onKey); modal._onKey = null; }
   if (modal._onMsg) { window.removeEventListener("message", modal._onMsg); modal._onMsg = null; }
+  if (modal._onClose) { const cb = modal._onClose; modal._onClose = null; try { cb(); } catch (e) { /* */ } }
+  modal._onClose = opts.onClose || null;        // fired on close — e.g. эфир reveals the LIVE card AFTER watching
   modal.classList.toggle("rp-live", live);
 
   const banner = (t, side) =>
@@ -1472,6 +1484,7 @@ function openReplayModal(maps, startI, opts) {
     if (modal._onKey) { document.removeEventListener("keydown", modal._onKey); modal._onKey = null; }
     if (modal._onMsg) { window.removeEventListener("message", modal._onMsg); modal._onMsg = null; }
     modal._close = null;
+    if (modal._onClose) { const cb = modal._onClose; modal._onClose = null; try { cb(); } catch (e) { /* */ } }
   }
   if (live) {                                     // эфир: map ends -> the embedded player pings us, roll the next
     let liveH = 0, liveA = 0;                                   // running series score (revealed map-by-map)
