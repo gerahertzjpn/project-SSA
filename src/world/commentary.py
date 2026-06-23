@@ -417,6 +417,27 @@ _GOAL = {
     "en": {"upper": "the title", "lower": "promotion to the upper league"},
     "ja": {"upper": "タイトル", "lower": "上位リーグへの昇格"},
 }
+# Manager comments must sound like the MANAGER speaking about their OWN club — first person, in
+# character — NOT the commentator narrating them. So they get their own persona + instruction instead
+# of reusing the Вольский commentator voice (which was turning every comment into third-person narration).
+_MGR_PERSONA = {
+    "ru": ("Ты — {mgr}, менеджер киберспортивного клуба {team} в 3v3-автобатлере. Говоришь по-русски "
+           "ОТ ПЕРВОГО ЛИЦА (я / мы / наш клуб) про СВОЮ команду: состав, новичков, план на сезон, цели "
+           "и соперников. Характер — {trait}. Только факты, что тебе дали; ничего не выдумываешь. "
+           "НИКОГДА не говоришь о себе или клубе в третьем лице и не комментируешь со стороны."),
+    "en": ("You are {mgr}, manager of the esports club {team} in a 3v3 autobattler. You speak English "
+           "in the FIRST PERSON (I / we / our club) about YOUR team: roster, newcomers, the season plan, "
+           "goals and rivals. Your character — {trait}. Only the facts you are given; invent nothing. "
+           "NEVER speak about yourself or the club in the third person, and never narrate from outside."),
+    "ja": ("あなたは3v3オートバトラーのeスポーツクラブ{team}のマネージャー{mgr}。日本語で一人称（私／我々／"
+           "我がクラブ）で自チームについて語る：ロスター、新加入、シーズンの計画、目標、ライバル。性格は{trait}。"
+           "与えられた事実のみ、捏造しない。自分やクラブを三人称で語らず、外から実況しない。"),
+}
+_MGR_SAY_INSTR = {
+    "ru": "Скажи {n} от первого лица как менеджер {team} — про свою команду, планы и цели, строго по фактам выше.",
+    "en": "Say {n} in the first person as {team}'s manager — about your team, plans and goals, strictly from the facts above.",
+    "ja": "{team}のマネージャーとして一人称で{n}述べよ — 自チーム・計画・目標について、上記の事実のみに基づいて。",
+}
 _FALLBACK_RIVAL = {"ru": "соперники", "en": "rivals", "ja": "ライバル"}
 _FALLBACK_STAR = {"ru": "наш лидер", "en": "our leader", "ja": "我々のリーダー"}
 _FALLBACK_MGR = {"ru": "Менеджер", "en": "Manager", "ja": "マネージャー"}
@@ -448,10 +469,15 @@ def manager_comments(world: dict, *, llm=None, feed: Optional[list] = None, lang
         text = _MGR_TEMPLATES[lang][idx].format(s=season, p=star, rival=rival, trait=trait, goal=goal)
         if llm is not None:
             try:
-                brief = (f"Менеджер клуба {t['name']} перед сезоном {season}. Звезда: {star}. "
-                         f"Главный соперник: {rival}. Уклон: {_TRAITS['ru'][trait_key]}. "
-                         f"Цель: {_GOAL['ru']['upper' if league == 'upper' else 'lower']}.")
-                text = _llm_say(llm, text, brief, lang=lang, n=_SAY_N_MGR[lang])
+                # facts the manager speaks FROM (his own club), then a first-person persona + instruction
+                brief = (f"Сезон {season}. Звезда твоего клуба: {star}. Главный соперник: {rival}. "
+                         f"Твой управленческий уклон: {_TRAITS['ru'][trait_key]}. "
+                         f"Цель сезона: {_GOAL['ru']['upper' if league == 'upper' else 'lower']}.")
+                persona = _MGR_PERSONA[lang].format(mgr=t.get("manager") or _FALLBACK_MGR[lang],
+                                                    team=t["name"], trait=trait)
+                instr = _MGR_SAY_INSTR[lang].format(n=_SAY_N_MGR[lang], team=t["name"])
+                out = llm.say(persona, f"{brief}\n{instr}", max_tokens=240)
+                text = (out or "").strip() or text
             except Exception as exc:
                 events.fallback(feed, f"comment:{t['team_id']}", str(exc))
         out.append({"season": season, "team_id": t["team_id"], "team": t["name"],

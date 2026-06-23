@@ -236,23 +236,46 @@ def _playbook_from_llm(ans: dict, roster: list) -> dict:
             "overrides": overrides}
 
 
+def _roster_intel(world: dict, team: dict) -> str:
+    """Per-player STRENGTH so the manager can field the best 3 + substitute intelligently: faction,
+    SoloQ rating, key attributes, and the strategy each player executes best. Without this the LLM saw
+    only names (in roster order, starters first) and just re-picked the old starters — so signings and
+    rookies, however strong, never made the lineup. Sorted by rating so the depth chart is obvious."""
+    rows = []
+    for pid in sorted(team["roster"], key=lambda x: -world["players"].get(x, {}).get("soloq_rating", 0)):
+        p = world["players"].get(pid) or {}
+        a = p.get("attributes") or {}
+        best = max(playbook.STRATEGY_IDS, key=lambda s: playbook.player_exec(p, s))
+        tag = " НОВИЧОК" if (p.get("lineage") or {}).get("origin") in ("rookie_fork", "create_player") else ""
+        rows.append(f"{p.get('nickname', '?')}({pid}) {p.get('faction', '?')} "
+                    f"R{int(p.get('soloq_rating', 1000))} "
+                    f"атк{a.get('attack', 0)}/защ{a.get('defense', 0)}/эко{a.get('economy', 0)}/"
+                    f"темп{a.get('tempo', 0)} лучш:{best}{tag}")
+    return "\n  ".join(rows)
+
+
 def _playbook_prompt(world: dict, team: dict) -> str:
     """Playbook prompt GROUNDED in past games (B): own past calls + winrate, league
-    meta, measured counters, per-position winrate, H2H vs league rivals."""
+    meta, measured counters, per-position winrate, H2H vs league rivals — PLUS the roster's
+    per-player strength so lineup + substitution choices are informed, not blind to name order."""
     league = team.get("league")
     opponents = [t["team_id"] for t in world["teams"].values()
                  if t.get("league") == league and t["team_id"] != team["team_id"]][:6]
     intel = scouting.render_intel(scouting.intel_report(world, team["team_id"], opponents))
-    roster = "; ".join(f"{world['players'][pid]['nickname']}({pid})" for pid in team["roster"])
-    return (f"Клуб {team['name']}. Ростер: {roster}.\n"
+    n = len(team["roster"])
+    return (f"Клуб {team['name']}. Состав ({n} игроков на 3 стартовых слота), по убыванию рейтинга:\n  "
+            f"{_roster_intel(world, team)}\n"
             f"--- РАЗВЕДКА (прошлые игры) ---\n{intel}\n"
-            f"--- ЗАДАЧА ---\n"
-            f"Составь ПЛЕЙБУК на турнир: базовую стратегию из {list(playbook.STRATEGY_IDS)} "
-            f"(опираясь на РАЗВЕДКУ — что реально работает у нас и в мете) + правила "
-            f"IF-THEN (по сопернику/стадии/счёту серии). ОБЯЗАТЕЛЬНО назначь стартовый состав: "
-            f"поставь 3 РАЗНЫХ игроков ростера на позиции A1/A2/A3 (base.lineup) — это твоё "
-            f"решение, кто на какой позиции играет в этом сезоне. Дополнительно можешь задать "
-            f"условные ЗАМЕНЫ (другой игрок на позицию при условии). Цель — титул верхней лиги.")
+            f"--- ЗАДАЧА ---\nСоставь ПЛЕЙБУК на турнир:\n"
+            f"1) Базовая стратегия из {list(playbook.STRATEGY_IDS)} — по РАЗВЕДКЕ (что реально работает "
+            f"у нас и в мете) И по тому, что твои игроки исполняют лучше всего (поле «лучш»).\n"
+            f"2) Стартовый состав base.lineup: 3 РАЗНЫХ игрока на A1/A2/A3 — выбери СИЛЬНЕЙШИХ под свою "
+            f"базу (рейтинг + профильные атрибуты + синергия фракций). Состав НЕ священен: если новичок "
+            f"или подписанный игрок сильнее старого старта — ставь его, иначе зачем он в клубе.\n"
+            f"3) Условные ЗАМЕНЫ (overrides): используй ГЛУБИНУ — под конкретного соперника/фракцию/счёт "
+            f"серии выводи со скамейки нужного специалиста (свой lineup в override), а не только меняй "
+            f"стратегию. Глубину состава покупают именно ради таких замен.\n"
+            f"Цель — титул верхней лиги.")
 
 
 # --------------------------------------------------------------------------- #
