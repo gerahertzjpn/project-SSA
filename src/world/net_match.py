@@ -45,6 +45,27 @@ def net_model_index(manifest: dict) -> dict[str, str]:
     }
 
 
+def register_forked_net(manifest_path, net_id: str, faction: str, checkpoint: str,
+                        archetype: Optional[str] = None) -> None:
+    """Add a freshly-forked rookie/child net to the population manifest so net_match (SoloQ + league)
+    can RESOLVE it. Without this a forked net trains into the registry but is unusable in play. Appends
+    to descendants, de-duped by net_id; clears the cached manifest so the next load sees it."""
+    import json
+    p = Path(manifest_path) if manifest_path else DEFAULT_MANIFEST
+    man = json.loads(p.read_text(encoding="utf-8"))
+    desc = man.setdefault("descendants", [])
+    if any(e.get("net_id") == net_id for e in desc):
+        for e in desc:                                  # already present -> just refresh the checkpoint
+            if e.get("net_id") == net_id:
+                e["checkpoint"] = str(checkpoint)
+    else:
+        desc.append({"net_id": net_id, "faction": faction, "checkpoint": str(checkpoint),
+                     "archetype": archetype, "role": "player", "persona": "pro",
+                     "origin": "rookie_fork"})
+    p.write_text(json.dumps(man, ensure_ascii=False, indent=2), encoding="utf-8")
+    _MANIFEST_CACHE.pop(str(p.resolve()), None)         # force a fresh load next time
+
+
 def _slot_impacts(state, slot_pids: list[tuple[str, str]]) -> dict[str, float]:
     """Per-player SoloQ impact in [0,1] (0.5 neutral) from own core survival + economy,
     scaled relative to the strongest economy in THIS match so teammates differ."""

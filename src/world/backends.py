@@ -71,6 +71,46 @@ def _interface_meta() -> dict:
             "action_dim": ACTION_DIM, "config": {"hidden_size": 128}}
 
 
+def _spec_from_registry_entry(e: dict):
+    """Rebuild a DescendantSpec from its on-disk registry row (forked children / drifted nets that
+    build_population() does not return). The genotype fields are all serialised, so the rebuilt spec's
+    genotype_hash matches the original — it can be trained/forked exactly like a roster net."""
+    from src.training.population_roster import DescendantSpec
+    oc = e.get("opponent_curriculum") or {}
+    return DescendantSpec(
+        net_id=e["net_id"], faction=e["faction"], parent_id=(e.get("parent_ids") or [""])[0] or "",
+        generation=int(e.get("generation", 1)), seed=int(e.get("seed", 0)),
+        archetype=e.get("archetype", ""), learning_rate=float(e.get("learning_rate", 3e-4)),
+        entropy_coef=float(e.get("entropy_coef", 0.01)), clip_coef=float(e.get("clip_coef", 0.2)),
+        gae_lambda=float(e.get("gae_lambda", 0.95)), hidden_size=int(e.get("hidden_size", 128)),
+        order_shaping_weight=float(e.get("order_shaping_weight", 0.0)),
+        core_progress_weight=float(e.get("core_progress_weight", 0.0)),
+        opponent_curriculum=tuple((k, float(v)) for k, v in oc.items()),
+        strategy_bias=e.get("strategy_bias", "standard"),
+        free_agent=bool(e.get("free_agent", False)), plays_league=bool(e.get("plays_league", True)),
+        signable=bool(e.get("signable", True)), in_soloq=bool(e.get("in_soloq", True)),
+        fork_source=bool(e.get("fork_source", False)), fork_origin=e.get("fork_origin", "ancestor"))
+
+
+def _pop_index(run_dir: str) -> dict:
+    """net_id -> DescendantSpec: the frozen population UNIONED with the on-disk registry, so any net
+    that has a live checkpoint (incl. *_g2_* forks bound to world players) is trainable. Fixes the
+    'net ... is not in the population roster' error caused by population drift."""
+    import json
+    from src.training.population_roster import build_population
+    by_id = {d.net_id: d for d in build_population()}
+    reg_path = Path(run_dir) / "registry.json"
+    if reg_path.exists():
+        try:
+            for e in json.loads(reg_path.read_text(encoding="utf-8")).get("entries", []):
+                nid = e.get("net_id")
+                if nid and nid not in by_id and (Path(run_dir) / "nets" / nid / "latest.pt").exists():
+                    by_id[nid] = _spec_from_registry_entry(e)
+        except Exception:  # noqa: BLE001 - a malformed registry must not break training
+            pass
+    return by_id
+
+
 def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
                   *, workers: int = 6, sparring: Optional[list] = None,
                   order_weight: Optional[float] = None, forced_strategy: Optional[str] = None,
@@ -105,10 +145,10 @@ def train_one_net(run_dir: str, net_id: str, steps_goal: int, progress_cb=None,
     from src.training.policy import to_cpu_state_dict
 
     pop = build_population()
-    by_id = {d.net_id: d for d in pop}
+    by_id = _pop_index(run_dir)        # frozen pop + on-disk forks, so drifted g2 nets are trainable
     target = by_id.get(net_id)
     if target is None:
-        raise ValueError(f"net {net_id!r} is not in the population roster")
+        raise ValueError(f"net {net_id!r} has no checkpoint in {run_dir}")
 
     # one sparring partner per OTHER faction -> exactly one faction-balanced triple
     other_facs = [f for f in FACTIONS if f != target.faction]
@@ -300,10 +340,10 @@ def cotrain_team(run_dir: str, net_ids: list, steps_goal: int, progress_cb=None,
     from src.training.population_roster import build_population
     from src.training.policy import to_cpu_state_dict
 
-    by_id = {d.net_id: d for d in build_population()}
+    by_id = _pop_index(run_dir)        # frozen pop + on-disk forks (drifted nets are trainable)
     ids = list(net_ids)[:3]
     if len(ids) < 3 or any(i not in by_id for i in ids):
-        raise ValueError(f"cotrain needs 3 roster nets present in the population, got {net_ids!r}")
+        raise ValueError(f"cotrain needs 3 nets with checkpoints in {run_dir}, got {net_ids!r}")
     descendants = [by_id[i] for i in ids]
     workers = max(1, int(workers))
     cfg = LeagueConfig(run_dir=run_dir, workers=workers, episodes_per_triple=max(2, workers),
@@ -361,16 +401,15 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
     from src.training.population_roster import build_population, respawn_descendant, descendant_registry_entry
     from src.training.policy import MaskedActorCritic, to_cpu_state_dict
 
-    pop = build_population()
-    by_id = {d.net_id: d for d in pop}
+    by_id = _pop_index(run_dir)        # frozen pop + on-disk forks, so a rookie can fork from a g2 parent
     parent = by_id.get(parent_net_id)
     if parent is None:
-        raise ValueError(f"parent {parent_net_id!r} is not in the population roster")
+        raise ValueError(f"parent {parent_net_id!r} has no checkpoint in {run_dir}")
     parent_ckpt = Path(run_dir) / "nets" / parent_net_id / "latest.pt"
     if not parent_ckpt.exists():
         raise FileNotFoundError(f"parent checkpoint missing: {parent_ckpt}")
 
-    existing = {d.genotype_hash() for d in pop}
+    existing = {d.genotype_hash() for d in by_id.values()}
     recipe = {"learning_rate": parent.learning_rate, "entropy_coef": parent.entropy_coef,
               "clip_coef": parent.clip_coef, "gae_lambda": parent.gae_lambda}
     seed = (abs(hash(parent_net_id)) % (2**31 - 1)) or 1
@@ -447,6 +486,37 @@ def fork_net(run_dir: str, parent_net_id: str, steps_goal: int, progress_cb=None
     return {"net_id": child.net_id, "parent_id": parent_net_id, "genotype_hash": child.genotype_hash(),
             "generation": child.generation, "updates": update,
             "steps_trained": int(trainer.steps_by_net[child.net_id])}
+
+
+def fork_rookie_net(run_dir: str, world: dict, rookie_player_id: str, steps_goal: int, *,
+                    manifest_path=None, workers: int = 6, progress_cb=None) -> dict:
+    """The FULL rookie-training pipeline (this is what was missing). Fork a UNIQUE net from the rookie's
+    PARENT net via real PPO, REGISTER it in the manifest so net_match can resolve it, then BIND it to
+    the rookie (net_id/faction/archetype/generation/parent) and re-derive its card. After this the
+    rookie owns its own trained net and plays SoloQ/league with it, not the parent's."""
+    from src.world import net_match
+    from src.world.offseason import reconcile_trained_card
+    rookie = world["players"][rookie_player_id]
+    parent_pid = ((rookie.get("parent_ids") or [None])[0]
+                  or (rookie.get("lineage") or {}).get("parent_id"))
+    parent = world["players"].get(parent_pid) or {}
+    parent_net = parent.get("net_id") or rookie.get("net_id")
+    if not parent_net:
+        raise ValueError(f"rookie {rookie_player_id} has no parent net to fork from")
+    res = fork_net(run_dir, parent_net, steps_goal, progress_cb, workers=workers)
+    new_net = res["net_id"]
+    faction = parent.get("faction") or rookie.get("faction")
+    archetype = parent.get("archetype") or rookie.get("archetype")
+    net_match.register_forked_net(manifest_path, new_net, faction,
+                                  f"{run_dir}/nets/{new_net}/latest.pt", archetype)
+    rookie["net_id"] = new_net
+    rookie["faction"] = faction
+    rookie["archetype"] = archetype
+    rookie["generation"] = int(res.get("generation", rookie.get("generation", 1)))
+    if parent_pid:
+        rookie["parent_ids"] = [parent_pid]
+    reconcile_trained_card(world, [new_net])            # pull the fresh card onto the rookie
+    return {**res, "rookie_id": rookie_player_id, "bound_net": new_net}
 
 
 def _append_registry_entry(run_dir: str, entry: dict, steps: int, update: int) -> None:

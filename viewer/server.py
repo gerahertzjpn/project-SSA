@@ -481,11 +481,17 @@ def start_world_offseason_job(world_id: str, settings: dict | None = None, lang:
             # NO cap on how many trainings launch — every won training runs (serially, via
             # TRAINING_SEM). The only training limit in this project is MIN_TRAINING_STEPS (800k).
             launched = [start_training_job(world_id, j, j.get("player_name")) for j in train_jobs]
+            # ALSO launch each rookie's own unique-net fork (was previously dropped, so rookies never
+            # trained). Each forks from its parent net, registers + binds the result, plays SoloQ with it.
+            rk = st.get("rookies") or {}
+            rstep = int(rk.get("steps_per_rookie", 1_300_000))
+            for rid in (rk.get("created") or []):
+                start_rookie_fork_job(world_id, rid, rstep)
             _set_world_job(job_id, status="done", phase="Межсезонье закрыто", summary={
                 "next_season": report.get("next_season"),
                 "rookies": (st.get("rookies") or {}).get("n", 0),
                 "training_auctioned": ((st.get("training", {}) or {}).get("auction") or {}).get("awarded", 0),
-                "training_launched": len(launched),
+                "training_launched": len(launched) + len(rk.get("created") or []),
                 "training_skipped": 0,
                 "chronicle": chronicle,
                 "log": [e["msg"] for e in events][:50],
@@ -605,6 +611,66 @@ def start_training_job(world_id: str, job: dict, player_name: str | None = None)
                     TRAINING_JOBS[job_id].update(status="done", done=steps, result=res)
                 if st:                           # learn this machine's real throughput for future ETAs
                     _record_measured_sps(steps / max(0.001, time.time() - st))
+            except Exception as error:  # noqa: BLE001
+                traceback.print_exc()
+                with TRAINING_JOBS_LOCK:
+                    TRAINING_JOBS[job_id].update(status="error", error=str(error))
+
+    threading.Thread(target=worker, daemon=True).start()
+    return job_id
+
+
+def start_rookie_fork_job(world_id: str, rookie_player_id: str, steps: int) -> str:
+    """Background: fork a UNIQUE net for a rookie from its parent net (real PPO), register it in the
+    manifest, then BIND it to the rookie + re-derive its card — so the rookie owns its own trained net
+    and plays SoloQ/league with it. The world lock is held only for the quick resolve + bind, NOT for
+    the hours-long fork. This is the auto-launch that was missing (rookies never trained before)."""
+    job_id = uuid.uuid4().hex
+    with TRAINING_JOBS_LOCK:
+        TRAINING_JOBS[job_id] = {"job_id": job_id, "world_id": world_id, "op": "rookie_fork",
+                                 "player": rookie_player_id, "done": 0, "total": steps,
+                                 "status": "queued", "error": None, "started_at": None}
+
+    def progress(done: int, total: int) -> None:
+        with TRAINING_JOBS_LOCK:
+            j = TRAINING_JOBS.get(job_id)
+            if j is not None:
+                j["done"] = int(done); j["total"] = int(total)
+
+    def worker() -> None:
+        with TRAINING_SEM:                       # one heavy run at a time
+            with TRAINING_JOBS_LOCK:
+                if job_id in TRAINING_JOBS:
+                    TRAINING_JOBS[job_id].update(status="running", started_at=time.time())
+            try:
+                from src.world import backends, net_match
+                from src.world.offseason import reconcile_trained_card
+                with _world_lock(world_id):       # quick: resolve the parent net
+                    w = load_world(world_id)
+                    rk = w["players"][rookie_player_id]
+                    parent_pid = ((rk.get("parent_ids") or [None])[0]
+                                  or (rk.get("lineage") or {}).get("parent_id"))
+                    parent = w["players"].get(parent_pid) or {}
+                    parent_net = parent.get("net_id") or rk.get("net_id")
+                    faction, archetype = parent.get("faction"), parent.get("archetype")
+                if not parent_net:
+                    raise ValueError(f"rookie {rookie_player_id} has no parent net")
+                res = backends.fork_net(TRAINING_RUN_DIR, parent_net, steps, progress,
+                                        workers=_world_workers())   # hours, NO world lock held
+                new_net = res["net_id"]
+                net_match.register_forked_net(str(FROZEN_POP), new_net, faction,
+                                              f"{TRAINING_RUN_DIR}/nets/{new_net}/latest.pt", archetype)
+                with _world_lock(world_id):       # quick: bind + re-card
+                    w = load_world(world_id)
+                    rk = w["players"][rookie_player_id]
+                    rk["net_id"] = new_net; rk["faction"] = faction; rk["archetype"] = archetype
+                    rk["generation"] = int(res.get("generation", rk.get("generation", 1)))
+                    if parent_pid:
+                        rk["parent_ids"] = [parent_pid]
+                    reconcile_trained_card(w, [new_net])
+                    save_world(w)
+                with TRAINING_JOBS_LOCK:
+                    TRAINING_JOBS[job_id].update(status="done", done=steps, result=res)
             except Exception as error:  # noqa: BLE001
                 traceback.print_exc()
                 with TRAINING_JOBS_LOCK:
