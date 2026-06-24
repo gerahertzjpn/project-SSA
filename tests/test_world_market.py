@@ -57,6 +57,15 @@ def test_starter_upgrade_respects_guards():
     assert b3 is None or b3["player_id"] not in transfers._core_ids(w2, w2["teams"]["SELL"])
 
 
+def test_llm_club_bids_fallback_buys_starter_upgrade():
+    # no LLM -> llm_club_transfer_bids falls back to the heuristic, which buys the strong core upgrade
+    from src.world import llm_manager
+    w = _mini_world([900, 900, 900], [1400, 1250, 1250, 800])
+    bids = llm_manager.llm_club_transfer_bids(w, llm=None)
+    bbid = next((b for b in bids if b["team_id"] == "BUY"), None)
+    assert bbid is not None and bbid["player_id"] == "s0"      # targets the strong starter-upgrade
+
+
 # -------------------------------------------------------------- transfers -- #
 def test_min_price_blocks_lowball():
     w, t1, t2, p1, p2 = _world_with_two_rostered()

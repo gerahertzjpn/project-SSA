@@ -531,7 +531,7 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
                 releases.append(ev)
                 events.emit(feed, "transfer",
                             f"{team['name']} отпустил {ev['player']} в свободные агенты", **ev)
-    club_bids = transfers.heuristic_club_transfer_bids(world)
+    club_bids = llm_manager.llm_club_transfer_bids(world, llm=llm, feed=feed)
     club_transfers = transfers.resolve_transfer_auction(world, club_bids, seed=sp.seed())
     for d in club_transfers:
         nick = world["players"][d["player_id"]]["nickname"]

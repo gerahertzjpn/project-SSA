@@ -65,3 +65,21 @@ def market_board(world: dict, team: dict, candidates: list, *, limit: int = 18) 
                     f"атк{a.get('attack', 0)}/защ{a.get('defense', 0)}/эко{a.get('economy', 0)},"
                     f"лучш:{best},цена~{transfers.fair_value(p)},vs_старт{gap:+.2f}→{verdict})")
     return "; ".join(rows) if rows else "нет доступных кандидатов по карману"
+
+
+def club_market_board(world: dict, team: dict, candidates: list, *, limit: int = 18) -> str:
+    """Render other clubs' BUYABLE players (transfers.club_transfer_candidates output) for the LLM club
+    bid: who, which club owns them, the price (paid to the seller), and the upgrade tag. Upgrades first."""
+    ranked = sorted(candidates, key=lambda c: (c.get("upgrade", False), c.get("value", 0.0)), reverse=True)[:limit]
+    rows = []
+    for c in ranked:
+        p = get_player(world, c["player_id"])
+        seller = (world.get("teams", {}).get(c["seller_id"]) or {}).get("name", c["seller_id"])
+        a = p.get("attributes") or {}
+        best = max(playbook.STRATEGY_IDS, key=lambda s: playbook.player_exec(p, s))
+        tag = "АПГРЕЙД-СТАРТА" if c.get("upgrade") else "глубина"
+        rows.append(f"{c['player_id']}:{p.get('nickname')}({p.get('faction', '?')},"
+                    f"SoloQ{int(p.get('soloq_rating', 1000))},"
+                    f"атк{a.get('attack', 0)}/защ{a.get('defense', 0)},лучш:{best},"
+                    f"клуб:{seller},цена{c['price']}→{tag})")
+    return "; ".join(rows) if rows else "нет доступных к покупке у других клубов"

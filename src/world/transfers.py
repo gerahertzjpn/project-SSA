@@ -317,50 +317,59 @@ def release_to_free_agency(world: dict, team_id: str, player_id: str) -> Optiona
     return {"player_id": player_id, "player": nickname, "from": team_id, "status": "released"}
 
 
-def heuristic_club_transfer_bids(world: dict) -> list[dict]:
-    """Club-to-club interest. Every club below the roster cap bids on the single best player it can
-    afford at another club — and it will pay UP for a genuine STARTER UPGRADE, not just bench depth.
-
-    Two tiers of target:
-      • a seller's SELLABLE (non-core) player at fair value — squad depth, as before; OR
+def club_transfer_candidates(world: dict, buyer: dict) -> list[dict]:
+    """Players at OTHER clubs the ``buyer`` could acquire, each with its price and whether it is a
+    STARTER UPGRADE. Two tiers of target:
+      • a seller's SELLABLE (non-core) player at fair value — squad depth; OR
       • a seller's CORE (starting-trio) player, but ONLY as a guarded starter-upgrade:
-          G1 the seller keeps a full trio (roster > MIN_STARTERS, i.e. has a bench replacement),
-          G2 the target is a real upgrade on the BUYER's weakest starter (sporting_value + UPGRADE_MARGIN),
+          G1 the seller keeps a full trio (roster > MIN_STARTERS — has a bench replacement),
+          G2 the target really upgrades the BUYER's weakest starter (sporting_value + UPGRADE_MARGIN),
           G3 it costs a STARTER_PREMIUM over fair value, so cores can't be raided cheaply.
-    Together the guards let clubs strengthen the FIRST TEAM (the point of the market) without anyone
-    gutting another club's trio. One bid per buyer; ``resolve_transfer_auction`` settles + pays the seller."""
+    Shared by the heuristic picker AND the LLM club-bid prompt. Returns
+    ``[{player_id, seller_id, price, upgrade, value}]`` affordable to the buyer."""
     from src.world import valuation
+    budget = buyer.get("treasury", 0)
+    ws = valuation.weakest_starter(world, buyer)
+    ws_val = valuation.sporting_value(world, ws) if ws else 0.0
+    out: list[dict] = []
+    for seller in world["teams"].values():
+        if seller["team_id"] == buyer["team_id"]:
+            continue
+        seller_core = _core_ids(world, seller)
+        seller_size = len(seller.get("roster", []))
+        for pid in seller.get("roster", []):
+            player = get_player(world, pid)
+            upgrade = False
+            if pid in seller_core:                    # buying a STARTER -> the 3 guards
+                if seller_size <= MIN_STARTERS:
+                    continue                          # G1
+                if valuation.sporting_value(world, player) < ws_val + valuation.UPGRADE_MARGIN:
+                    continue                          # G2
+                price = int(round(fair_value(player) * STARTER_PREMIUM))   # G3
+                upgrade = True
+            else:
+                price = fair_value(player)
+            if price > budget:
+                continue
+            out.append({"player_id": pid, "seller_id": seller["team_id"], "price": price,
+                        "upgrade": upgrade, "value": economy.player_value(player)})
+    return out
+
+
+def heuristic_club_transfer_bids(world: dict) -> list[dict]:
+    """Club-to-club interest (heuristic): every club below the roster cap bids on the single best player
+    it can afford at another club, preferring a genuine starter UPGRADE over bench depth. One bid per
+    buyer; ``resolve_transfer_auction`` settles contention + pays the selling club. The LLM counterpart
+    is ``llm_manager.llm_club_transfer_bids`` (same candidates, manager-reasoned)."""
     bids: list[dict] = []
     for buyer in world["teams"].values():
         if len(buyer.get("roster", [])) >= MAX_ROSTER:
             continue
-        budget = buyer.get("treasury", 0)
-        ws = valuation.weakest_starter(world, buyer)
-        ws_val = valuation.sporting_value(world, ws) if ws else 0.0
-        best = None                                   # (score, price, player_id)
-        for seller in world["teams"].values():
-            if seller["team_id"] == buyer["team_id"]:
-                continue
-            seller_core = _core_ids(world, seller)
-            seller_full = len(seller.get("roster", []))
-            for pid in seller.get("roster", []):
-                player = get_player(world, pid)
-                if pid in seller_core:                # buying a STARTER -> the 3 guards
-                    if seller_full <= MIN_STARTERS:
-                        continue                      # G1: seller would drop below a trio
-                    if valuation.sporting_value(world, player) < ws_val + valuation.UPGRADE_MARGIN:
-                        continue                      # G2: not a real upgrade for the buyer
-                    price = int(round(fair_value(player) * STARTER_PREMIUM))   # G3: premium for a core raid
-                    score = economy.player_value(player) + 1.0                 # prefer a true starter upgrade
-                else:
-                    price = fair_value(player)
-                    score = economy.player_value(player)
-                if price > budget:
-                    continue
-                if best is None or score > best[0]:
-                    best = (score, price, pid)
-        if best is not None:
-            bids.append({"team_id": buyer["team_id"], "player_id": best[2], "amount": best[1]})
+        cands = club_transfer_candidates(world, buyer)
+        if not cands:
+            continue
+        best = max(cands, key=lambda c: (c["value"] + (1.0 if c["upgrade"] else 0.0)))
+        bids.append({"team_id": buyer["team_id"], "player_id": best["player_id"], "amount": best["price"]})
     return bids
 
 

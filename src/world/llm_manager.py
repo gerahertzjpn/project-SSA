@@ -607,6 +607,61 @@ def _llm_transfer_bid(world: dict, team: dict, fas: list, llm, profile=None):
             "amount": min(amount, int(team["treasury"]))}
 
 
+def llm_club_transfer_bids(world: dict, *, llm=None, feed: Optional[list] = None) -> list[dict]:
+    """Club-to-club bids — the LLM decides whether to BUY a player from ANOTHER club to strengthen the
+    first team (a guarded starter-upgrade) or add depth, reasoned from team needs + a board of buyable
+    players. Heuristic fallback per buyer. Returns ``[{team_id, player_id, amount}]`` for
+    ``transfers.resolve_transfer_auction`` (pays the selling club). This is the conscious LLM market
+    decision that was missing — club transfers used to be heuristic-only."""
+    from src.world.world import MAX_ROSTER
+    bids = []
+    for buyer in world["teams"].values():
+        if len(buyer.get("roster", [])) >= MAX_ROSTER or buyer.get("treasury", 0) <= 0:
+            continue
+        cands = transfers.club_transfer_candidates(world, buyer)
+        if not cands:
+            continue
+        bid = None
+        if _active(llm):
+            try:
+                profile = manager.natural_profile(buyer["franchise_id"])
+                bid = _llm_club_bid(world, buyer, cands, llm, profile)
+            except Exception as exc:
+                events.fallback(feed, f"club:{buyer['team_id']}", str(exc))
+        if bid is None:                                  # heuristic: best candidate, upgrade-preferred
+            best = max(cands, key=lambda c: (c["value"] + (1.0 if c["upgrade"] else 0.0)))
+            bid = {"team_id": buyer["team_id"], "player_id": best["player_id"], "amount": best["price"]}
+        bids.append(bid)
+    return bids
+
+
+def _llm_club_bid(world: dict, buyer: dict, cands: list, llm, profile):
+    from src.world import needs
+    by_pid = {c["player_id"]: c for c in cands}
+    ids = list(by_pid)
+    schema = {"type": "object", "additionalProperties": False,
+              "properties": {"buy": {"type": "boolean"},
+                             "player_id": {"type": "string", "enum": ids},
+                             "max_bid": {"type": "integer"}, "reason": {"type": "string"}},
+              "required": ["buy"]}
+    prompt = (f"Клуб {buyer['name']}. Казна {int(buyer['treasury'])}.{_char_blurb(profile)}\n"
+              f"ТВОИ ДЫРЫ: {needs.team_needs_brief(world, buyer)}\n"
+              f"ИГРОКИ ДРУГИХ КЛУБОВ, доступные к покупке (цена платится клубу-продавцу):\n"
+              f"{needs.club_market_board(world, buyer, cands)}\n--- РЕШЕНИЕ ---\n"
+              f"Купить ли игрока у другого клуба (buy), КОГО (player_id) и макс. цену (max_bid)? Бери "
+              f"того, кто с тегом АПГРЕЙД-СТАРТА закрывает твою дыру (слабый стартер / перекос фракций / "
+              f"пробел под мету) — за реальное усиление старта переплатить не жалко. Глубину можно, но "
+              f"усиление важнее. Не покупать (buy=false) — тоже нормально.")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=240)
+    if not ans.get("buy") or ans.get("player_id") not in by_pid:
+        return None
+    cand = by_pid[ans["player_id"]]
+    amount = max(int(ans.get("max_bid") or cand["price"]), cand["price"])   # meet the (premium) price
+    if amount > int(buyer["treasury"]):
+        return None
+    return {"team_id": buyer["team_id"], "player_id": ans["player_id"], "amount": amount}
+
+
 # --------------------------------------------------------------------------- #
 # Auctions — 🔴 L2 live bidding is secondary + explicit-confirm
 # --------------------------------------------------------------------------- #
