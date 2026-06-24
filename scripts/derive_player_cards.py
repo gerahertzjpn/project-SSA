@@ -34,9 +34,12 @@ OUT = ROOT / "population" / "player_cards_v1.json"   # World reads cards from he
 LEAGUE_REG = ROOT / "training_runs" / "league_population_v1" / "registry.json"
 
 # ABSOLUTE references (tunable; raw values are saved so re-scaling needs no re-run).
-REF_ATTACK = 150.0         # core dmg of a DOMINANT attacking game (~2 enemy cores); 100 = this, head-room above
+# NB: attack/tempo are now PER-PLAYER (A1's own core damage), not team-level — so a carry's attack is
+# real and a passenger's is low. Recalibrated DOWN from the old team-level refs (measured per-player
+# mean ~47, hard-carry ~130+): a dominant individual attacking game = 100, head-room above.
+REF_ATTACK = 120.0         # A1's OWN core dmg in a dominant attacking game; 100 = this
 REF_OWN_CORE = 80.0        # full own core
-REF_TEMPO_RATE = 1.5       # core dmg / tick of a strong push
+REF_TEMPO_RATE = 1.2       # A1's OWN core dmg / tick of a strong push
 REF_ECO_BLD = 3.0          # booster/collector count that reads as "heavy economy"
 REF_RES = 30.0            # resources held that reads as "rich"
 POT_MIN_STEPS, POT_MAX_STEPS = 1_000_000.0, 200_000_000.0
@@ -104,9 +107,17 @@ def play(idx, focal, teammates, opponents, strategy_id, seed):
             if bt == "TECH_2": tier = max(tier, 2)
             elif bt == "TECH_1": tier = max(tier, 1)
             if bt in ECO_BUILDINGS: eco += 1
+    # PER-PLAYER core damage for the focal slot A1 (the net under test) — real individual attack, not
+    # the old team-level proxy. Backward-safe: an old engine state without the field falls back to team.
+    pcd = getattr(st, "core_damage_by_player", None)
+    core_dmg = (float(pcd.get("A1", 0.0)) if pcd is not None
+                else float(st.core_damage_by_team.get("TEAM_B", 0.0)))
     return {
         "won": 1.0 if r.winner == "TEAM_A" else 0.0,
-        "core_dmg": float(st.core_damage_by_team.get("TEAM_B", 0.0)),       # dmg to enemy cores
+        "core_dmg": core_dmg,                                              # A1's OWN dmg to enemy cores
+        "core_kills": int((getattr(st, "core_kills_by_player", {}) or {}).get("A1", 0)),
+        "assists": int((getattr(st, "assists_by_player", {}) or {}).get("A1", 0)),
+        "core_losses": int((getattr(st, "core_losses_by_player", {}) or {}).get("A1", 0)),
         "own_hp": max(0.0, float(getattr(p, "core_hp", 0.0) or 0.0)),
         "res": max(0.0, float(getattr(p, "resources", 0.0) or 0.0)),
         "tier": tier, "eco": eco, "ticks": max(1, int(r.total_ticks)),
@@ -130,6 +141,11 @@ def _derive_one(net, idx, teammates, opponents, N, N_c, step):
     raw_attack = statistics.mean(p["core_dmg"] for p in push)
     raw_defense = statistics.mean(p["own_hp"] for p in turt)
     raw_tempo = statistics.mean(p["core_dmg"] / p["ticks"] for p in push)
+    # per-player COMBAT stats (real, not proxies): cores finished while attacking, assists across the
+    # gauntlet, own cores lost while defending. Recorded for visibility + future card/value use.
+    raw_kills = statistics.mean(p["core_kills"] for p in push)
+    raw_assists = statistics.mean(p["assists"] for p in (push + turt + free))
+    raw_losses = statistics.mean(p["core_losses"] for p in turt)
     tech_ww = statistics.mean((g["tier"] / 2.0) * (1.0 if g["won"] else 0.5) for g in free)
     raw_eco = statistics.mean(g["eco"] for g in free)
     raw_res = statistics.mean(g["res"] for g in free)
@@ -143,6 +159,8 @@ def _derive_one(net, idx, teammates, opponents, N, N_c, step):
             "raw": {"attack_dmg": round(raw_attack, 1), "defense_hp": round(raw_defense, 1),
                     "tempo_rate": round(raw_tempo, 3), "tech_ww": round(tech_ww, 3),
                     "eco_bld": round(raw_eco, 2), "res": round(raw_res, 1),
+                    "core_kills": round(raw_kills, 2), "assists": round(raw_assists, 2),
+                    "core_losses": round(raw_losses, 2),
                     "trio_winrates": [round(w, 2) for w in trio_wr], "steps": int(step)}}
 
 

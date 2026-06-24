@@ -152,6 +152,14 @@ class GameState:
     # ongoing persistent battles: "node:<id>" or "edge:<a>|<b>" -> Battle
     active_battles: dict = field(default_factory=dict)
 
+    # Per-player COMBAT attribution (NOT death-time/environment). player_id -> value. Filled in
+    # _record_core_combat_damage; read once at match end by net_match._slot_impacts + derive_player_cards.
+    # Backward-safe: defaulted, so old worlds/replays that never set them still work.
+    core_damage_by_player: dict = field(default_factory=dict)   # player_id -> float (core dmg dealt)
+    core_kills_by_player: dict = field(default_factory=dict)    # player_id -> int (enemy cores finished)
+    core_losses_by_player: dict = field(default_factory=dict)   # player_id -> int (own core lost on watch)
+    assists_by_player: dict = field(default_factory=dict)       # player_id -> int (helped finish a core)
+
 
 def _starting_units_for_faction(faction: str) -> dict:
     if faction == "infected":

@@ -3348,6 +3348,7 @@ class GameEngine:
             self._record_core_combat_damage(
                 core_owner,
                 previous_core_hp - self.state.players[core_owner].core_hp,
+                battle=battle,
             )
             lord_expended = False
             if not core_alive:
@@ -4099,7 +4100,7 @@ class GameEngine:
     def _edge_key(self, a: str, b: str) -> str:
         return f"edge:{self._edge_id(a, b)}"
 
-    def _record_core_combat_damage(self, core_owner: str, amount: float) -> None:
+    def _record_core_combat_damage(self, core_owner: str, amount: float, battle=None) -> None:
         if amount <= 0:
             return
         damaged_team = get_team(core_owner)
@@ -4108,6 +4109,37 @@ class GameEngine:
         self.state.core_damage_by_team[source_team] = (
             self.state.core_damage_by_team.get(source_team, 0.0) + float(amount)
         )
+        if battle is None:
+            return
+        # Attribute this COMBAT core damage to the attacking PLAYERS by their army's strength share.
+        # unit.team is a player_id; weight by max_hp (not current hp) so a sacrificial push that dies
+        # breaking the core isn't under-credited. Exclude objectives (CORE/NEUTRAL/BARON).
+        weights: dict = {}
+        for unit in battle.units:
+            if unit.unit_type in ("CORE", "NEUTRAL", "BARON"):
+                continue
+            if get_team(unit.team) != source_team:
+                continue
+            weights[unit.team] = weights.get(unit.team, 0.0) + float(unit.max_hp)
+        total = sum(weights.values())
+        if total <= 0:
+            return
+        for pid, w in weights.items():
+            self.state.core_damage_by_player[pid] = (
+                self.state.core_damage_by_player.get(pid, 0.0) + float(amount) * (w / total)
+            )
+        # A COMBAT core kill: the core died from this battle (death-time/environment deaths go through
+        # _destroy_core_by_environment and are NOT credited here — a timer kill is nobody's frag). The
+        # biggest contributor gets the kill, the 2nd+ contributors an assist, the owner a core loss.
+        if self.state.players[core_owner].core_hp <= 0.0:
+            killer = max(weights, key=weights.get)
+            self.state.core_kills_by_player[killer] = self.state.core_kills_by_player.get(killer, 0) + 1
+            self.state.core_losses_by_player[core_owner] = (
+                self.state.core_losses_by_player.get(core_owner, 0) + 1
+            )
+            for pid in weights:
+                if pid != killer:
+                    self.state.assists_by_player[pid] = self.state.assists_by_player.get(pid, 0) + 1
 
     def _apply_death_time_damage(self, tick_events: list) -> None:
         if self.state.tick < DEATH_TIME_START_TICK or self.state.tick >= TICK_LIMIT:
