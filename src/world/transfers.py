@@ -278,20 +278,33 @@ def _move_player_to_team(world: dict, player_id: str, team_id: str) -> None:
 # --------------------------------------------------------------------------- #
 # Releases (kicks) + club-to-club bid heuristic — used by the off-season market
 # --------------------------------------------------------------------------- #
-MIN_STARTERS = 3       # a club must keep at least a full starting trio — only the BENCH is tradeable
+MIN_STARTERS = 3       # a club must keep at least a full starting trio
+STARTER_PREMIUM = 1.4  # buying ANOTHER club's protected-core player costs this × fair value (no cheap raids)
 
 
-def _bench_players(world: dict, team: dict) -> list[str]:
-    """The surplus beyond the starting trio (roster index >= MIN_STARTERS) — the only
-    players a club may sell or release without breaking its lineup."""
-    return list(team.get("roster", [])[MIN_STARTERS:])
+def _core_ids(world: dict, team: dict) -> set:
+    """The club's protected starting core: its STRONGEST 3 by skill_score — NOT roster index 0-2.
+    (transfers used to key starter/bench on list position, which contradicted the playbook, where the
+    real lineup is the top-3 by skill: a strong player parked on the bench was wrongly 'sellable' and a
+    weak one in slot 0 was wrongly 'locked'. Skill is the single source of truth now.)"""
+    from src.world import valuation
+    roster = team.get("roster", [])
+    ranked = sorted(roster, key=lambda pid: valuation.skill_score(get_player(world, pid)), reverse=True)
+    return set(ranked[:MIN_STARTERS])
+
+
+def _sellable_players(world: dict, team: dict) -> list[str]:
+    """Everyone EXCEPT the strongest trio — the players a club may sell/release without breaking its
+    lineup (a club's core can still be bought, but only as a guarded starter-upgrade — see below)."""
+    core = _core_ids(world, team)
+    return [pid for pid in team.get("roster", []) if pid not in core]
 
 
 def release_to_free_agency(world: dict, team_id: str, player_id: str) -> Optional[dict]:
     """Cut a BENCH player loose to the free-agent pool (a 'kick'). Refuses to touch a
     starter — a club must keep its trio. Returns the event dict, or None if invalid."""
     team = world["teams"].get(team_id)
-    if team is None or player_id not in _bench_players(world, team):
+    if team is None or player_id not in _sellable_players(world, team):
         return None
     nickname = get_player(world, player_id).get("nickname")
     team["roster"].remove(player_id)
@@ -305,27 +318,47 @@ def release_to_free_agency(world: dict, team_id: str, player_id: str) -> Optiona
 
 
 def heuristic_club_transfer_bids(world: dict) -> list[dict]:
-    """Club-to-club interest: every club below the roster cap bids on the single best
-    BENCH player at another club it can afford (bid = fair value, which clears the
-    owner's accept threshold). One bid per buyer. ``resolve_transfer_auction`` then
-    settles multi-club contention and pays the selling club."""
+    """Club-to-club interest. Every club below the roster cap bids on the single best player it can
+    afford at another club — and it will pay UP for a genuine STARTER UPGRADE, not just bench depth.
+
+    Two tiers of target:
+      • a seller's SELLABLE (non-core) player at fair value — squad depth, as before; OR
+      • a seller's CORE (starting-trio) player, but ONLY as a guarded starter-upgrade:
+          G1 the seller keeps a full trio (roster > MIN_STARTERS, i.e. has a bench replacement),
+          G2 the target is a real upgrade on the BUYER's weakest starter (sporting_value + UPGRADE_MARGIN),
+          G3 it costs a STARTER_PREMIUM over fair value, so cores can't be raided cheaply.
+    Together the guards let clubs strengthen the FIRST TEAM (the point of the market) without anyone
+    gutting another club's trio. One bid per buyer; ``resolve_transfer_auction`` settles + pays the seller."""
+    from src.world import valuation
     bids: list[dict] = []
     for buyer in world["teams"].values():
         if len(buyer.get("roster", [])) >= MAX_ROSTER:
             continue
         budget = buyer.get("treasury", 0)
-        best = None                                   # (value, price, player_id)
+        ws = valuation.weakest_starter(world, buyer)
+        ws_val = valuation.sporting_value(world, ws) if ws else 0.0
+        best = None                                   # (score, price, player_id)
         for seller in world["teams"].values():
             if seller["team_id"] == buyer["team_id"]:
                 continue
-            for pid in _bench_players(world, seller):
+            seller_core = _core_ids(world, seller)
+            seller_full = len(seller.get("roster", []))
+            for pid in seller.get("roster", []):
                 player = get_player(world, pid)
-                price = fair_value(player)
+                if pid in seller_core:                # buying a STARTER -> the 3 guards
+                    if seller_full <= MIN_STARTERS:
+                        continue                      # G1: seller would drop below a trio
+                    if valuation.sporting_value(world, player) < ws_val + valuation.UPGRADE_MARGIN:
+                        continue                      # G2: not a real upgrade for the buyer
+                    price = int(round(fair_value(player) * STARTER_PREMIUM))   # G3: premium for a core raid
+                    score = economy.player_value(player) + 1.0                 # prefer a true starter upgrade
+                else:
+                    price = fair_value(player)
+                    score = economy.player_value(player)
                 if price > budget:
                     continue
-                val = economy.player_value(player)
-                if best is None or val > best[0]:
-                    best = (val, price, pid)
+                if best is None or score > best[0]:
+                    best = (score, price, pid)
         if best is not None:
             bids.append({"team_id": buyer["team_id"], "player_id": best[2], "amount": best[1]})
     return bids

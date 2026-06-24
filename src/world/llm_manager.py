@@ -60,6 +60,17 @@ def _active(llm) -> bool:
     return bool(llm) and llm_enabled()
 
 
+def _char_blurb(profile) -> str:
+    """A one-line character read so each manager's market/training/playbook decisions diverge by
+    personality (an aggressive club overpays + plays all-in; a frugal one saves; a youth club builds)."""
+    if profile is None:
+        return ""
+    g = lambda a: getattr(profile, a, 0.0)  # noqa: E731 - terse local
+    return (f" ТВОЙ ХАРАКТЕР: агрессия {g('aggression'):.0%}, риск {g('risk'):.0%}, "
+            f"бережливость {g('frugality'):.0%}, ставка на молодёжь {g('youth_focus'):.0%}, "
+            f"лояльность к составу {g('loyalty'):.0%}.")
+
+
 # --------------------------------------------------------------------------- #
 # Draft — L2 (one LLM call per pick; heuristic fallback inside balanced_draft)
 # --------------------------------------------------------------------------- #
@@ -117,9 +128,10 @@ def author_playbook(world: dict, team: dict, *, llm=None, feed: Optional[list] =
     event either way; a fallback notification when an active LLM fails."""
     plan = None
     src = "эвристика"
+    profile = profile or manager.natural_profile(team["franchise_id"])
     if _active(llm):
         try:
-            plan = playbook.set_plan(world, team["team_id"], _llm_playbook(world, team, llm))
+            plan = playbook.set_plan(world, team["team_id"], _llm_playbook(world, team, llm, profile))
             src = "ЛЛМ"
         except Exception as exc:
             # LOUD: a silent fallback here is how every playbook quietly became heuristic before.
@@ -158,7 +170,7 @@ _CONDITION_MAP = {
 }
 
 
-def _llm_playbook(world: dict, team: dict, llm) -> dict:
+def _llm_playbook(world: dict, team: dict, llm, profile=None) -> dict:
     strat_enum = list(playbook.STRATEGY_IDS)
     roster = list(team["roster"])
     # conditional substitution lineup (overrides): which player at A1/A2/A3 — PARTIAL allowed
@@ -201,7 +213,7 @@ def _llm_playbook(world: dict, team: dict, llm) -> dict:
     # Measured worst case ~950 (Haiku) / ~700 (Opus, terser); 3000 = ~3x margin. A high cap is free
     # (billed on ACTUAL output), so over-provision rather than risk truncation. Opus needs NO more here:
     # `structured` sends no `thinking` param, so there are no thinking tokens competing for the budget.
-    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, _playbook_prompt(world, team),
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, _playbook_prompt(world, team, profile),
                          schema, max_tokens=3000)
     return _playbook_from_llm(ans, roster)
 
@@ -254,16 +266,18 @@ def _roster_intel(world: dict, team: dict) -> str:
     return "\n  ".join(rows)
 
 
-def _playbook_prompt(world: dict, team: dict) -> str:
+def _playbook_prompt(world: dict, team: dict, profile=None) -> str:
     """Playbook prompt GROUNDED in past games (B): own past calls + winrate, league
     meta, measured counters, per-position winrate, H2H vs league rivals — PLUS the roster's
-    per-player strength so lineup + substitution choices are informed, not blind to name order."""
+    per-player strength so lineup + substitution choices are informed, not blind to name order,
+    PLUS the manager's character so different managers author different plans."""
     league = team.get("league")
     opponents = [t["team_id"] for t in world["teams"].values()
                  if t.get("league") == league and t["team_id"] != team["team_id"]][:6]
     intel = scouting.render_intel(scouting.intel_report(world, team["team_id"], opponents))
     n = len(team["roster"])
-    return (f"Клуб {team['name']}. Состав ({n} игроков на 3 стартовых слота), по убыванию рейтинга:\n  "
+    return (f"Клуб {team['name']}.{_char_blurb(profile)}\n"
+            f"Состав ({n} игроков на 3 стартовых слота), по убыванию рейтинга:\n  "
             f"{_roster_intel(world, team)}\n"
             f"--- РАЗВЕДКА (прошлые игры) ---\n{intel}\n"
             f"--- ЗАДАЧА ---\nСоставь ПЛЕЙБУК на турнир:\n"
@@ -480,11 +494,15 @@ def _llm_spend(world: dict, team: dict, netted: list, wallet: list, llm):
     menu = ("skill_up=общий буст; meta_adapt=ПРОТИВ топов меты; style_spec=специализация в стиле; "
             "obedience_tune=послушание приказам; teamplay=сыгранность тройки; "
             "create_player=ФОРК нового игрока от родителя")
-    prompt = (f"Клуб {team['name']}. Выиграл сертификаты тренировки: {len(wallet)} шт = "
-              f"{total:,} шагов. Игроки с нейронками:\n{rows}.\nВиды: {menu}.\n--- РЕШЕНИЕ ---\n"
-              f"Тратить ли сертификаты сейчас (spend) или отложить в банк? Если тратить — выбери "
-              f"вид (op) и КОГО (player_id; teamplay — троих в player_ids; create_player — родитель "
-              f"для форка в player_id).")
+    from src.world import needs
+    profile = manager.natural_profile(team["franchise_id"])
+    prompt = (f"Клуб {team['name']}.{_char_blurb(profile)} Выиграл сертификаты тренировки: "
+              f"{len(wallet)} шт = {total:,} шагов.\nТВОИ ДЫРЫ: {needs.team_needs_brief(world, team)}\n"
+              f"Игроки с нейронками:\n{rows}.\nВиды: {menu}.\n--- РЕШЕНИЕ ---\n"
+              f"Тратить сейчас (spend) или отложить в банк? Заземли выбор в свои ДЫРЫ: качай слабого "
+              f"стартера (skill_up), бери meta_adapt если проигрываешь мете, create_player если нужен "
+              f"новый игрок старт-уровня, teamplay для сыгранности тройки. Выбери вид (op) и КОГО "
+              f"(player_id; teamplay — троих в player_ids; create_player — родитель для форка в player_id).")
     ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=300)
     if not ans.get("spend"):
         return None
@@ -529,7 +547,7 @@ def transfer_bids(world: dict, *, llm=None, feed: Optional[list] = None) -> list
         bid = None
         if _active(llm):
             try:
-                bid = _llm_transfer_bid(world, team, fas, llm)
+                bid = _llm_transfer_bid(world, team, fas, llm, profile)
             except Exception as exc:
                 events.fallback(feed, f"transfer:{team['team_id']}", str(exc))
         if bid is None:
@@ -557,8 +575,9 @@ def _heuristic_transfer_bid(world: dict, team: dict, fas: list, profile):
     return {"team_id": team["team_id"], "player_id": p["player_id"], "amount": amount}
 
 
-def _llm_transfer_bid(world: dict, team: dict, fas: list, llm):
-    from src.world import transfers
+def _llm_transfer_bid(world: dict, team: dict, fas: list, llm, profile=None):
+    from src.world import transfers, needs
+    from src.world.world import MAX_ROSTER
     aff = _affordable(team, fas)[:30]
     if not aff:
         return None
@@ -566,15 +585,21 @@ def _llm_transfer_bid(world: dict, team: dict, fas: list, llm):
     schema = {"type": "object", "additionalProperties": False,
               "properties": {"sign": {"type": "boolean"},
                              "player_id": {"type": "string", "enum": ids},
+                             "intent": {"type": "string", "enum": ["усиление-старта", "глубина"]},
                              "max_bid": {"type": "integer"}, "reason": {"type": "string"}},
               "required": ["sign"]}
-    rows = "; ".join(f"{p['player_id']}:{p['nickname']}({p['faction']},SoloQ{int(p['soloq_rating'])},"
-                     f"цена~{transfers.fair_value(p)})" for p in aff[:18])
-    prompt = (f"Клуб {team['name']}. Казна: {team['treasury']}. В ростере {len(team['roster'])} "
-              f"(нужна ГЛУБИНА для замен по ходу серии). Свободные агенты: {rows}.\n"
-              f"Подписать ли запасного (sign) и КОГО (player_id) + макс. ставку (max_bid, бонус "
-              f"сгорает)? Несколько клубов могут хотеть одного — победит высшая ставка.")
-    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=200)
+    prompt = (f"Клуб {team['name']}. Казна: {int(team['treasury'])}, ростер "
+              f"{len(team['roster'])}/{MAX_ROSTER}.{_char_blurb(profile)}\n"
+              f"ТВОИ ДЫРЫ: {needs.team_needs_brief(world, team)}\n"
+              f"РЫНОК (свободные агенты, отранжированы ПРОТИВ твоего слабейшего старта):\n"
+              f"{needs.market_board(world, team, aff)}\n--- РЕШЕНИЕ ---\n"
+              f"Сначала смотри на УСИЛЕНИЕ: если есть игрок с тегом АПГРЕЙД-СТАРТА по карману, который "
+              f"реально усиливает старт или закрывает твою дыру (слабый стартер / перекос фракций / "
+              f"пробел под мету) — ПОДПИШИ его (intent=усиление-старта). Это важнее, чем копить. Если "
+              f"апгрейда нет — можешь взять «глубину» под замены (intent=глубина) или пропустить "
+              f"(sign=false). max_bid — бонус сгорает; несколько клубов могут хотеть одного, победит "
+              f"высшая ставка. Бид под силу казне.")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=240)
     if not ans.get("sign") or ans.get("player_id") not in ids:
         return None
     amount = int(ans.get("max_bid") or transfers.fair_value(get_player(world, ans["player_id"])))

@@ -22,6 +22,41 @@ def _world_with_two_rostered():
     return w, t1, t2, p1, p2
 
 
+def _mini_world(buyer_ratings, seller_ratings, treasury=10_000_000):
+    """A 2-club world with fully-controlled ratings, to test starter-upgrade transfer guards in isolation."""
+    def mk(pid, rating, tid):
+        return {"player_id": pid, "team_id": tid, "status": "rostered", "nickname": pid,
+                "soloq_rating": float(rating), "salary": 0.0, "soloq_history": [], "position_stats": {},
+                "attributes": {k: 50 for k in ("attack", "defense", "economy", "tempo", "consistency", "potential")}}
+    players, b_ros, s_ros = {}, [], []
+    for i, r in enumerate(buyer_ratings):
+        players[f"b{i}"] = mk(f"b{i}", r, "BUY"); b_ros.append(f"b{i}")
+    for i, r in enumerate(seller_ratings):
+        players[f"s{i}"] = mk(f"s{i}", r, "SELL"); s_ros.append(f"s{i}")
+    return {"players": players, "free_agents": [],
+            "teams": {"BUY": {"team_id": "BUY", "name": "Buyer", "roster": b_ros, "treasury": treasury},
+                      "SELL": {"team_id": "SELL", "name": "Seller", "roster": s_ros, "treasury": treasury}}}
+
+
+def test_starter_upgrade_respects_guards():
+    # buyer has 3 weak starters; seller has a strong CORE upgrade + a bench (4 players -> G1 satisfied)
+    w = _mini_world([900, 900, 900], [1400, 1250, 1250, 800])
+    bids = transfers.heuristic_club_transfer_bids(w)
+    bbid = next((b for b in bids if b["team_id"] == "BUY"), None)
+    assert bbid is not None
+    assert bbid["player_id"] == "s0"                                   # targets the strong core upgrade
+    fair = transfers.fair_value(w["players"]["s0"])
+    assert bbid["amount"] == int(round(fair * transfers.STARTER_PREMIUM))   # G3: premium for a core raid
+    # G1: drop the seller to exactly a trio (remove bench) -> its core can no longer be raided
+    w["teams"]["SELL"]["roster"].remove("s3")
+    b2 = next((b for b in transfers.heuristic_club_transfer_bids(w) if b["team_id"] == "BUY"), None)
+    assert b2 is None or b2["player_id"] not in transfers._core_ids(w, w["teams"]["SELL"])
+    # G2: if the buyer's starters are already STRONG, the seller's core is not an upgrade -> no core raid
+    w2 = _mini_world([1500, 1500, 1500], [1400, 1250, 1250, 800])
+    b3 = next((b for b in transfers.heuristic_club_transfer_bids(w2) if b["team_id"] == "BUY"), None)
+    assert b3 is None or b3["player_id"] not in transfers._core_ids(w2, w2["teams"]["SELL"])
+
+
 # -------------------------------------------------------------- transfers -- #
 def test_min_price_blocks_lowball():
     w, t1, t2, p1, p2 = _world_with_two_rostered()

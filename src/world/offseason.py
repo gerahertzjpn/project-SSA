@@ -63,11 +63,11 @@ def _surplus_bench(world: dict, team: dict) -> list[str]:
     roster = team.get("roster", [])
     if len(roster) < MAX_ROSTER:
         return []
-    starters = roster[:transfers.MIN_STARTERS]
-    bench = roster[transfers.MIN_STARTERS:]
-    if not starters or not bench:
+    core = transfers._core_ids(world, team)              # strongest 3 by skill (not roster index)
+    bench = transfers._sellable_players(world, team)
+    if not core or not bench:
         return []
-    weakest_starter = min(economy.player_value(get_player(world, pid)) for pid in starters)
+    weakest_starter = min(economy.player_value(get_player(world, pid)) for pid in core)
     return [pid for pid in bench
             if economy.player_value(get_player(world, pid)) < weakest_starter * RELEASE_SURPLUS_FRACTION]
 
