@@ -69,6 +69,14 @@ def test_season0_selection_holds_back_reserves_and_introduces_later():
     assert len(w["reserves"]) == 15
 
 
+def test_post_group_replan_off_by_default_is_noop():
+    # the post-group base-strategy replan is behind a default-OFF flag -> no-op even with an llm present
+    from src.world import llm_manager
+    assert feature_flags.is_enabled("post_group_replan") is False
+    rows = [{"team_id": "t", "wins": 0, "losses": 3}]
+    assert llm_manager.replan_after_groups({"teams": {}}, [rows], llm=object()) == []
+
+
 def test_create_player_from_fork_creates_binds_and_rosters():
     """A team's create_player must MAKE a new player OWN the forked net + join the paying team's roster.
     The bug this guards: create_player trained a unique net but created no player, orphaning the net."""

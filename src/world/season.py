@@ -207,7 +207,7 @@ def _public_standings(rows: list[dict]) -> dict:
 
 
 def run_regular_season(world: dict, play: Optional[PlayFn] = None, *,
-                       seed: Optional[int] = None,
+                       seed: Optional[int] = None, llm=None,
                        settle_economy: bool = True, record: bool = True) -> dict:
     """Play one regular season: groups -> playoffs -> Elo -> economy ->
     promotion/relegation -> calendar. Returns a season summary. ``seed`` is
@@ -229,6 +229,12 @@ def run_regular_season(world: dict, play: Optional[PlayFn] = None, *,
     up_rows = brackets.standings(up_ids, up_results)
     a_rows = brackets.standings(a_ids, a_results)
     z_rows = brackets.standings(z_ids, z_results)
+
+    # post-group reaction (flag post_group_replan, default off): struggling clubs may rewrite their
+    # BASE strategy before playoffs (lineup frozen). play reads the plan per match, so it takes effect
+    # in the playoffs below. No-op without the flag + an active llm.
+    from src.world import llm_manager
+    llm_manager.replan_after_groups(world, [up_rows, a_rows, z_rows], llm=llm)
 
     # ---- playoffs ------------------------------------------------------- #
     up_play = brackets.upper_playoff([r["team_id"] for r in up_rows], play)

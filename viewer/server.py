@@ -386,7 +386,7 @@ def start_world_advance_job(world_id: str, lang: str = "ru") -> dict:
             from src.world import commentary
             open_line = commentary.season_open(world, llm=llm, lang=lang)   # 📻 broadcast: season open
             _set_world_job(job_id, phase="Группы + плей-офф (реальные матчи)…")
-            summary = world_season.run_regular_season(world, play=play_fn)
+            summary = world_season.run_regular_season(world, play=play_fn, llm=llm)  # llm enables 4c replan
             for t in world["teams"].values():       # record each player's club this season (history)
                 for pid in t.get("roster", []):
                     p = world["players"].get(pid)

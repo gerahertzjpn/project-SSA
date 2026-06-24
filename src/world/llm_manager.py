@@ -147,6 +147,61 @@ def _budget_blurb(world: dict, team: dict) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Post-group reaction (flag post_group_replan, default OFF) — clubs that did BADLY in the group
+# stage let the manager rewrite the playbook's BASE strategy before playoffs. The LINEUP stays
+# FROZEN (tournament-lock rule); only the base strategy + note change. The playbook's IF-THEN
+# overrides already adapt strategy in-series — this is a deliberate, scouting-informed reset on top.
+# --------------------------------------------------------------------------- #
+def replan_after_groups(world: dict, standings: list, *, llm=None, feed: Optional[list] = None) -> list:
+    """For each division's standings (best-first), the bottom third may re-author their base strategy
+    for the playoffs (lineup untouched). No-op unless the flag is on AND the LLM is active. Returns the
+    list of changed bases."""
+    if not feature_flags.is_enabled("post_group_replan") or not _active(llm):
+        return []
+    changed = []
+    for rows in standings:
+        if len(rows) < 4:
+            continue
+        for row in rows[len(rows) - max(1, len(rows) // 3):]:        # bottom third of the group
+            tid = row.get("team_id")
+            team = world["teams"].get(tid)
+            if not team:
+                continue
+            try:
+                new_base = _llm_replan_base(world, team, row, llm)
+            except Exception as exc:
+                events.fallback(feed, f"replan:{tid}", str(exc))
+                continue
+            plan = playbook.get_plan(world, tid)
+            old = (plan.get("base") or {}).get("strategy")
+            if new_base and new_base != old:
+                plan.setdefault("base", {})["strategy"] = new_base
+                playbook.set_plan(world, tid, plan)
+                changed.append({"team_id": tid, "from": old, "to": new_base})
+                events.emit(feed, "playbook",
+                            f"{team['name']}: после групп сменил базу «{old}»→«{new_base}»", team_id=tid)
+    return changed
+
+
+def _llm_replan_base(world: dict, team: dict, row: dict, llm) -> Optional[str]:
+    from src.world import needs
+    intel = scouting.render_intel(scouting.intel_report(world, team["team_id"]))
+    rec = f"{row.get('wins', 0)}-{row.get('losses', 0)}"
+    cur = (playbook.get_plan(world, team["team_id"]).get("base") or {}).get("strategy", "standard")
+    schema = {"type": "object", "additionalProperties": False,
+              "properties": {"strategy": {"type": "string", "enum": list(playbook.STRATEGY_IDS)},
+                             "reason": {"type": "string"}}, "required": ["strategy"]}
+    prompt = (f"Клуб {team['name']} слабо прошёл групп-этап (рекорд {rec}). Текущая база: «{cur}».\n"
+              f"РАЗВЕДКА: {intel}\nДЫРЫ: {needs.team_needs_brief(world, team)}\n--- РЕШЕНИЕ ---\n"
+              f"Состав менять НЕЛЬЗЯ (заморожен на турнир). Можешь сменить БАЗОВУЮ стратегию из "
+              f"{list(playbook.STRATEGY_IDS)} перед плей-офф, если видишь по разведке/мете, что текущая "
+              f"не работает; либо оставь текущую «{cur}».")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=160)
+    s = ans.get("strategy")
+    return s if s in playbook.STRATEGY_IDS else None
+
+
+# --------------------------------------------------------------------------- #
 # Draft — L2 (one LLM call per pick; heuristic fallback inside balanced_draft)
 # --------------------------------------------------------------------------- #
 def draft_pick_fn(world: dict, *, llm=None, feed: Optional[list] = None
