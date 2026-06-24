@@ -33,7 +33,7 @@ from src.world import (
     rookies, soloq, training_auction, training_ops, transfers,
 )
 
-OFFSEASON_STAGES = ("soloq", "rookies", "free_agents", "training", "transfers",
+OFFSEASON_STAGES = ("soloq", "outlook", "rookies", "free_agents", "training", "transfers",
                     "rookie_draft", "planning", "advance")
 
 # Labels for system-driven training jobs that are not team-auction ops.
@@ -452,6 +452,10 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     report["stages"]["soloq"] = {"rounds": soloq_rounds,
                                  "last_round_matches": log[-1]["matches"] if log else 0}
     events.emit(feed, "stage", f"SoloQ: сыграно {soloq_rounds} раундов, рейтинги обновлены")
+
+    # 1.5 Multi-season outlook — each manager fixes a 2-3 season stance (build/contend/rebuild) stored
+    #     on the team; the market + draft prompts read it so signings/picks serve a coherent vision.
+    report["stages"]["outlook"] = llm_manager.season_outlook(world, llm=llm, feed=feed)
 
     # 2. Rookies (cards now; their forks go into the combined launch)
     if rookie_budget is not None:

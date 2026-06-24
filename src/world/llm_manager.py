@@ -72,6 +72,81 @@ def _char_blurb(profile) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# Multi-season outlook — once per off-season the manager fixes a 2-3 season STANCE
+# (build / contend / rebuild) + focus, stored on team['roster_plan']; the market + draft
+# prompts read it so signings/picks serve a coherent vision, not just this-season opportunism.
+# --------------------------------------------------------------------------- #
+def _heuristic_stance(world: dict, team: dict) -> tuple:
+    import statistics
+    roster = [get_player(world, pid) for pid in team.get("roster", [])]
+    if not roster:
+        return "rebuild", "состав почти пуст — собираем заново"
+    avg_seasons = statistics.mean(p.get("seasons_played", 0) for p in roster)
+    avg_skill = statistics.mean(valuation.skill_score(p) for p in roster)
+    if team.get("league") == "upper" and avg_skill > 1.05:
+        return "contend", "состав силён — бьёмся за титул сейчас"
+    if avg_seasons < 1.5:
+        return "build", "молодой состав — растим под будущее, копим ядро"
+    if avg_skill < 0.92:
+        return "rebuild", "слабеем — перестройка: омоложение + точечное усиление"
+    return "contend", "идём за стабильным результатом"
+
+
+def season_outlook(world: dict, *, llm=None, feed: Optional[list] = None) -> dict:
+    """Once per off-season each manager fixes a 2-3 season stance + focus on ``team['roster_plan']``.
+    The market/draft prompts read it (``_roster_plan_blurb``) so a club's buying + picks follow a
+    coherent multi-season vision. LLM when active; character heuristic fallback."""
+    for team in world["teams"].values():
+        if len(team.get("roster", [])) < 1:
+            continue
+        stance, focus = _heuristic_stance(world, team)
+        if _active(llm):
+            try:
+                profile = manager.natural_profile(team["franchise_id"])
+                stance, focus = _llm_season_outlook(world, team, llm, profile, (stance, focus))
+            except Exception as exc:
+                events.fallback(feed, f"outlook:{team['team_id']}", str(exc))
+        team["roster_plan"] = {"season": world.get("season", 0), "stance": stance, "focus": focus}
+    return {tid: t.get("roster_plan") for tid, t in world["teams"].items() if t.get("roster_plan")}
+
+
+def _llm_season_outlook(world: dict, team: dict, llm, profile, default: tuple) -> tuple:
+    from src.world import needs
+    roster = [get_player(world, pid) for pid in team.get("roster", [])]
+    ages = ", ".join(f"{p.get('nickname')}({int(p.get('soloq_rating', 1000))}, "
+                     f"{p.get('seasons_played', 0)}сез)" for p in sorted(roster, key=lambda x: -x.get('soloq_rating', 0)))
+    schema = {"type": "object", "additionalProperties": False,
+              "properties": {"stance": {"type": "string", "enum": ["build", "contend", "rebuild"]},
+                             "focus": {"type": "string"}}, "required": ["stance", "focus"]}
+    prompt = (f"Клуб {team['name']} ({'высшая' if team.get('league') == 'upper' else 'низшая'} лига)."
+              f"{_char_blurb(profile)}\nСостав (рейтинг, сезонов сыграно): {ages}\n"
+              f"ДЫРЫ: {needs.team_needs_brief(world, team)}\n--- РЕШЕНИЕ ---\n"
+              f"Задай КУРС клуба на 2-3 сезона: build (растим молодёжь под будущее), contend (бьёмся за "
+              f"титул сейчас) или rebuild (перестройка). focus — одна фраза: кого добираем, кого продаём, "
+              f"на что копим. Это направит твои покупки и драфт.")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=160)
+    stance = ans.get("stance")
+    if stance not in ("build", "contend", "rebuild"):
+        return default
+    return stance, (ans.get("focus") or default[1])
+
+
+def _roster_plan_blurb(team: dict) -> str:
+    rp = team.get("roster_plan") or {}
+    return f" КУРС КЛУБА (2-3 сезона): {rp['stance']} — {rp.get('focus', '')}." if rp.get("stance") else ""
+
+
+def _budget_blurb(world: dict, team: dict) -> str:
+    """Budget discipline: treasury vs the recurring wage bill + a runway read, so a manager weighs a
+    signing against future sustainability, not just this season's cash."""
+    bill = float(valuation.salary_bill(world, team))
+    treas = float(team.get("treasury", 0))
+    runway = (treas / bill) if bill > 0 else 99.0
+    note = "тесно" if runway < 1.5 else ("комфортно" if runway > 4 else "норм")
+    return f" БЮДЖЕТ: казна {int(treas)}, зарплаты/сезон {int(bill)} (запас ~{runway:.1f} сез., {note})."
+
+
+# --------------------------------------------------------------------------- #
 # Draft — L2 (one LLM call per pick; heuristic fallback inside balanced_draft)
 # --------------------------------------------------------------------------- #
 def draft_pick_fn(world: dict, *, llm=None, feed: Optional[list] = None
@@ -114,8 +189,8 @@ def _draft_prompt(world: dict, team: dict, available: list) -> str:
     have = ", ".join(world["players"][pid]["nickname"] for pid in team["roster"]) or "пусто"
     pool = "; ".join(f"{p['player_id']}:{p['nickname']}({p['faction']},"
                      f"SoloQ{int(p['soloq_rating'])})" for p in available[:40])
-    return (f"Драфт. Клуб {team['name']}. Уже взял: {have}. Доступны: {pool}.\n"
-            f"Выбери ОДНОГО игрока под свой состав и цель — титул верхней лиги.")
+    return (f"Драфт. Клуб {team['name']}.{_roster_plan_blurb(team)} Уже взял: {have}. Доступны: {pool}.\n"
+            f"Выбери ОДНОГО игрока под свой состав, КУРС клуба и цель — титул верхней лиги.")
 
 
 # --------------------------------------------------------------------------- #
@@ -496,8 +571,9 @@ def _llm_spend(world: dict, team: dict, netted: list, wallet: list, llm):
             "create_player=ФОРК нового игрока от родителя")
     from src.world import needs
     profile = manager.natural_profile(team["franchise_id"])
-    prompt = (f"Клуб {team['name']}.{_char_blurb(profile)} Выиграл сертификаты тренировки: "
-              f"{len(wallet)} шт = {total:,} шагов.\nТВОИ ДЫРЫ: {needs.team_needs_brief(world, team)}\n"
+    prompt = (f"Клуб {team['name']}.{_char_blurb(profile)}{_roster_plan_blurb(team)} Выиграл сертификаты "
+              f"тренировки: {len(wallet)} шт = {total:,} шагов.\n"
+              f"ТВОИ ДЫРЫ: {needs.team_needs_brief(world, team)}\n"
               f"Игроки с нейронками:\n{rows}.\nВиды: {menu}.\n--- РЕШЕНИЕ ---\n"
               f"Тратить сейчас (spend) или отложить в банк? Заземли выбор в свои ДЫРЫ: качай слабого "
               f"стартера (skill_up), бери meta_adapt если проигрываешь мете, create_player если нужен "
@@ -588,8 +664,8 @@ def _llm_transfer_bid(world: dict, team: dict, fas: list, llm, profile=None):
                              "intent": {"type": "string", "enum": ["усиление-старта", "глубина"]},
                              "max_bid": {"type": "integer"}, "reason": {"type": "string"}},
               "required": ["sign"]}
-    prompt = (f"Клуб {team['name']}. Казна: {int(team['treasury'])}, ростер "
-              f"{len(team['roster'])}/{MAX_ROSTER}.{_char_blurb(profile)}\n"
+    prompt = (f"Клуб {team['name']}. Ростер {len(team['roster'])}/{MAX_ROSTER}.{_char_blurb(profile)}"
+              f"{_roster_plan_blurb(team)}{_budget_blurb(world, team)}\n"
               f"ТВОИ ДЫРЫ: {needs.team_needs_brief(world, team)}\n"
               f"РЫНОК (свободные агенты, отранжированы ПРОТИВ твоего слабейшего старта):\n"
               f"{needs.market_board(world, team, aff)}\n--- РЕШЕНИЕ ---\n"
@@ -644,8 +720,8 @@ def _llm_club_bid(world: dict, buyer: dict, cands: list, llm, profile):
                              "player_id": {"type": "string", "enum": ids},
                              "max_bid": {"type": "integer"}, "reason": {"type": "string"}},
               "required": ["buy"]}
-    prompt = (f"Клуб {buyer['name']}. Казна {int(buyer['treasury'])}.{_char_blurb(profile)}\n"
-              f"ТВОИ ДЫРЫ: {needs.team_needs_brief(world, buyer)}\n"
+    prompt = (f"Клуб {buyer['name']}.{_char_blurb(profile)}{_roster_plan_blurb(buyer)}"
+              f"{_budget_blurb(world, buyer)}\nТВОИ ДЫРЫ: {needs.team_needs_brief(world, buyer)}\n"
               f"ИГРОКИ ДРУГИХ КЛУБОВ, доступные к покупке (цена платится клубу-продавцу):\n"
               f"{needs.club_market_board(world, buyer, cands)}\n--- РЕШЕНИЕ ---\n"
               f"Купить ли игрока у другого клуба (buy), КОГО (player_id) и макс. цену (max_bid)? Бери "
