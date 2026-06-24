@@ -82,6 +82,17 @@ def _slot_impacts(state, slot_pids: list[tuple[str, str]]) -> dict[str, float]:
     }
 
 
+def _slot_stats(state, slot_pids: list[tuple[str, str]]) -> dict[str, dict]:
+    """Per-player COMBAT stats for the SoloQ match record (UI): core kills + assists + losses from the
+    engine's per-player attribution (state.*_by_player, keyed by slot). Empty/absent -> zeros."""
+    ck = getattr(state, "core_kills_by_player", {}) or {}
+    ca = getattr(state, "assists_by_player", {}) or {}
+    cl = getattr(state, "core_losses_by_player", {}) or {}
+    return {pid: {"kills": int(ck.get(slot, 0)), "assists": int(ca.get(slot, 0)),
+                  "core_losses": int(cl.get(slot, 0))}
+            for slot, pid in slot_pids}
+
+
 def _models_factions(world: dict, idx: dict[str, str],
                      team_a: list[str], team_b: list[str]):
     players = world["players"]
@@ -138,7 +149,7 @@ def make_soloq_match_fn(
             winner = "B"
         else:  # genuine draw — no rating-flip bias, pick a side by the seeded rng
             winner = rng.choice(["A", "B"])
-        return winner, _slot_impacts(result.state, slot_pids)
+        return winner, _slot_impacts(result.state, slot_pids), _slot_stats(result.state, slot_pids)
 
     return match_fn
 
@@ -175,7 +186,7 @@ class SoloQSeriesPlayer:
             winner = "B"
         else:                                            # deterministic draw break off the match seed
             winner = "A" if (match_seed % 2 == 0) else "B"
-        return winner, _slot_impacts(result.state, slot_pids)
+        return winner, _slot_impacts(result.state, slot_pids), _slot_stats(result.state, slot_pids)
 
 
 class NetSeriesPlayer:

@@ -167,7 +167,9 @@ def simulate_soloq(
             outcomes = [match_fn(ta, tb, cur, rng) for ta, tb in matches]
         # APPLY in match order: teams are disjoint within a round, so deltas off the pre-round snapshot
         # are order-independent (identical to applying inline).
-        for (team_a, team_b), (winner, impacts) in zip(matches, outcomes):
+        for (team_a, team_b), outcome in zip(matches, outcomes):
+            winner, impacts = outcome[0], outcome[1]
+            mstats = outcome[2] if len(outcome) > 2 else {}   # per-player combat stats (net matches only)
             avg_a = sum(cur[p] for p in team_a) / len(team_a)
             avg_b = sum(cur[p] for p in team_b) / len(team_b)
             # All 6 are in the SAME rating band (strict 100-step matchmaking). Snapshot their ratings
@@ -192,11 +194,11 @@ def simulate_soloq(
                 for pid in team_a:                      # detail page resolves every player (round ids differ)
                     pm[pid] = {"teammates": [p for p in team_a if p != pid], "opponents": list(team_b),
                                "won": a_won, "delta": deltas[pid], "ratings": at_time, "deltas": deltas,
-                               "band": mband}
+                               "band": mband, "stats": mstats}
                 for pid in team_b:
                     pm[pid] = {"teammates": [p for p in team_b if p != pid], "opponents": list(team_a),
                                "won": not a_won, "delta": deltas[pid], "ratings": at_time, "deltas": deltas,
-                               "band": mband}
+                               "band": mband, "stats": mstats}
         entry = {"round": rnd, "matches": len(matches), "skipped": sorted(set(cur) - played)}
         if record:
             entry["player_matches"] = pm

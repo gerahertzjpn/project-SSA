@@ -573,6 +573,7 @@ function renderSoloqMatch(m) {
     `<div class="mt-pl" data-pid="${esc(p.player_id)}">${factionChip(p.faction)}` +
     `<span class="mt-pl-nm">${esc(p.nickname)}</span>` +
     `<span class="mt-pl-tm" data-team="${esc(p.team_id || "")}">${esc(p.team_abbrev || (p.role === "streamer" ? "стример" : "—"))}</span>` +
+    `<span class="mt-pl-ka" title="сносы вражеских ядер / ассисты за карту">${(p.kills != null || p.assists != null) ? `⚔${p.kills || 0} 🤝${p.assists || 0}` : ""}</span>` +
     `<span class="mt-pl-rt">${p.rating}</span>` +
     `<span class="mt-pl-d ${(p.delta || 0) >= 0 ? "up" : "down"}">${p.delta == null ? "—" : (p.delta >= 0 ? "+" : "") + Math.round(p.delta)}</span></div>`;
   const side = (players, won, label) =>

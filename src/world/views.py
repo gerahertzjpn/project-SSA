@@ -189,15 +189,19 @@ def soloq_match(world: dict, player_id: str, season: int, rnd: int) -> dict:
     if band is None:
         band = (int(at_time.get(player_id, 1000)) // 100) * 100
 
+    mstats = pm.get("stats") or {}                # per-player combat stats (net matches only), all 6
+
     def pinfo(pid):
         p = players.get(pid, {})
         e = entry(pid)
         tname, tabbr = _team_label(world, p)
         rating = at_time.get(pid, round(float(p.get("soloq_rating", 0))))
         delta = at_deltas.get(pid, e.get("delta") if e else None)
+        st = mstats.get(pid) or {}
         return {"player_id": pid, "nickname": p.get("nickname", pid), "faction": p.get("faction"),
                 "archetype": p.get("archetype"), "role": p.get("role"),
                 "rating": rating, "band": band, "delta": delta,
+                "kills": st.get("kills"), "assists": st.get("assists"), "core_losses": st.get("core_losses"),
                 "team_id": p.get("team_id"), "team": tname, "team_abbrev": tabbr}
 
     return {"season": season, "round": rnd, "won_a": bool(pm.get("won")), "band": band,

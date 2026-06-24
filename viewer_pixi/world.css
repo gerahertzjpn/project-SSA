@@ -808,12 +808,13 @@ button.ghost.required { border-color: var(--accent); color: #fff; background: va
 .mt-side.win { border-color: var(--success-dim); }
 .mt-side-h { font-weight: 800; color: var(--text); font-size: 12px; margin-bottom: 8px; text-align: center; }
 .mt-side.win .mt-side-h { color: var(--success); }
-.mt-pl { display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 8px; align-items: center;
+.mt-pl { display: grid; grid-template-columns: auto 1fr auto auto auto auto; gap: 8px; align-items: center;
   padding: 6px 8px; border-radius: var(--r-1); cursor: pointer; font-size: 12px; }
 .mt-pl:hover { background: var(--panel-3); }
 .mt-pl-nm { font-weight: 700; color: var(--text-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mt-pl-tm { color: var(--accent-lite); font-weight: 700; font-size: 11px; }
 .mt-pl-tm:hover { text-decoration: underline; }
+.mt-pl-ka { color: var(--text-soft); font-size: 11px; font-weight: 700; white-space: nowrap; letter-spacing: -0.3px; }
 .mt-pl-rt { font-weight: 800; color: var(--accent-lite); }
 .mt-pl-d.up { color: var(--success); font-weight: 800; }
 .mt-pl-d.down { color: var(--danger); font-weight: 800; }
