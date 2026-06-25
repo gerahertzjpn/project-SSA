@@ -33,7 +33,7 @@ from src.world import (
     rookies, soloq, training_auction, training_ops, transfers,
 )
 
-OFFSEASON_STAGES = ("soloq", "outlook", "rookies", "free_agents", "training", "transfers",
+OFFSEASON_STAGES = ("rookies", "soloq", "outlook", "free_agents", "training", "transfers",
                     "rookie_draft", "planning", "advance")
 
 # Labels for system-driven training jobs that are not team-auction ops.
@@ -83,10 +83,12 @@ DEFAULT_TRAINING_SLOTS = 6        # gradeslots auctioned per off-season (owner-t
 
 
 def _slot_anchor(world: dict, team_ids: list[str]) -> int:
-    """A nominal 'reference value' for one gradeslot (the LLM/heuristic bids around it)."""
+    """A nominal 'reference value' for one gradeslot. A slot is a REAL net-improving training run, so
+    its reference is a meaningful share of a club's wealth (was 15% of median -> everyone anchored to
+    a tiny ~30 and bid pennies). Clubs then bid ABOVE/BELOW this by their own treasury + ambition."""
     treas = sorted(world["teams"][tid]["treasury"] for tid in team_ids)
     median = treas[len(treas) // 2] if treas else 100
-    return max(10, int(median * 0.15))
+    return max(50, int(median * 0.45))
 
 
 def run_training_market(world: dict, cfg: training_auction.TrainingConfig, *,
@@ -445,26 +447,30 @@ def run_offseason(world: dict, *, training_jobs: list[dict] | None = None,
     treasury_before = {tid: round(float(t.get("treasury", 0))) for tid, t in world["teams"].items()}
     attrs_before = {pid: dict(p.get("attributes") or {}) for pid, p in world["players"].items()}
 
-    # 1. SoloQ (net-backed when soloq_match_fn supplied; default None -> rating model). Parallel when
-    #    a seeded match_player + workers>1 are supplied (independent matches/round).
+    # 1. Rookies FIRST — created from non-top parents; each INHERITS its parent's net (so it's
+    #    immediately playable). Creating them BEFORE SoloQ means a new prospect JOINS this off-season's
+    #    SoloQ and earns a real rating from game 1, instead of sitting out the very SoloQ of the season
+    #    it debuts. (Its own unique net forks asynchronously after the off-season and takes over for the
+    #    regular season + next off-season's SoloQ.)
+    if rookie_budget is not None:
+        rk = rookies.generate_rookies(world, rookie_budget, seed=sp.seed())
+    else:
+        rk = {"n": 0, "fork_plan": [], "note": "no rookie budget set this off-season"}
+    report["stages"]["rookies"] = rk
+    events.emit(feed, "stage", f"Новички: создано {rk.get('n', 0)} проспектов (играют SoloQ сразу)")
+    rookie_jobs = rookies.rookie_training_jobs(rk)
+
+    # 2. SoloQ — now INCLUDES the fresh rookies (net-backed when soloq_match_fn supplied; default None
+    #    -> rating model). Parallel when a seeded match_player + workers>1 are supplied.
     log = soloq.apply_soloq(world, rounds=soloq_rounds, seed=sp.seed(), match_fn=soloq_match_fn,
                             match_player=soloq_match_player, workers=workers)
     report["stages"]["soloq"] = {"rounds": soloq_rounds,
                                  "last_round_matches": log[-1]["matches"] if log else 0}
     events.emit(feed, "stage", f"SoloQ: сыграно {soloq_rounds} раундов, рейтинги обновлены")
 
-    # 1.5 Multi-season outlook — each manager fixes a 2-3 season stance (build/contend/rebuild) stored
-    #     on the team; the market + draft prompts read it so signings/picks serve a coherent vision.
+    # 3. Multi-season outlook — each manager fixes a 2-3 season stance (build/contend/rebuild) stored
+    #    on the team; the market + draft prompts read it so signings/picks serve a coherent vision.
     report["stages"]["outlook"] = llm_manager.season_outlook(world, llm=llm, feed=feed)
-
-    # 2. Rookies (cards now; their forks go into the combined launch)
-    if rookie_budget is not None:
-        rk = rookies.generate_rookies(world, rookie_budget, seed=sp.seed())
-    else:
-        rk = {"n": 0, "fork_plan": [], "note": "no rookie budget set this off-season"}
-    report["stages"]["rookies"] = rk
-    events.emit(feed, "stage", f"Новички: создано {rk.get('n', 0)} проспектов")
-    rookie_jobs = rookies.rookie_training_jobs(rk)
 
     # 3. Free agents (keep form)
     if fa_budget is not None:

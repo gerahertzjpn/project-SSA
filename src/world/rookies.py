@@ -97,7 +97,7 @@ def _make_rookie_card(world: dict, index: int, parent: dict, seed: int,
     p["status"] = "rookie"
     p["generation"] = gen                      # top-level lineage (registry/uniqueness tracking)
     p["parent_ids"] = [parent["player_id"]]
-    p["soloq_rating"] = 930.0        # raw: starts below average, must prove itself
+    p["soloq_rating"] = 1000.0       # starts at the league baseline (START_RATING) — proves itself in SoloQ
     # inherit a faded echo of the parent's profile, with high upside
     pa = parent.get("attributes", {})
     for k in ("attack", "defense", "economy", "tempo", "consistency"):

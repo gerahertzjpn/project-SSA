@@ -99,10 +99,13 @@ def max_offer(profile: ManagerProfile, fair_value: int, treasury: int) -> int:
 
 
 def auction_bid(profile: ManagerProfile, item_value: int, treasury: int) -> int:
-    """Bid for an auctioned item (training gradeslot / free agent), in character."""
-    mult = 0.45 + 0.6 * profile.aggression + 0.2 * profile.risk - 0.3 * profile.frugality
-    mult = max(0.0, mult)
-    return int(max(0, min(treasury, round(item_value * mult))))
+    """Bid for an auctioned item (training gradeslot / free agent), in character. Bids a SHARE OF OWN
+    TREASURY (a rich/ambitious club splurges, a poor/frugal one stays low) — NOT a flat multiple of the
+    market anchor, which made everyone bid the same pennies regardless of wealth. Floored at the market
+    reference so a club that wants the slot at least meets it."""
+    share = max(0.0, 0.18 + 0.40 * profile.aggression + 0.15 * profile.risk - 0.30 * profile.frugality)
+    bid = max(float(item_value), float(treasury) * share)    # at least the market ref, up to ~0.6 treasury
+    return int(max(0, min(treasury, round(bid))))
 
 
 def wants_to_buy(world: dict, team: dict, target: dict, price: int,
