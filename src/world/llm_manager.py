@@ -538,6 +538,103 @@ def _llm_auction_bid(world: dict, team: dict, llm, item_value: int, profile, lea
     return int(ans.get("max_bid", 0))
 
 
+# --------------------------------------------------------------------------- #
+# 🔴 LIVE (ascending) training auction — the manager bids COMPETITIVELY round by round with FULL
+# FREEDOM (sees the current high bid + its whole situation, raises to ANY affordable amount or drops).
+# The winner pays its FINAL raise (~just above the runner-up — the market-clearing price, NOT its max),
+# losers pay nothing. So bids vary by club + nobody "just bids half". Many LLM calls -> flag-gated.
+# --------------------------------------------------------------------------- #
+def _heuristic_live_bid(world: dict, team: dict, high: int, avail: int, anchor: int) -> int:
+    """Ascending heuristic: raise by a small increment until a character-driven ceiling (a share of
+    own treasury). Returns the new bid (> high) or 0 to drop."""
+    prof = manager.natural_profile(team["franchise_id"])
+    ceiling = avail * max(0.0, 0.18 + 0.40 * prof.aggression + 0.15 * prof.risk - 0.30 * prof.frugality)
+    nb = high + max(5, anchor // 8)
+    return int(nb) if (nb > high and nb <= min(avail, ceiling)) else 0
+
+
+def _llm_live_bid(world: dict, team: dict, llm, state, high: int, leader_id, avail: int, anchor: int) -> int:
+    """ONE live ascending decision — FULL FREEDOM, no prescribed fraction. The manager sees the current
+    high bid + its full situation and raises to any affordable amount or drops (0)."""
+    from src.world import needs
+    profile = manager.natural_profile(team["franchise_id"])
+    leader = world["teams"].get(leader_id, {}).get("name", "—") if leader_id else "пока никто"
+    schema = {"type": "object", "additionalProperties": False,
+              "properties": {"raise_to": {"type": "integer"}, "reason": {"type": "string"}},
+              "required": ["raise_to"]}
+    prompt = (f"🔴 ЖИВОЙ аукцион тренировочного слота ({state.config.steps_per_slot:,} шагов PPO — реально "
+              f"усиливает ОДНОГО твоего игрока). Слотов в розыгрыше осталось: {state.remaining}.\n"
+              f"Клуб {team['name']}.{_char_blurb(profile)}{_roster_plan_blurb(team)}{_budget_blurb(world, team)}\n"
+              f"ТВОИ ДЫРЫ: {needs.team_needs_brief(world, team)}\n"
+              f"ТЕКУЩАЯ высшая ставка: {high} (ведёт {leader}). Твой доступный максимум прямо сейчас: {int(avail)}.\n"
+              f"--- РЕШЕНИЕ ---\nЭто ТВОИ деньги и ТВОЙ выбор. Реши сам, сколько слот стоит ИМЕННО тебе и "
+              f"стоит ли за него драться. Подними ставку (raise_to строго > {high} и в пределах {int(avail)}), "
+              f"если оно того стоит для твоей ситуации/амбиций/характера — или выйди из торгов (raise_to=0). "
+              f"НИКАКИХ правил «ставь столько-то процентов»: полная свобода, решай как живой менеджер.")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=200)
+    rt = int(ans.get("raise_to") or 0)
+    return rt if (rt > high and rt <= avail) else 0
+
+
+def live_training_auction(world: dict, state, team_ids: list[str], anchor: int, *,
+                          llm=None, feed: Optional[list] = None, seed: int = 0) -> list[dict]:
+    """Run every gradeslot as a LIVE ascending auction. Per slot: clubs raise round by round (LLM with
+    full freedom, heuristic fallback) until one remains; the leader pays its final bid + receives a
+    certificate (minted like the sealed auction), losers pay nothing. Mutates treasury + certificates."""
+    import random
+    rng = random.Random(seed)
+    committed = {tid: 0 for tid in team_ids}      # spend committed across this off-season's slots
+    awards: list[dict] = []
+    floor = max(1, anchor // 4)
+    while state.remaining > 0:
+        active = [tid for tid in team_ids
+                  if (world["teams"][tid]["treasury"] - committed[tid]) > floor]
+        high, leader, hist = 0, None, {}
+        for _ in range(12):                       # bounded ascending rounds
+            raised = False
+            order = active[:]
+            rng.shuffle(order)
+            for tid in order:
+                if tid == leader or tid not in active:
+                    continue
+                avail = int(world["teams"][tid]["treasury"] - committed[tid])
+                if avail <= high:                 # can't beat the leader -> auto-drop (no LLM call)
+                    active.remove(tid)
+                    continue
+                if _active(llm):
+                    try:
+                        nb = _llm_live_bid(world, world["teams"][tid], llm, state, high, leader, avail, anchor)
+                    except Exception as exc:      # noqa: BLE001
+                        events.fallback(feed, f"live-bid:{tid}", str(exc))
+                        nb = _heuristic_live_bid(world, world["teams"][tid], high, avail, anchor)
+                else:
+                    nb = _heuristic_live_bid(world, world["teams"][tid], high, avail, anchor)
+                if nb and nb > high:
+                    high, leader, hist[tid] = int(nb), tid, int(nb)
+                    raised = True
+                else:
+                    active.remove(tid)            # dropped this slot
+            if not raised or len(active) <= 1:
+                break
+        if leader is None or high <= 0:
+            state.remaining -= 1
+            continue
+        committed[leader] += high
+        world["teams"][leader]["treasury"] -= high
+        state.remaining -= 1
+        state.issued += 1
+        cert = {"cert_id": f"cert-s{state.season}-{state.issued}",
+                "steps": int(state.config.steps_per_slot), "season": state.season}
+        world["teams"][leader].setdefault("training_certificates", []).append(cert)
+        award = {"team_id": leader, "price": high, "cert_id": cert["cert_id"], "steps": cert["steps"],
+                 "bids": dict(hist)}
+        state.awards.append(award)
+        awards.append(award)
+        events.emit(feed, "train",
+                    f"🔴 Живой аукцион: {world['teams'][leader]['name']} выиграл слот за {high}")
+    return awards
+
+
 def spend_certificates(world: dict, team: dict, *, llm=None, feed: Optional[list] = None,
                        config: Optional["training_auction.TrainingConfig"] = None) -> Optional[dict]:
     """A team that WON certificate(s) at the auction decides how to spend them: WHICH op, WHICH

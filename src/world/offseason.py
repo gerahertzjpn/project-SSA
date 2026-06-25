@@ -104,23 +104,31 @@ def run_training_market(world: dict, cfg: training_auction.TrainingConfig, *,
     if not team_ids:
         return [], {"slots": state.n_trainings, "awarded": 0, "spent": 0}
     item_value = _slot_anchor(world, team_ids)
-    bids = llm_manager.auction_max_bids(world, team_ids, item_value, llm=llm, feed=feed)
-    awarded = 0
     awards: list[dict] = []                       # who won a gradeslot and for how much (for the UI)
-    while state.remaining > 0:                    # sealed max-bid; winners' interest halves -> spreads
-        award = training_auction.auction_one_training(world, state, bids, seed=seed)
-        if award:
-            awarded += 1
-            tname = world["teams"][award["team_id"]]["name"]
-            # capture the FULL ranked bid table for this slot (who offered what) — for the
-            # interactive auction UI; bids reflect this slot (prior winners' interest already halved).
-            slot_bids = [{"team_id": tid, "team": world["teams"][tid]["name"], "amount": amt}
-                         for tid, amt in sorted(award.get("bids", {}).items(), key=lambda kv: (-kv[1], kv[0]))
-                         if amt and amt > 0]
-            awards.append({"team_id": award["team_id"], "team": tname, "price": award["price"],
-                           "steps": award.get("steps"), "bids": slot_bids})
-            events.emit(feed, "train", f"Аукцион тренировок: {tname} выиграл слот за {award['price']}")
-            bids[award["team_id"]] = bids.get(award["team_id"], 0) // 2
+
+    def _slot_bid_rows(bids_map: dict) -> list[dict]:
+        return [{"team_id": tid, "team": world["teams"][tid]["name"], "amount": amt}
+                for tid, amt in sorted(bids_map.items(), key=lambda kv: (-kv[1], kv[0])) if amt and amt > 0]
+
+    if feature_flags.is_enabled("live_auction_l2"):
+        # 🔴 LIVE ascending auction: clubs bid COMPETITIVELY round by round (LLM full freedom). The
+        # winner pays its final raise (market-clearing, ~just above the runner-up), losers pay nothing.
+        for a in llm_manager.live_training_auction(world, state, team_ids, item_value,
+                                                   llm=llm, feed=feed, seed=seed):
+            awards.append({"team_id": a["team_id"], "team": world["teams"][a["team_id"]]["name"],
+                           "price": a["price"], "steps": a.get("steps"), "bids": _slot_bid_rows(a.get("bids", {}))})
+    else:
+        # sealed max-bid fallback (cheaper): one bid per team, slots awarded with halving interest.
+        bids = llm_manager.auction_max_bids(world, team_ids, item_value, llm=llm, feed=feed)
+        while state.remaining > 0:
+            award = training_auction.auction_one_training(world, state, bids, seed=seed)
+            if award:
+                tname = world["teams"][award["team_id"]]["name"]
+                awards.append({"team_id": award["team_id"], "team": tname, "price": award["price"],
+                               "steps": award.get("steps"), "bids": _slot_bid_rows(award.get("bids", {}))})
+                events.emit(feed, "train", f"Аукцион тренировок: {tname} выиграл слот за {award['price']}")
+                bids[award["team_id"]] = bids.get(award["team_id"], 0) // 2
+    awarded = len(awards)
     jobs = [job for team in world["teams"].values()
             if (job := llm_manager.spend_certificates(world, team, llm=llm, feed=feed,
                                                       config=cfg)) is not None]
