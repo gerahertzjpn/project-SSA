@@ -8,6 +8,28 @@ FRANCHISES = [{"franchise_id": f"fr{i:02d}", "name": f"Team {i}", "abbrev": f"T{
                "manager": f"Mgr {i}"} for i in range(22)]
 
 
+def test_manager_comments_llm_does_not_clobber_accumulator():
+    # regression: the first-person LLM rewrite must NOT reassign the `out` list (was `out = llm.say(...)`),
+    # which crashed on the 2nd team's out.append with an ACTIVE llm — and silently failed the off-season.
+    from src.world import commentary
+
+    class StubLLM:
+        def say(self, persona, prompt, max_tokens=None, **k):
+            return "Мы идём за титулом — верю в свою тройку."
+
+    world = {"season": 1, "teams": {}, "players": {}}
+    for i in range(3):
+        tid = f"t{i}"
+        world["teams"][tid] = {"team_id": tid, "name": f"T{i}", "franchise_id": f"fr{i:02d}",
+                               "league": "upper", "elo": 1000, "roster": []}
+        for j in range(3):
+            pid = f"{tid}-p{j}"
+            world["players"][pid] = {"player_id": pid, "nickname": f"N{i}{j}", "faction": "humans"}
+            world["teams"][tid]["roster"].append(pid)
+    out = commentary.manager_comments(world, llm=StubLLM(), lang="ru")
+    assert len(out) == 3 and all(o["text"] for o in out)        # all 3 teams comment, no clobber crash
+
+
 def _profile(**over):
     base = dict(aggression=0.5, frugality=0.5, youth_focus=0.5, risk=0.5,
                 patience=0.5, loyalty=0.5)

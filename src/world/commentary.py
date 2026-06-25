@@ -476,8 +476,8 @@ def manager_comments(world: dict, *, llm=None, feed: Optional[list] = None, lang
                 persona = _MGR_PERSONA[lang].format(mgr=t.get("manager") or _FALLBACK_MGR[lang],
                                                     team=t["name"], trait=trait)
                 instr = _MGR_SAY_INSTR[lang].format(n=_SAY_N_MGR[lang], team=t["name"])
-                out = llm.say(persona, f"{brief}\n{instr}", max_tokens=240)
-                text = (out or "").strip() or text
+                said = llm.say(persona, f"{brief}\n{instr}", max_tokens=240)   # NOT `out` — that's the list!
+                text = (said or "").strip() or text
             except Exception as exc:
                 events.fallback(feed, f"comment:{t['team_id']}", str(exc))
         out.append({"season": season, "team_id": t["team_id"], "team": t["name"],
