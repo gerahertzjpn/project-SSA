@@ -122,7 +122,7 @@ def test_generate_rookies_creates_raw_high_upside_cards():
         assert p["status"] == "rookie"
         assert p["lineage"]["origin"] == "rookie_fork"
         assert p["lineage"]["parent_id"] in elig          # never forked from a top player
-        assert p["soloq_rating"] == 930.0                 # raw, must prove itself
+        assert p["soloq_rating"] == 1000.0                # starts at the league baseline, proves itself in SoloQ
         assert p["attributes"]["potential"] >= 60         # high upside
         seeds.add(p["lineage"]["seed"])
     assert len(seeds) == 4                                 # each rookie a unique seed
