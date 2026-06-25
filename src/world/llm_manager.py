@@ -146,6 +146,19 @@ def _budget_blurb(world: dict, team: dict) -> str:
     return f" БЮДЖЕТ: казна {int(treas)}, зарплаты/сезон {int(bill)} (запас ~{runway:.1f} сез., {note})."
 
 
+def _stakes_blurb(team: dict) -> str:
+    """What the club is PLAYING FOR — the real prize money per place, so the manager values a training
+    slot against actual stakes (e.g. a title is worth ~1500), not a made-up anchor."""
+    from src.world import economy
+    upper = team.get("league") == "upper"
+    prizes = economy.CONFIG.upper_prizes if upper else economy.CONFIG.lower_group_prizes
+    bonus = economy.CONFIG.upper_playoff_bonus if upper else economy.CONFIG.lower_playoff_bonus
+    return (f" СТАВКИ ({'высшая' if upper else 'низшая'} лига, призовые за СЕЗОН по месту): 1-е "
+            f"{prizes[0]} (+{bonus} за чемпионство в плей-офф), 2-е {prizes[1]}, ..., последнее "
+            f"{prizes[-1]}; вылет лишает призовых высшей лиги. Сильнее состав → выше место → больше денег "
+            f"и престижа. Тренировка реально усиливает игрока, а значит двигает клуб вверх по этой таблице.")
+
+
 # --------------------------------------------------------------------------- #
 # Post-group reaction (flag post_group_replan, default OFF) — clubs that did BADLY in the group
 # stage let the manager rewrite the playbook's BASE strategy before playoffs. The LINEUP stays
@@ -545,33 +558,42 @@ def _llm_auction_bid(world: dict, team: dict, llm, item_value: int, profile, lea
 # losers pay nothing. So bids vary by club + nobody "just bids half". Many LLM calls -> flag-gated.
 # --------------------------------------------------------------------------- #
 def _heuristic_live_bid(world: dict, team: dict, high: int, avail: int, anchor: int) -> int:
-    """Ascending heuristic: raise by a small increment until a character-driven ceiling (a share of
-    own treasury). Returns the new bid (> high) or 0 to drop."""
+    """Ascending fallback (no LLM): each club has a character-driven CEILING = a share of its OWN money
+    (an aggressive/risky club spends most of its treasury on a slot, a frugal one little), and raises
+    DECISIVELY toward it (big steps, not pennies). Drops when the price passes its ceiling."""
     prof = manager.natural_profile(team["franchise_id"])
-    ceiling = avail * max(0.0, 0.18 + 0.40 * prof.aggression + 0.15 * prof.risk - 0.30 * prof.frugality)
-    nb = high + max(5, anchor // 8)
-    return int(nb) if (nb > high and nb <= min(avail, ceiling)) else 0
+    share = max(0.0, 0.25 + 0.55 * prof.aggression + 0.20 * prof.risk - 0.35 * prof.frugality)
+    ceiling = int(avail * share)
+    if ceiling <= high:
+        return 0                                  # not worth it past here -> drop
+    nb = min(ceiling, high + max(20, (ceiling - high) // 2))    # jump halfway to the ceiling
+    return int(nb) if nb > high else 0
 
 
 def _llm_live_bid(world: dict, team: dict, llm, state, high: int, leader_id, avail: int, anchor: int) -> int:
-    """ONE live ascending decision — FULL FREEDOM, no prescribed fraction. The manager sees the current
-    high bid + its full situation and raises to any affordable amount or drops (0)."""
+    """ONE live ascending decision — the manager gets its GOAL + STAKES + MEANS and FULL FREEDOM, and
+    chooses its OWN strategy (save for a future push / go all-in to survive or win now / grab whatever it
+    can). No prescribed fractions, increments or methods. Raises to ANY affordable amount, or drops (0)."""
     from src.world import needs
     profile = manager.natural_profile(team["franchise_id"])
     leader = world["teams"].get(leader_id, {}).get("name", "—") if leader_id else "пока никто"
     schema = {"type": "object", "additionalProperties": False,
               "properties": {"raise_to": {"type": "integer"}, "reason": {"type": "string"}},
               "required": ["raise_to"]}
-    prompt = (f"🔴 ЖИВОЙ аукцион тренировочного слота ({state.config.steps_per_slot:,} шагов PPO — реально "
-              f"усиливает ОДНОГО твоего игрока). Слотов в розыгрыше осталось: {state.remaining}.\n"
-              f"Клуб {team['name']}.{_char_blurb(profile)}{_roster_plan_blurb(team)}{_budget_blurb(world, team)}\n"
-              f"ТВОИ ДЫРЫ: {needs.team_needs_brief(world, team)}\n"
-              f"ТЕКУЩАЯ высшая ставка: {high} (ведёт {leader}). Твой доступный максимум прямо сейчас: {int(avail)}.\n"
-              f"--- РЕШЕНИЕ ---\nЭто ТВОИ деньги и ТВОЙ выбор. Реши сам, сколько слот стоит ИМЕННО тебе и "
-              f"стоит ли за него драться. Подними ставку (raise_to строго > {high} и в пределах {int(avail)}), "
-              f"если оно того стоит для твоей ситуации/амбиций/характера — или выйди из торгов (raise_to=0). "
-              f"НИКАКИХ правил «ставь столько-то процентов»: полная свобода, решай как живой менеджер.")
-    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=200)
+    prompt = (f"🔴 Живой аукцион тренировочных слотов. Слот = {state.config.steps_per_slot:,} шагов PPO — "
+              f"РЕАЛЬНО усиливает ОДНОГО твоего игрока на весь сезон.\n"
+              f"ТВОЙ КЛУБ: {team['name']}.{_char_blurb(profile)}{_roster_plan_blurb(team)}{_budget_blurb(world, team)}\n"
+              f"ТВОИ ИГРОКИ/ДЫРЫ: {needs.team_needs_brief(world, team)}\n"
+              f"{_stakes_blurb(team)}\n"
+              f"СЕЙЧАС: высшая ставка за этот слот {high} (ведёт {leader}); слотов ещё в розыгрыше "
+              f"{state.remaining}; денег у тебя осталось {int(avail)}. Аукцион будет и в следующие межсезонья.\n"
+              f"--- ТВОЁ РЕШЕНИЕ ---\nТвоя ЦЕЛЬ — добиться максимума для клуба (титул/повышение/выживание — "
+              f"по твоей ситуации). СТРАТЕГИЮ выбираешь ТЫ САМ: можешь копить и пропустить аукцион ради "
+              f"будущего рывка; можешь вложить всё, что есть, чтобы забрать 2-3 слота сейчас; можешь брать "
+              f"ровно сколько унесёшь. Сколько ЭТОТ слот стоит ИМЕННО тебе? Подними ставку (raise_to, целое, "
+              f"до {int(avail)}) или выйди (0). Это твои деньги и твой клуб — НИКАКИХ навязанных правил, "
+              f"долей или шагов. Решай как живой менеджер со своей головой.")
+    ans = llm.structured(manager.MANAGER_SYSTEM_RULES, prompt, schema, max_tokens=220)
     rt = int(ans.get("raise_to") or 0)
     return rt if (rt > high and rt <= avail) else 0
 
